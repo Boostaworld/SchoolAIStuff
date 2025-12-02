@@ -55,8 +55,8 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
 
   const modelMap: Record<IntelQueryParams['model'], string> = {
     flash: 'gemini-2.5-flash',
-    pro: 'gemini-1.5-pro',
-    'orbit-x': 'gemini-exp-1206' // Latest experimental model (Dec 2024)
+    pro: 'gemini-2.5-pro', // Updated to 2.5 Pro with thinking
+    'orbit-x': 'gemini-2.5-pro' // Use 2.5 Pro for premium queries
   };
 
   const contents = [
@@ -72,15 +72,20 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
   try {
     console.log(`Intel Query - Model: ${model}, Depth: ${depth}, Research Mode: ${researchMode}, Conversation Mode: ${conversationMode}`);
 
-    // Conversation mode: Simple chat-style responses
+    // Conversation mode: Simple chat-style responses with thinking
     if (conversationMode) {
       const start = Date.now();
       const response = await ai.models.generateContent({
         model: modelMap[model] || modelMap.flash,
-        systemInstruction: 'You are a helpful AI assistant. Provide clear, concise answers based on the conversation context. Be conversational and direct.',
+        systemInstruction: 'You are a highly intelligent AI assistant with advanced reasoning capabilities. Provide clear, well-thought-out answers. Think through the problem step by step before responding.',
         contents,
         config: {
-          maxOutputTokens: 1024 // Keep follow-ups concise
+          maxOutputTokens: 2048, // Increased for better responses
+          thinkingConfig: model === 'flash' ? {
+            thinkingBudget: 4096 // Enable thinking for Flash
+          } : {
+            thinkingBudget: -1 // Dynamic thinking for Pro
+          }
         }
       });
 
@@ -101,18 +106,27 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
       };
     }
 
-    // Research mode: Structured JSON responses
+    // Research mode: Structured JSON responses with thinking
     // Deeper requests intentionally take longer and allow more output
     const targetDelayMs = Math.min(Math.max(depth, 1) * 400, 4000);
-    // Increase token limits significantly for deeper analysis
-    // Depth 1-3: 1024-1536 tokens (quick summaries)
-    // Depth 4-6: 2048-3072 tokens (academic analysis with essays)
-    // Depth 7-9: 4096-6144 tokens (PhD-level comprehensive research)
+    // Significantly increased token limits for smarter, deeper analysis
+    // Depth 1-3: 2048-3072 tokens (comprehensive summaries)
+    // Depth 4-6: 4096-6144 tokens (deep academic analysis with detailed essays)
+    // Depth 7-9: 8192-12288 tokens (PhD-level exhaustive research)
     const maxOutputTokens = depth <= 3
-      ? 1024 + (depth - 1) * 256
+      ? 2048 + (depth - 1) * 512
       : depth <= 6
-        ? 2048 + (depth - 4) * 512
-        : 4096 + (depth - 7) * 1024;
+        ? 4096 + (depth - 4) * 1024
+        : 8192 + (depth - 7) * 2048;
+
+    // Configure thinking budget based on depth and model
+    const thinkingBudget = model === 'pro' || model === 'orbit-x'
+      ? -1 // Dynamic thinking for Pro models
+      : depth <= 3
+        ? 2048 // Light thinking for quick queries
+        : depth <= 6
+          ? 8192 // Medium thinking for academic queries
+          : 16384; // Deep thinking for exhaustive research
 
     console.log(`Max output tokens: ${maxOutputTokens}`);
     const start = Date.now();
@@ -168,12 +182,16 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
 
     const response = await ai.models.generateContent({
       model: modelMap[model] || modelMap.flash,
-      systemInstruction: instructions || 'Provide factual research.',
+      systemInstruction: instructions || 'You are an advanced research AI with deep analytical capabilities. Think critically and provide comprehensive, factual research.',
       contents,
       config: {
         responseMimeType: 'application/json',
         responseSchema,
-        maxOutputTokens
+        maxOutputTokens,
+        thinkingConfig: {
+          thinkingBudget: thinkingBudget
+        },
+        temperature: 0.7 // Balanced creativity and consistency
       }
     });
 

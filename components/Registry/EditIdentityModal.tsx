@@ -11,6 +11,7 @@ interface EditIdentityModalProps {
 
 export const EditIdentityModal: React.FC<EditIdentityModalProps> = ({ onClose }) => {
   const { currentUser, initialize } = useOrbitStore();
+  const [username, setUsername] = useState('');
   const [bio, setBio] = useState('');
   const [intelInstructions, setIntelInstructions] = useState('');
   const [isUploading, setIsUploading] = useState(false);
@@ -28,11 +29,12 @@ export const EditIdentityModal: React.FC<EditIdentityModalProps> = ({ onClose })
 
       const { data, error } = await supabase
         .from('profiles')
-        .select('bio, intel_instructions')
+        .select('username, bio, intel_instructions')
         .eq('id', currentUser.id)
         .maybeSingle();
 
       if (data && !error) {
+        setUsername(data.username || '');
         setBio(data.bio || '');
         setIntelInstructions(data.intel_instructions || '');
       }
@@ -55,6 +57,17 @@ export const EditIdentityModal: React.FC<EditIdentityModalProps> = ({ onClose })
 
   const handleSave = async () => {
     if (!currentUser) return;
+
+    // Validate username
+    if (!username || username.trim().length < 3) {
+      setError('Username must be at least 3 characters long');
+      return;
+    }
+
+    if (!/^[a-zA-Z0-9_]+$/.test(username)) {
+      setError('Username can only contain letters, numbers, and underscores');
+      return;
+    }
 
     setError(null);
     setIsSaving(true);
@@ -90,6 +103,7 @@ export const EditIdentityModal: React.FC<EditIdentityModalProps> = ({ onClose })
         .from('profiles')
         .upsert({
           id: currentUser.id,
+          username: username.trim(),
           avatar_url: avatarUrl,
           bio: bio,
           intel_instructions: intelInstructions
@@ -110,7 +124,7 @@ export const EditIdentityModal: React.FC<EditIdentityModalProps> = ({ onClose })
 
   const previewProfile = currentUser ? {
     id: currentUser.id,
-    username: currentUser.username,
+    username: username || currentUser.username, // Show edited username in preview
     avatar_url: avatarPreview || currentUser.avatar || '',
     bio,
     tasks_completed: currentUser.stats?.tasksCompleted ?? 0,
@@ -203,6 +217,28 @@ export const EditIdentityModal: React.FC<EditIdentityModalProps> = ({ onClose })
                   </button>
                   <p className="text-xs text-slate-600 mt-2">JPG, PNG, or GIF. Max 2MB.</p>
                 </div>
+              </div>
+            </div>
+
+            {/* Username */}
+            <div>
+              <label className="block text-xs font-mono text-slate-400 uppercase tracking-widest mb-3">
+                <div className="flex items-center gap-2">
+                  <User className="w-3.5 h-3.5" />
+                  Username
+                </div>
+              </label>
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="YourUsername"
+                maxLength={30}
+                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-3 text-sm text-slate-200 focus:outline-none focus:border-violet-500 transition-colors placeholder:text-slate-600 font-mono"
+              />
+              <div className="flex justify-between items-center mt-2">
+                <p className="text-xs text-slate-600">Alphanumeric and underscores only</p>
+                <span className="text-xs text-slate-600 font-mono">{username.length}/30</span>
               </div>
             </div>
 

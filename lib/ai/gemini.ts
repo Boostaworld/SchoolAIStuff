@@ -58,7 +58,10 @@ export const generateOracleRoast = async (
       config: {
         systemInstruction: systemInstruction,
         temperature: 0.7,
-        maxOutputTokens: 500,
+        maxOutputTokens: 1024, // Increased for more detailed responses
+        thinkingConfig: {
+          thinkingBudget: 2048 // Enable thinking for smarter Oracle responses
+        },
         safetySettings: [
           { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
           { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -223,18 +226,18 @@ export interface VisionResponse {
 }
 
 /**
- * Analyzes an image with optional text prompt using Gemini vision models.
- * Simple chat interface - no research formatting, just plain text responses.
+ * Analyzes an image with optional text prompt using advanced Gemini vision models with thinking.
+ * Uses the latest models with enhanced reasoning capabilities for better image understanding.
  *
  * @param image - Base64 encoded image (with or without data:image prefix)
  * @param prompt - User's question or message about the image
- * @param model - Vision model to use: 'gemini-2.0-flash-exp' | 'gemini-1.5-pro' | 'gemini-2.5-flash'
+ * @param model - Vision model to use: 'gemini-2.5-pro' | 'gemini-2.5-flash' | 'gemini-2.0-flash-exp'
  * @param conversationHistory - Optional previous messages for context
  */
 export const analyzeImageWithVision = async (
   image: string,
   prompt: string,
-  model: string = 'gemini-2.0-flash-exp',
+  model: string = 'gemini-2.5-pro', // Updated to 2.5 Pro for smarter vision
   conversationHistory: VisionMessage[] = []
 ): Promise<VisionResponse> => {
   const apiKey = getApiKey();
@@ -281,11 +284,14 @@ export const analyzeImageWithVision = async (
 
     const response = await ai.models.generateContent({
       model: model,
-      systemInstruction: 'You are a helpful AI research assistant. Analyze images and answer questions clearly and accurately. Provide detailed explanations when appropriate.',
+      systemInstruction: 'You are an advanced multimodal AI with superior vision and reasoning capabilities. Analyze images thoroughly, think critically about what you see, and provide detailed, accurate explanations. Use your deep understanding to extract maximum insight from visual information.',
       contents,
       config: {
         temperature: 0.7,
-        maxOutputTokens: 2048,
+        maxOutputTokens: 4096, // Increased for more comprehensive analysis
+        thinkingConfig: model.includes('2.5-pro')
+          ? { thinkingBudget: -1 } // Dynamic thinking for Pro
+          : { thinkingBudget: 8192 }, // Deep thinking for Flash models
         safetySettings: [
           { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
           { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -309,15 +315,15 @@ export const analyzeImageWithVision = async (
 };
 
 /**
- * Specialized Google Form analyzer.
- * Extracts questions and provides answers in structured format.
+ * Specialized Google Form analyzer with advanced reasoning.
+ * Extracts questions and provides accurate answers using deep thinking.
  *
  * @param image - Base64 encoded screenshot of Google Form
  * @param model - Vision model to use
  */
 export const analyzeGoogleForm = async (
   image: string,
-  model: string = 'gemini-2.0-flash-exp'
+  model: string = 'gemini-2.5-pro' // Updated to 2.5 Pro for better accuracy
 ): Promise<VisionResponse> => {
   const prompt = `Analyze this Google Form screenshot carefully.
 
@@ -356,7 +362,7 @@ If you cannot read the form clearly, explain why.`;
 
     const response = await ai.models.generateContent({
       model: model,
-      systemInstruction: 'You are an expert at analyzing educational forms and providing accurate answers. Extract questions precisely and provide clear, correct answers.',
+      systemInstruction: 'You are an advanced AI with expert-level knowledge in analyzing educational content. Think carefully about each question, use your reasoning capabilities to provide accurate answers, and extract information with precision.',
       contents: [
         {
           role: 'user',
@@ -375,7 +381,10 @@ If you cannot read the form clearly, explain why.`;
       ],
       config: {
         temperature: 0.3, // Lower temperature for more accurate extraction
-        maxOutputTokens: 4096,
+        maxOutputTokens: 8192, // Increased for detailed form analysis
+        thinkingConfig: model.includes('2.5-pro')
+          ? { thinkingBudget: -1 } // Dynamic thinking for Pro
+          : { thinkingBudget: 12288 }, // Deep thinking for complex forms
         safetySettings: [
           { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
           { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },

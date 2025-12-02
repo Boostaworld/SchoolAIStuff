@@ -159,16 +159,12 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
   unreadCounts: {},
   typingUsers: {},
   commsPanelOpen: false,
-  inventoryItems: [],
 
   // Phase 3: Training State
   typingChallenges: [],
   activeChallenge: null,
   typingHeatmap: {},
   recentSessions: [],
-
-  // --- INTERNAL HELPERS ---
-  applyEquippedCursor: undefined as any,
 
   // --- INITIALIZATION & REALTIME ---
   initialize: async () => {
