@@ -1,0 +1,585 @@
+# 🚀 ORBIT OS - FUTURE FEATURES ROADMAP
+
+> **Comprehensive plan for upcoming features with detailed implementation guides**  
+> Last Updated: 2025-11-25
+
+---
+
+## 📑 TABLE OF CONTENTS
+
+1. [Google Classroom Integration](#google-classroom-integration)
+2. [Community Hub Expansion](#community-hub-expansion)
+3. [Social Features Enhancement](#social-features-enhancement)
+4. [Advanced AI Features](#advanced-ai-features)
+5. [Implementation Timeline](#implementation-timeline)
+
+---
+
+## 🎓 GOOGLE CLASSROOM INTEGRATION
+
+### Overview
+Automatically import Google Classroom assignments as Orbit OS tasks, sync grades, and create study groups based on enrolled courses.
+
+### Benefits
+- ✅ Never miss an assignment  
+- ✅ Auto-create study groups for each class
+- ✅ Track progress across platforms
+- ✅ One-click task creation
+
+---
+
+### 🔧 DETAILED VERCEL DEPLOYMENT GUIDE
+
+#### Part 1: Google Cloud Console Setup
+
+**Step 1: Create Google Cloud Project**
+1. Navigate to https://console.cloud.google.com
+2. Click "Select a project" → "New Project"
+3. Project name: `Orbit OS`
+4. Click "Create"
+5. Wait for project creation notification
+
+**Step 2: Enable APIs**
+1. In sidebar, go to **"APIs & Services" → "Library"**
+2. Search for `Google Classroom API`
+3. Click the result → Click **"Enable"**
+4. Wait for confirmation
+
+**Step 3: Configure OAuth Consent Screen**
+1. Go to **"APIs & Services" → "OAuth consent screen"**
+2. User Type: Select **"External"** → Click "Create"
+3. Fill in App Information:
+   - **App name**: `Orbit OS`
+   - **User support email**: Your email
+   - **App logo**: (optional, skip for now)
+   - **App domain**: `https://orbit-os.vercel.app`
+   - **Developer contact**: Your email
+4. Click "Save and Continue"
+
+5. **Add Scopes** (Step 2):
+   Click "Add or Remove Scopes" → Search and add:
+   - `https://www.googleapis.com/auth/classroom.courses.readonly`
+   - `https://www.googleapis.com/auth/classroom.coursework.me.readonly`
+   - `https://www.googleapis.com/auth/classroom.announcements.readonly`
+   Click "Update" → "Save and Continue"
+
+6. **Test Users** (Step 3):
+   - Click "Add Users"
+   - Add your email (and any test accounts)
+   - Click "Save and Continue"
+
+7. **Summary** (Step 4):
+   - Review all info
+   - Click "Back to Dashboard"
+
+**Step 4: Create OAuth 2.0 Credentials**
+1. Go to **"APIs & Services" → "Credentials"**
+2. Click **"Create Credentials" → "OAuth client ID"**
+3. Application type: **"Web application"**
+4. Name: `Orbit OS Web Client`
+5. **Authorized JavaScript origins**:
+   - Add: `http://localhost:5173` (for local dev)
+   - Add: `https://orbit-os.vercel.app` (for production)
+6. **Authorized redirect URIs**:
+   - Add: `http://localhost:5173/api/auth/google/callback`
+   - Add: `https://orbit-os.vercel.app/api/auth/google/callback`
+7. Click **"Create"**
+8. **IMPORTANT**: Copy Client ID and Client Secret → Save to password manager!
+
+---
+
+#### Part 2: Vercel Project Setup
+
+**Step 1: Add Environment Variables in Vercel**
+
+1. Open Vercel Dashboard: https://vercel.com/dashboard
+2. Select your Orbit OS project
+3. Go to **"Settings" → "Environment Variables"**
+4. Add the following variables:
+
+| Variable Name | Value | Environment |
+|---------------|-------|-------------|
+| `GOOGLE_CLIENT_ID` | `your_client_id.apps.googleusercontent.com` | Production, Preview, Development |
+| `GOOGLE_CLIENT_SECRET` | `your_client_secret` | Production, Preview, Development |
+| `GOOGLE_REDIRECT_URI` | `https://orbit-os.vercel.app/api/auth/google/callback` | Production |
+| `GOOGLE_REDIRECT_URI` | `http://localhost:5173/api/auth/google/callback` | Development |
+
+5. Click "Save" for each variable
+
+**Step 2: Create Local .env.local File**
+
+```bash
+# In your project root, create .env.local:
+
+# Google Classroom API
+VITE_GOOGLE_CLIENT_ID=your_client_id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your_client_secret
+GOOGLE_REDIRECT_URI=http://localhost:5173/api/auth/google/callback
+
+# Supabase (already exists)
+VITE_SUPABASE_URL=your_supabase_url
+VITE_SUPABASE_ANON_KEY=your_supabase_key
+
+# Gemini AI (already exists)
+VITE_GEMINI_API_KEY=your_gemini_key
+```
+
+**Step 3: Install Dependencies**
+
+```bash
+npm install googleapis @google-cloud/local-auth
+```
+
+---
+
+#### Part 3: Create Serverless API Routes
+
+**File: `api/auth/google/login.ts`**
+
+```typescript
+import { google } from 'googleapis';
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+
+export default function handler(req: VercelRequest, res: VercelResponse) {
+  const oauth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI
+  );
+
+  const scopes = [
+    'https://www.googleapis.com/auth/classroom.courses.readonly',
+    'https://www.googleapis.com/auth/classroom.coursework.me.readonly'
+  ];
+
+  const url = oauth2Client.generateAuthUrl({
+    access_type: 'offline',
+    scope: scopes,
+    state: req.query.userId as string // Pass Orbit user ID
+  });
+
+  res.redirect(url);
+}
+```
+
+**File: `api/auth/google/callback.ts`**
+
+```typescript
+import { google } from 'googleapis';
+import { createClient } from '@supabase/supabase-js';
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+
+const supabase = createClient(
+  process.env.VITE_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_KEY! // Use service key for server-side
+);
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  const { code, state: userId } = req.query;
+
+  if (!code || !userId) {
+    return res.status(400).send('Missing code or userId');
+  }
+
+  const oauth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI
+  );
+
+  try {
+    // Exchange code for tokens
+    const { tokens } = await oauth2Client.getToken(code as string);
+    
+    // Store tokens in Supabase
+    await supabase.from('google_classroom_tokens').upsert({
+      user_id: userId,
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      token_expiry: new Date(tokens.expiry_date!)
+    });
+
+    // Redirect back to app
+    res.redirect('https://orbit-os.vercel.app/dashboard?classroom=connected');
+  } catch (error) {
+    console.error('Auth error:', error);
+    res.status(500).send('Authentication failed');
+  }
+}
+```
+
+**File: `api/classroom/sync.ts`**
+
+```typescript
+import { google } from 'googleapis';
+import { createClient } from '@supabase/supabase-js';
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+
+const supabase = createClient(
+  process.env.VITE_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_KEY!
+);
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  const { userId } = req.query;
+
+  // 1. Get stored tokens
+  const { data: tokenData } = await supabase
+    .from('google_classroom_tokens')
+    .select('*')
+    .eq('user_id', userId)
+    .single();
+
+  if (!tokenData) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+
+  // 2. Setup Google API client
+  const auth = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET
+  );
+  auth.setCredentials({
+    access_token: tokenData.access_token,
+    refresh_token: tokenData.refresh_token
+  });
+
+  const classroom = google.classroom({ version: 'v1', auth });
+
+  try {
+    // 3. Fetch courses
+    const coursesRes = await classroom.courses.list({
+      studentId: 'me',
+      courseStates: ['ACTIVE']
+    });
+
+    const courses = coursesRes.data.courses || [];
+    const tasks = [];
+
+    // 4. For each course, fetch assignments
+    for (const course of courses) {
+      const workRes = await classroom.courses.courseWork.list({
+        courseId: course.id!,
+        orderBy: 'dueDate desc'
+      });
+
+      const assignments = workRes.data.courseWork || [];
+
+      for (const assignment of assignments) {
+        tasks.push({
+          user_id: userId,
+          title: `${course.name}: ${assignment.title}`,
+          category: 'School',
+          external_id: assignment.id,
+          external_source: 'google_classroom',
+          course_name: course.name,
+          due_date: assignment.dueDate ? 
+            new Date(
+              assignment.dueDate.year!,
+              assignment.dueDate.month! - 1,
+              assignment.dueDate.day!
+            ) : null,
+          max_points: assignment.maxPoints,
+          completed: false
+        });
+      }
+    }
+
+    // 5. Upsert tasks to Supabase
+    await supabase.from('tasks').upsert(tasks, {
+      onConflict: 'external_id',
+      ignoreDuplicates: false
+    });
+
+    res.json({ success: true, synced: tasks.length });
+  } catch (error) {
+    console.error('Sync error:', error);
+    res.status(500).json({ error: 'Sync failed' });
+  }
+}
+```
+
+---
+
+#### Part 4: Frontend Integration
+
+**File: `components/Settings/GoogleClassroomConnect.tsx`**
+
+```typescript
+export function GoogleClassroomConnect() {
+  const { user } = useOrbitStore();
+  const [isConnected, setIsConnected] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+
+  // Check if connected
+  useEffect(() => {
+    checkConnection();
+  }, []);
+
+  async function checkConnection() {
+    const { data } = await supabase
+      .from('google_classroom_tokens')
+      .select('user_id')
+      .eq('user_id', user.id)
+      .single();
+    
+    setIsConnected(!!data);
+  }
+
+  async function handleConnect() {
+    // Redirect to OAuth flow
+    window.location.href = `/api/auth/google/login?userId=${user.id}`;
+  }
+
+  async function handleSync() {
+    setSyncing(true);
+    try {
+      const res = await fetch(`/api/classroom/sync?userId=${user.id}`);
+      const data = await res.json();
+      toast.success(`Synced ${data.synced} assignments!`);
+    } catch (error) {
+      toast.error('Sync failed');
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  return (
+    <div className="p-4 border rounded bg-slate-800/50">
+      <div className="flex items-center gap-3">
+        <img src="/icons/google-classroom.svg" className="w-12 h-12" />
+        <div className="flex-1">
+          <h3 className="font-bold">Google Classroom</h3>
+          <p className="text-sm text-slate-400">
+            {isConnected ? 'Connected ✓' : 'Import assignments automatically'}
+          </p>
+        </div>
+        {isConnected ? (
+          <button 
+            onClick={handleSync} 
+            disabled={syncing}
+            className="btn-secondary"
+          >
+            {syncing ? 'Syncing...' : 'Sync Now'}
+          </button>
+        ) : (
+          <button onClick={handleConnect} className="btn-primary">
+            Connect
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+```
+
+---
+
+### 📊 Auto-Features
+
+**1. Study Group Auto-Creation**
+
+When user connects Classroom, automatically create study groups for each course:
+
+```typescript
+// In sync.ts after fetching courses:
+for (const course of courses) {
+  await supabase.from('study_groups').insert({
+    name: `${course.name} Study Group`,
+    description: `Auto-created for ${course.section}`,
+    course_tag: course.section,
+    course_name: course.name,
+    creator_id: userId,
+    is_public: true
+  }).onConflict('course_tag').ignore();
+}
+```
+
+**2. Assignment Completion → Feed Post**
+
+```typescript
+// Trigger when task is marked complete
+if (task.external_source === 'google_classroom') {
+  await supabase.from('posts').insert({
+    author_id: task.user_id,
+    content: `✅ Completed ${task.title}!`,
+    post_type: 'achievement',
+    tags: ['school', task.course_name.toLowerCase()]
+  });
+}
+```
+
+---
+
+## 🌐 COMMUNITY HUB EXPANSION
+
+### Phase 1: Core Feed (Week 1)
+- ✅ Posts table with likes/comments
+- ✅ Chronological + Trending algorithms
+- ✅ Post creation modal
+- ✅ Real-time updates
+
+### Phase 2: Study Groups (Week 2)
+- ✅ Group creation/discovery
+- ✅ Join/leave functionality
+- ✅ Group chat (DM integration)
+- ✅ Meeting scheduler
+
+### Phase 3: Enhanced Social (Week 3)
+**New Features:**
+1. **User Profiles Enhanced**
+   - Showcase section (top achievements)
+   - Activity timeline
+   - Typing stats widget
+   - School/course info
+
+2. **@Mentions & Hashtags**
+   - `@username` mentions → notification
+   - `#math101` hashtags → filter posts
+   - Autocomplete for both
+
+3. **Feed Improvements**
+   - Infinite scroll
+   - Image uploads (via Supabase Storage)
+   - Emoji reactions (not just likes)
+   - Share to DM
+
+4. **Leaderboards**
+   - Weekly top typists
+   - Most helpful (upvotes on help answers)
+   - Course champions (per study group)
+
+### Phase 4: Advanced Features (Week 4)
+1. **Events System**
+   - Create typing tournaments
+   - Study sessions
+   - RSVP functionality
+
+2. **Badges & Achievements**
+   - "Speed Demon" - 100 WPM milestone
+   - "Helping Hand" - 10 accepted answers
+   - "Social Butterfly" - 50 posts
+   - Display on profile
+
+3. **Content Moderation**
+   - Report post/comment
+   - Admin dashboard
+   - Auto-ban toxicity (AI moderation)
+
+---
+
+## 📱 MOBILE APP (Future)
+
+### Technology Stack
+- **React Native** (cross-platform iOS/Android)
+- **Expo** for rapid development
+- **Supabase** (same backend, no changes)
+
+### Key Features
+1. **Mobile-Optimized Typing**
+   - On-screen keyboard practice
+   - Voice dictation mode
+   - Touch accuracy metrics
+
+2. **Push Notifications**
+   - Assignment due reminders
+   - DM alerts
+   - Achievement unlocks
+
+3. **Offline Mode**
+   - Download challenges for offline practice
+   - Sync when back online
+
+### Estimated Timeline: 3 months
+
+---
+
+## 🤖 ADVANCED AI FEATURES
+
+### 1. **Personalized Learning Coach**
+```
+AI analyzes your:
+- Typing patterns
+- Weak keys
+- Speed progression
+→ Generates daily practice plan
+```
+
+### 2. **Smart Study Partner Matching**
+```
+AI matches you with study partners based on:
+- Shared courses
+- Similar typing speed
+- Online schedule overlap
+- Learning style compatibility
+```
+
+### 3. **Intelligent Help Corner**
+```
+Before posting question:
+→ AI searches existing answers
+→ AI attempts to answer
+→ AI suggests relevant study groups
+Only post if AI can't help
+```
+
+### 4. **Auto-Summarization**
+```
+Upload long lecture notes/textbook chapters
+→ AI summarizes key points
+→ Generates typing challenges from summary
+→ Creates flashcards
+```
+
+---
+
+## 📅 IMPLEMENTATION TIMELINE
+
+### Immediate (Next 2 Weeks)
+- [ ] Google Classroom OAuth setup
+- [ ] API routes for assignment sync
+- [ ] Community Feed MVP
+- [ ] Study Groups basic features
+
+### Short-Term (Month 1-2)
+- [ ] Enhanced social features (@mentions, hashtags)
+- [ ] Leaderboards
+- [ ] Events system
+- [ ] Mobile app prototype
+
+### Mid-Term (Month 3-4)
+- [ ] Advanced AI features
+- [ ] Content moderation
+- [ ] Mobile app beta release
+- [ ] Performance optimizations
+
+### Long-Term (Month 5+)
+- [ ] Public API for third-party apps
+- [ ] Browser extension
+- [ ] Desktop app (Electron)
+- [ ] White-label licensing
+
+---
+
+## 🎯 SUCCESS METRICS
+
+**Community Engagement:**
+- 50+ daily active users
+- 200+ posts per week
+- 10+ active study groups
+
+**Google Classroom:**
+- 30% of users connect
+- 500+ assignments synced
+- 90% sync accuracy
+
+**Retention:**
+- 70% week-1 retention
+- 40% month-1 retention
+- Avg 20min session time
+
+---
+
+**Built by:** Orbit OS Team  
+**Status:** Planning Phase  
+**Next:** Get user approval → Begin implementation

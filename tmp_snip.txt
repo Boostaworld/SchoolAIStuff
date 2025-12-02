@@ -1,0 +1,27 @@
+Process betting outcome
+                    if (activeBet && currentUser) {
+                      const { wager, predictedPosition, odds } = activeBet;
+                      const actualPosition = result.position;
+
+                      if (actualPosition === predictedPosition) {
+                        // WIN!
+                        const winnings = Math.floor(wager * odds);
+                        const newPoints = (currentUser.orbit_points ?? currentUser.points ?? orbitPoints) + winnings;
+
+                        const { supabase } = await import('../../lib/supabase');
+
+                        await supabase
+                          .from('profiles')
+                          .update({ orbit_points: newPoints })
+                          .eq('id', currentUser.id);
+
+                        toast.success(`🎉 BET WON! +${winnings.toLocaleString()} points (${odds.toFixed(1)}x)`);
+                      } else {
+                        // LOSS - wager already deducted
+                        toast.error(`❌ Bet lost. Predicted ${predictedPosition}${['st', 'nd', 'rd', 'th'][predictedPosition - 1]}, finished ${actualPosition}${['st', 'nd', 'rd', 'th'][actualPosition - 1]}`);
+                      }
+
+                      setActiveBet(null);
+                    }
+
+                    

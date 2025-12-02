@@ -1,0 +1,28 @@
+async function handleClaim() {
+    if (!canClaim || claiming) return;
+
+    setClaiming(true);
+    try {
+      const { data, error } = await supabase.rpc('claim_passive_points');
+
+      if (error) throw error;
+
+      const pointsEarned = data as number;
+
+      if (pointsEarned > 0) {
+        toast.success(`⛏️ Mined ${pointsEarned} orbit points!`);
+        setUserPoints(prev => prev + pointsEarned);
+        setLastClaim(new Date());
+        setCanClaim(false);
+      } else {
+        toast.info('Mining cooldown active - Come back in 5 minutes!');
+      }
+    } catch (error: any) {
+      console.error('Claim error:', error);
+      toast.error(error.message || 'Mining failed - Please try again');
+    } finally {
+      setClaiming(false);
+    }
+  }
+
+  
