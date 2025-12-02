@@ -41,6 +41,7 @@ export function IntelCommandDeck({
   const [selectedModel, setSelectedModel] = useState<'flash' | 'pro' | 'orbit-x'>(initialConfig?.model || 'flash');
   const [depth, setDepth] = useState(initialConfig?.depth ?? 3);
   const [researchMode, setResearchMode] = useState(initialConfig?.researchMode ?? false);
+  const [thinkingEnabled, setThinkingEnabled] = useState(true); // Thinking enabled by default
   const [customInstructions, setCustomInstructions] = useState(initialConfig?.customInstructions || '');
   const [showInstructions, setShowInstructions] = useState(false);
   const [query, setQuery] = useState('');
@@ -126,7 +127,8 @@ export function IntelCommandDeck({
         modelUsed: selectedModel,
         depthLevel: depth,
         researchMode,
-        customInstructions: instructions || undefined
+        customInstructions: instructions || undefined,
+        thinkingEnabled: thinkingEnabled // Pass thinking preference
       });
       toast.success('Intel query complete');
     } catch (error: any) {
@@ -300,7 +302,7 @@ export function IntelCommandDeck({
 
         {/* Research Mode Toggle */}
         <div>
-          <label className="flex items-center gap-3 cursor-pointer group">
+          <label className="flex items-center gap-3 cursor-pointer group" onClick={() => setResearchMode(!researchMode)}>
             <div className={`relative w-14 h-7 rounded-full transition-all ${researchMode ? 'bg-blue-500' : 'bg-slate-700'}`}>
               <motion.div
                 animate={{ x: researchMode ? 28 : 2 }}
@@ -310,6 +312,37 @@ export function IntelCommandDeck({
             <div>
               <span className="text-sm text-slate-200 font-medium">Research Mode</span>
               <p className="text-xs text-slate-500">Force JSON structured output</p>
+            </div>
+          </label>
+        </div>
+
+        {/* Thinking Mode Toggle */}
+        <div>
+          <label className="flex items-center gap-3 cursor-pointer group" onClick={() => setThinkingEnabled(!thinkingEnabled)}>
+            <div className={`relative w-14 h-7 rounded-full transition-all ${thinkingEnabled ? 'bg-gradient-to-r from-purple-500 to-pink-500 shadow-[0_0_15px_rgba(168,85,247,0.5)]' : 'bg-slate-700'}`}>
+              <motion.div
+                animate={{ x: thinkingEnabled ? 28 : 2 }}
+                className="absolute top-1 w-5 h-5 bg-white rounded-full shadow-lg"
+              />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-slate-200 font-medium">Deep Thinking</span>
+                <motion.div
+                  animate={thinkingEnabled ? {
+                    scale: [1, 1.2, 1],
+                    rotate: [0, 5, -5, 0]
+                  } : {}}
+                  transition={{ duration: 2, repeat: Infinity }}
+                >
+                  <Brain className={`w-4 h-4 ${thinkingEnabled ? 'text-purple-400' : 'text-slate-600'}`} />
+                </motion.div>
+              </div>
+              <p className="text-xs text-slate-500">
+                {thinkingEnabled
+                  ? 'AI uses enhanced reasoning for smarter responses'
+                  : 'Disabled for faster, simpler responses'}
+              </p>
             </div>
           </label>
         </div>

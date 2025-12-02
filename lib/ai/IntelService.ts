@@ -26,6 +26,7 @@ export interface IntelQueryOptions {
   unlockedModels?: string[];
   conversationHistory?: Array<{ role: 'user' | 'model'; text: string }>;
   conversationMode?: boolean; // If true, simple chat instead of research
+  thinkingEnabled?: boolean; // If true, enables thinking mode
 }
 
 const buildInstructions = (
@@ -146,6 +147,7 @@ export const sendIntelQueryWithPersistence = async (options: IntelQueryOptions) 
   const unlockedModels = options.unlockedModels || ['flash'];
   const hasCustomInstruction = Boolean(options.customInstructions && options.customInstructions.trim().length > 0);
   const conversationMode = options.conversationMode || false;
+  const thinkingEnabled = options.thinkingEnabled ?? true; // Default to enabled
 
   if (modelUsed !== 'flash' && !unlockedModels.includes(modelUsed)) {
     throw new Error('CLEARANCE_DENIED: Model not unlocked');
@@ -175,7 +177,8 @@ export const sendIntelQueryWithPersistence = async (options: IntelQueryOptions) 
     researchMode: researchMode || modelUsed === 'orbit-x',
     depth: depthLevel,
     conversationHistory: options.conversationHistory,
-    conversationMode
+    conversationMode,
+    thinkingEnabled // Pass thinking preference
   });
 
   let sessionId: string | undefined;

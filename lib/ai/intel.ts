@@ -16,6 +16,7 @@ export interface IntelQueryParams {
   depth?: number;
   conversationHistory?: Array<{ role: 'user' | 'model'; text: string }>;
   conversationMode?: boolean; // If true, returns plain text chat instead of JSON research
+  thinkingEnabled?: boolean; // If true, enables thinking mode
 }
 
 const getIntelApiKey = () => {
@@ -50,7 +51,8 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
     researchMode = false,
     depth = 3,
     conversationHistory = [],
-    conversationMode = false
+    conversationMode = false,
+    thinkingEnabled = true // Default to enabled
   } = params;
 
   const modelMap: Record<IntelQueryParams['model'], string> = {
@@ -72,21 +74,30 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
   try {
     console.log(`Intel Query - Model: ${model}, Depth: ${depth}, Research Mode: ${researchMode}, Conversation Mode: ${conversationMode}`);
 
-    // Conversation mode: Simple chat-style responses with thinking
+    // Conversation mode: Simple chat-style responses with optional thinking
     if (conversationMode) {
       const start = Date.now();
+
+      const config: any = {
+        maxOutputTokens: 2048 // Increased for better responses
+      };
+
+      // Only add thinking if enabled
+      if (thinkingEnabled) {
+        config.thinkingConfig = model === 'flash' ? {
+          thinkingBudget: 4096 // Enable thinking for Flash
+        } : {
+          thinkingBudget: -1 // Dynamic thinking for Pro
+        };
+      }
+
       const response = await ai.models.generateContent({
         model: modelMap[model] || modelMap.flash,
-        systemInstruction: 'You are a highly intelligent AI assistant with advanced reasoning capabilities. Provide clear, well-thought-out answers. Think through the problem step by step before responding.',
+        systemInstruction: thinkingEnabled
+          ? 'You are a highly intelligent AI assistant with advanced reasoning capabilities. Provide clear, well-thought-out answers. Think through the problem step by step before responding.'
+          : 'You are a helpful AI assistant. Provide clear, concise answers based on the conversation context.',
         contents,
-        config: {
-          maxOutputTokens: 2048, // Increased for better responses
-          thinkingConfig: model === 'flash' ? {
-            thinkingBudget: 4096 // Enable thinking for Flash
-          } : {
-            thinkingBudget: -1 // Dynamic thinking for Pro
-          }
-        }
+        config
       });
 
       const text = response.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -120,15 +131,17 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
         : 8192 + (depth - 7) * 2048;
 
     // Configure thinking budget based on depth and model
-    const thinkingBudget = model === 'pro' || model === 'orbit-x'
-      ? -1 // Dynamic thinking for Pro models
-      : depth <= 3
-        ? 2048 // Light thinking for quick queries
-        : depth <= 6
-          ? 8192 // Medium thinking for academic queries
-          : 16384; // Deep thinking for exhaustive research
+    const thinkingBudget = thinkingEnabled
+      ? (model === 'pro' || model === 'orbit-x'
+          ? -1 // Dynamic thinking for Pro models
+          : depth <= 3
+            ? 2048 // Light thinking for quick queries
+            : depth <= 6
+              ? 8192 // Medium thinking for academic queries
+              : 16384) // Deep thinking for exhaustive research
+      : 0; // Disabled
 
-    console.log(`Max output tokens: ${maxOutputTokens}`);
+    console.log(`Max output tokens: ${maxOutputTokens}, Thinking: ${thinkingEnabled ? `Budget ${thinkingBudget}` : 'Disabled'}`);
     const start = Date.now();
 
     // Define JSON schema for structured output (varies by depth)
@@ -180,19 +193,27 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
         : ['summary_bullets', 'sources', 'related_concepts']
     };
 
+    const researchConfig: any = {
+      responseMimeType: 'application/json',
+      responseSchema,
+      maxOutputTokens,
+      temperature: 0.7 // Balanced creativity and consistency
+    };
+
+    // Only add thinking config if enabled
+    if (thinkingEnabled && thinkingBudget > 0) {
+      researchConfig.thinkingConfig = {
+        thinkingBudget: thinkingBudget
+      };
+    }
+
     const response = await ai.models.generateContent({
       model: modelMap[model] || modelMap.flash,
-      systemInstruction: instructions || 'You are an advanced research AI with deep analytical capabilities. Think critically and provide comprehensive, factual research.',
+      systemInstruction: thinkingEnabled
+        ? 'You are an advanced research AI with deep analytical capabilities. Think critically and provide comprehensive, factual research.'
+        : 'You are a fast, efficient research AI. Provide comprehensive, factual research with high quality responses.',
       contents,
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema,
-        maxOutputTokens,
-        thinkingConfig: {
-          thinkingBudget: thinkingBudget
-        },
-        temperature: 0.7 // Balanced creativity and consistency
-      }
+      config: researchConfig
     });
 
     const elapsed = Date.now() - start;

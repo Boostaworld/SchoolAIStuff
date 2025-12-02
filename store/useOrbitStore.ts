@@ -69,6 +69,7 @@ interface OrbitState {
     researchMode?: boolean;
     customInstructions?: string;
     conversationMode?: boolean;
+    thinkingEnabled?: boolean; // New: Toggle thinking mode
   }) => Promise<IntelResult | null>;
   loadIntelHistory: () => Promise<void>;
   clearIntelHistory: () => void;
@@ -672,6 +673,7 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     const researchMode = (options as any).researchMode ?? modelUsed === 'orbit-x';
     const customInstructions = ((options as any).customInstructions || '').trim();
     const conversationMode = (options as any).conversationMode || false;
+    const thinkingEnabled = (options as any).thinkingEnabled ?? true; // Default to enabled
 
     const optimisticUser: IntelChatMessage = {
       id: `local-${Date.now()}`,
@@ -721,7 +723,8 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
         canCustomize: currentUser.can_customize_ai || false,
         unlockedModels: currentUser.unlocked_models || ['flash'],
         conversationHistory: historyForContext,
-        conversationMode
+        conversationMode,
+        thinkingEnabled // Pass thinking preference to service
       });
 
       const modelMessage: IntelChatMessage = {
