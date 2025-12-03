@@ -949,6 +949,8 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       sources: drop.sources,
       related_concepts: drop.related_concepts,
       essay: drop.essay,
+      attachment_url: drop.attachment_url ?? drop.attachmentUrl ?? undefined,
+      attachment_type: drop.attachment_type ?? drop.attachmentType ?? undefined,
       is_private: drop.is_private,
       created_at: drop.created_at
     }));
