@@ -1015,7 +1015,9 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
 
       // Fallback if attachment columns are missing in older databases
       if (error && (error.code === '42703' || error.message?.toLowerCase().includes('attachment'))) {
-        console.warn('Attachment columns missing; retrying transmission without attachment metadata.');
+        const { toast } = await import('@/lib/toast');
+        toast.warn('Transmission posted, but attachment failed. The database may need an update.');
+        console.warn('Attachment columns missing; retrying transmission without attachment metadata. An orphaned file may exist in storage as a result.');
         ({ data, error } = await attemptInsert(false));
       }
     } else {
