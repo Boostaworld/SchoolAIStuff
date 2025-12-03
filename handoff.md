@@ -364,7 +364,120 @@ orbit_points (integer)
 
 ---
 
+## Critical Bug Fixes
+
+### Task Persistence Issue (RESOLVED)
+**Problem:** Tasks were disappearing after page refresh
+
+**Root Cause:** Tasks were being fetched without filtering by `user_id`, causing all users' tasks to load initially, then get cleared when no tasks matched the current user.
+
+**Solution:**
+```typescript
+// store/useOrbitStore.ts:204-208
+const { data: tasks } = await supabase
+  .from('tasks')
+  .select('*')
+  .eq('user_id', session.user.id)  // ✅ Added user filter
+  .order('created_at', { ascending: true });
+```
+
+**Impact:** Tasks now persist correctly across page refreshes and only show user-specific tasks.
+
+---
+
+### Transmission Author Display Issue (VERIFIED WORKING)
+**Status:** Author info was already correctly implemented in `IntelDropModal.tsx`
+
+**Implementation:**
+- Avatar displays at `IntelDropModal.tsx:41`
+- Username displays at `IntelDropModal.tsx:45`
+- Author data comes from `fetchIntelDrops` which joins with profiles table
+
+**Verified:** All transmission modals correctly show author avatar and username.
+
+---
+
+### ResearchLab Unification
+
+**Objective:** Combine Intel Engine and Vision Lab into a single dual-tab interface
+
+**Implementation:** Completely rewrote `ResearchLab.tsx` to include:
+
+1. **Dual-Tab System:**
+   - **INTEL ENGINE Tab:** Text-based research with Gemini 3.0 Pro
+   - **VISION LAB Tab:** Image analysis with vision models
+   - Smooth animated transitions between tabs
+   - Scan-line effects on active tab
+   - Color-coded tabs (cyan for Intel, orange for Vision)
+
+2. **Intel Engine Features (Tab 1):**
+   - Full Intel Panel functionality integrated
+   - Research query input with gradient glow effect
+   - Deep Thinking toggle with visual feedback
+   - Command Deck settings modal
+   - Model selection (Flash, Pro, Orbit-X, Gemini 3.0 Pro/Image)
+   - Thinking level control for Gemini 3.0
+   - Depth slider (1-9)
+   - Research mode toggle
+   - Custom instructions textarea
+   - Intel results display
+   - Save to Horde Feed functionality
+   - Follow-up question support
+
+3. **Vision Lab Features (Tab 2):**
+   - Image upload via button or paste (Ctrl+V)
+   - Vision model selector
+   - Chat-style message display with corner brackets
+   - Image preview with scanning animation
+   - Two analysis modes:
+     - **GENERAL:** Standard image analysis
+     - **GOOGLE FORM:** Specialized form analysis
+   - 4MB file size limit
+   - Real-time analysis status with spinning loader
+
+4. **Design Elements:**
+   - Animated grid background with scrolling effect
+   - Status bar showing "SYSTEM ONLINE" and clearance level
+   - Thread counter for Intel conversations with clear button
+   - Cyberpunk/terminal aesthetic throughout
+   - Monospace fonts for technical feel
+   - Gradient scan-line animations
+   - Corner bracket decorations on message bubbles
+   - Color-coded UI elements per tab
+
+5. **Shared Features:**
+   - AI+ access requirement (shows LockedResearchLab if no access)
+   - Toast notifications for user feedback
+   - Framer Motion animations for smooth UX
+   - Responsive design
+   - Consistent styling with existing app
+
+**Key Files:**
+- `components/Research/ResearchLab.tsx` - Completely rewritten (957 lines)
+
+**Benefits:**
+- ✅ Single interface for all AI research needs
+- ✅ Reduced navigation friction
+- ✅ Consistent UX across modes
+- ✅ Better visual hierarchy with tabs
+- ✅ Maintained all existing functionality
+- ✅ Improved discoverability of features
+
+---
+
 ## Changelog
+
+### v2.0.0 (December 2, 2025 - Update 2)
+- ✅ **CRITICAL:** Fixed task persistence bug - tasks now filter by user_id
+- ✅ **VERIFIED:** Transmission author display working correctly
+- ✅ **MAJOR:** Unified ResearchLab with dual-tab interface (Intel + Vision)
+- ✅ Added smooth tab transitions with scan-line animations
+- ✅ Integrated full Intel Engine into ResearchLab
+- ✅ Integrated full Vision Lab into ResearchLab
+- ✅ Added cyberpunk/terminal aesthetic with animated grid background
+- ✅ Thread tracking and clear functionality in Intel tab
+- ✅ Model-specific UI elements (thinking level only for Gemini 3.0)
+- ✅ Maintained all existing features from separate components
 
 ### v1.0.0 (December 2, 2025)
 - ✅ Added Gemini 3.0 Pro Preview support

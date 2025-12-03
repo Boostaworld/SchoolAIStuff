@@ -12,7 +12,7 @@ import clsx from 'clsx';
 
 type Tab = 'intel' | 'vision';
 
-interface Message {
+interface VisionMessage {
   id: string;
   role: 'user' | 'model';
   text: string;
@@ -27,7 +27,7 @@ const VISION_MODELS = [
   { id: 'gemini-exp-1206', name: 'Gemini Experimental', badge: 'NEXT-GEN', color: 'green', requiredAccess: 'orbit-x' },
 ];
 
-export const ResearchLab: React.FC = () => {
+export const UnifiedResearchLab: React.FC = () => {
   const { currentUser, sendIntelQuery, isIntelLoading, currentIntelResult, intelMessages, clearIntelHistory } = useOrbitStore();
   const toastManager = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -48,7 +48,7 @@ export const ResearchLab: React.FC = () => {
   const [currentQuery, setCurrentQuery] = useState('');
 
   // Vision Lab state
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [visionMessages, setVisionMessages] = useState<VisionMessage[]>([]);
   const [visionInput, setVisionInput] = useState('');
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -87,7 +87,7 @@ export const ResearchLab: React.FC = () => {
     if (activeTab === 'vision') {
       chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages, activeTab]);
+  }, [visionMessages, activeTab]);
 
   // Intel Engine handlers
   const handleIntelSubmit = async (e: React.FormEvent) => {
@@ -180,7 +180,7 @@ export const ResearchLab: React.FC = () => {
       return;
     }
 
-    const userMessage: Message = {
+    const userMessage: VisionMessage = {
       id: Date.now().toString(),
       role: 'user',
       text: visionInput || (isFormMode ? 'Analyze this Google Form' : 'What do you see in this image?'),
@@ -188,12 +188,12 @@ export const ResearchLab: React.FC = () => {
       timestamp: new Date()
     };
 
-    setMessages(prev => [...prev, userMessage]);
+    setVisionMessages(prev => [...prev, userMessage]);
     setVisionInput('');
     setIsAnalyzing(true);
 
     try {
-      const history: VisionMessage[] = messages.map(msg => ({
+      const history: VisionMessage[] = visionMessages.map(msg => ({
         role: msg.role,
         text: msg.text,
         image: msg.image
@@ -212,14 +212,14 @@ export const ResearchLab: React.FC = () => {
         );
       }
 
-      const aiMessage: Message = {
+      const aiMessage: VisionMessage = {
         id: (Date.now() + 1).toString(),
         role: 'model',
         text: response.text,
         timestamp: new Date()
       };
 
-      setMessages(prev => [...prev, aiMessage]);
+      setVisionMessages(prev => [...prev, aiMessage]);
       setUploadedImage(null);
       setIsFormMode(false);
 
@@ -558,7 +558,7 @@ export const ResearchLab: React.FC = () => {
             {/* Vision chat messages */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4 relative z-10">
               <AnimatePresence>
-                {messages.map((message, index) => (
+                {visionMessages.map((message, index) => (
                   <motion.div
                     key={message.id}
                     initial={{ opacity: 0, y: 20 }}

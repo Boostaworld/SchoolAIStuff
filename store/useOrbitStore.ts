@@ -200,10 +200,11 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
           }
         }
 
-        // Fetch Tasks
+        // Fetch Tasks (filter by user_id to ensure only user's tasks are loaded)
         const { data: tasks } = await supabase
           .from('tasks')
           .select('*')
+          .eq('user_id', session.user.id)
           .order('created_at', { ascending: true });
 
         // Map DB Profile to App Type
