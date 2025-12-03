@@ -76,7 +76,7 @@ interface OrbitState {
   clearIntelHistory: () => void;
   setIntelInstructions: (instructions: string) => void;
   saveIntelDrop: (query: string, isPrivate: boolean) => Promise<void>;
-  publishManualDrop: (title: string, content: string, tags?: string[], attachmentFile?: File) => Promise<void>;
+  publishManualDrop: (title: string, content: string, tags?: string[], attachmentFile?: File, isPrivate?: boolean) => Promise<void>;
   deleteIntelDrop: (id: string) => Promise<void>; // Admin-only deletion
   fetchIntelDrops: () => Promise<void>;
 
@@ -956,9 +956,9 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     set({ intelDrops: mappedDrops });
   },
 
-  publishManualDrop: async (title: string, content: string, tags: string[] = [], attachmentFile?: File) => {
+  publishManualDrop: async (title: string, content: string, tags: string[] = [], attachmentFile?: File, isPrivate = false) => {
     const { currentUser } = get();
-    if (!currentUser) return;
+    if (!currentUser) throw new Error('You must be signed in to post a transmission.');
 
     // Handle file upload if present
     let attachmentUrl = null;
@@ -982,21 +982,45 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       }
     }
 
-    // Create a manual drop by structuring the content
-    const { data, error } = await supabase
-      .from('intel_drops')
-      .insert({
-        author_id: currentUser.id,
-        query: title,
-        summary_bullets: [content], // Treat the main content as a single bullet point or summary
-        sources: [],
-        related_concepts: ['Manual Broadcast', ...tags],
-        is_private: false, // Manual posts are usually public transmissions
-        attachment_url: attachmentUrl,
-        attachment_type: attachmentType
-      })
-      .select()
-      .single();
+    const basePayload = {
+      author_id: currentUser.id,
+      query: title,
+      summary_bullets: [content], // Treat the main content as a single bullet point or summary
+      sources: [],
+      related_concepts: ['Manual Broadcast', ...tags],
+      is_private: isPrivate
+    };
+
+    const attachmentPayload = (attachmentUrl || attachmentType) ? {
+      attachment_url: attachmentUrl,
+      attachment_type: attachmentType
+    } : null;
+
+    const attemptInsert = async (includeAttachments: boolean) => {
+      const payload = includeAttachments && attachmentPayload
+        ? { ...basePayload, ...attachmentPayload }
+        : basePayload;
+
+      return supabase
+        .from('intel_drops')
+        .insert(payload)
+        .select()
+        .single();
+    };
+
+    let data, error;
+
+    if (attachmentPayload) {
+      ({ data, error } = await attemptInsert(true));
+
+      // Fallback if attachment columns are missing in older databases
+      if (error && (error.code === '42703' || error.message?.toLowerCase().includes('attachment'))) {
+        console.warn('Attachment columns missing; retrying transmission without attachment metadata.');
+        ({ data, error } = await attemptInsert(false));
+      }
+    } else {
+      ({ data, error } = await attemptInsert(false));
+    }
 
     if (error) throw error;
 

@@ -62,7 +62,7 @@ export const CreateActionModal: React.FC<CreateActionModalProps> = ({ onClose })
         try {
             // Tag handling
             const tags = postTag ? [postTag] : [];
-            await publishManualDrop(postSubject, postContent, tags, selectedFile || undefined);
+            await publishManualDrop(postSubject, postContent, tags, selectedFile || undefined, postPrivate);
             onClose();
         } catch (err) {
             console.error(err);
