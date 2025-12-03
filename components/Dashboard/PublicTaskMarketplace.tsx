@@ -1,15 +1,17 @@
 import React, { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { UserPlus, Clock, Target, AlertCircle, Zap, User, Package } from 'lucide-react';
+import { UserPlus, Clock, Target, AlertCircle, Zap, User, Package, Trash2 } from 'lucide-react';
 import { useOrbitStore } from '../../store/useOrbitStore';
 import { Task } from '../../types';
 import clsx from 'clsx';
 import { useToast } from '../Shared/ToastManager';
 
 export const PublicTaskMarketplace: React.FC = () => {
-  const { tasks, currentUser, claimTask } = useOrbitStore();
+  const { tasks, currentUser, claimTask, deleteTask } = useOrbitStore();
   const toast = useToast();
   const [claimingIds, setClaimingIds] = useState<Set<string>>(new Set());
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
+  const isAdmin = currentUser?.is_admin;
 
   // Filter to show ONLY public tasks from OTHER users
   const publicTasks = useMemo(() => {
@@ -76,6 +78,34 @@ export const PublicTaskMarketplace: React.FC = () => {
       });
     } finally {
       setClaimingIds(prev => {
+        const next = new Set(prev);
+        next.delete(taskId);
+        return next;
+      });
+    }
+  };
+
+  const handleDelete = async (taskId: string, taskTitle: string) => {
+    if (!confirm(`⚠️ ADMIN OVERRIDE\n\nDelete contract "${taskTitle}" permanently?`)) {
+      return;
+    }
+
+    setDeletingIds(prev => new Set(prev).add(taskId));
+
+    try {
+      await deleteTask(taskId);
+      toast.success('Contract Deleted', {
+        description: `"${taskTitle}" was removed from the public board.`,
+        duration: 4000,
+      });
+    } catch (error) {
+      console.error('Admin delete failed', error);
+      toast.error('Delete Failed', {
+        description: 'Unable to remove this contract right now. Please try again.',
+        duration: 4000,
+      });
+    } finally {
+      setDeletingIds(prev => {
         const next = new Set(prev);
         next.delete(taskId);
         return next;
@@ -256,30 +286,52 @@ export const PublicTaskMarketplace: React.FC = () => {
                         </div>
                       )}
 
-                      {/* Action Button */}
-                      <motion.button
-                        whileHover={{ scale: claimingIds.has(task.id) ? 1 : 1.02 }}
-                        whileTap={{ scale: claimingIds.has(task.id) ? 1 : 0.98 }}
-                        onClick={() => handleClaim(task.id, task.title)}
-                        disabled={claimingIds.has(task.id)}
-                        className={clsx(
-                          "w-full flex items-center justify-center gap-2 rounded-lg py-2.5 px-4 transition-all group/btn shadow-lg shadow-amber-500/10",
-                          claimingIds.has(task.id)
-                            ? "bg-gradient-to-r from-amber-500/10 to-yellow-500/10 border border-amber-500/20 cursor-wait"
-                            : "bg-gradient-to-r from-amber-500/20 to-yellow-500/20 hover:from-amber-500/30 hover:to-yellow-500/30 border border-amber-500/40 hover:border-amber-400/60"
+                      {/* Action Buttons */}
+                      <div className="flex gap-3">
+                        <motion.button
+                          whileHover={{ scale: claimingIds.has(task.id) ? 1 : 1.02 }}
+                          whileTap={{ scale: claimingIds.has(task.id) ? 1 : 0.98 }}
+                          onClick={() => handleClaim(task.id, task.title)}
+                          disabled={claimingIds.has(task.id) || deletingIds.has(task.id)}
+                          className={clsx(
+                            "w-full flex items-center justify-center gap-2 rounded-lg py-2.5 px-4 transition-all group/btn shadow-lg shadow-amber-500/10",
+                            claimingIds.has(task.id)
+                              ? "bg-gradient-to-r from-amber-500/10 to-yellow-500/10 border border-amber-500/20 cursor-wait"
+                              : "bg-gradient-to-r from-amber-500/20 to-yellow-500/20 hover:from-amber-500/30 hover:to-yellow-500/30 border border-amber-500/40 hover:border-amber-400/60"
+                          )}
+                        >
+                          <UserPlus className={clsx(
+                            "w-4 h-4",
+                            claimingIds.has(task.id) ? "text-amber-400/50" : "text-amber-400 group-hover/btn:text-amber-300"
+                          )} />
+                          <span className={clsx(
+                            "text-sm font-bold font-mono tracking-wider",
+                            claimingIds.has(task.id) ? "text-amber-300/50" : "text-amber-300 group-hover/btn:text-amber-200"
+                          )}>
+                            {claimingIds.has(task.id) ? 'CLAIMING...' : 'CLAIM CONTRACT'}
+                          </span>
+                        </motion.button>
+
+                        {isAdmin && (
+                          <motion.button
+                            whileHover={{ scale: deletingIds.has(task.id) ? 1 : 1.02 }}
+                            whileTap={{ scale: deletingIds.has(task.id) ? 1 : 0.98 }}
+                            onClick={() => handleDelete(task.id, task.title)}
+                            disabled={deletingIds.has(task.id) || claimingIds.has(task.id)}
+                            className={clsx(
+                              "flex items-center justify-center gap-2 rounded-lg py-2.5 px-4 transition-all group/btn shadow-lg",
+                              "border border-red-500/40 bg-gradient-to-r from-red-500/10 to-pink-500/10",
+                              "hover:border-red-400/70 hover:from-red-500/20 hover:to-pink-500/20",
+                              deletingIds.has(task.id) && "opacity-50 cursor-wait"
+                            )}
+                          >
+                            <Trash2 className="w-4 h-4 text-red-300 group-hover/btn:text-red-200" />
+                            <span className="text-sm font-bold font-mono tracking-wider text-red-200 group-hover/btn:text-red-100">
+                              {deletingIds.has(task.id) ? 'DELETING...' : 'ADMIN DELETE'}
+                            </span>
+                          </motion.button>
                         )}
-                      >
-                        <UserPlus className={clsx(
-                          "w-4 h-4",
-                          claimingIds.has(task.id) ? "text-amber-400/50" : "text-amber-400 group-hover/btn:text-amber-300"
-                        )} />
-                        <span className={clsx(
-                          "text-sm font-bold font-mono tracking-wider",
-                          claimingIds.has(task.id) ? "text-amber-300/50" : "text-amber-300 group-hover/btn:text-amber-200"
-                        )}>
-                          {claimingIds.has(task.id) ? 'CLAIMING...' : 'CLAIM CONTRACT'}
-                        </span>
-                      </motion.button>
+                      </div>
 
                       {/* Holographic Glow Effect */}
                       <div className="absolute inset-0 bg-gradient-to-br from-amber-500/0 via-amber-500/5 to-amber-500/0 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
