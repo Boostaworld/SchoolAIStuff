@@ -474,7 +474,10 @@ export const sendChatMessage = async (request: ChatRequest): Promise<ChatRespons
     };
 
     // Add thinking config for supported models
-    const supportsThinking = request.model.includes('3.0') ||
+    // Gemini 3.x models ship under ids like "gemini-3-pro-preview" (no "3.0" in the id),
+    // so we need a broader check than a literal "3.0" substring to enable thinking.
+    const supportsThinking = request.model.includes('gemini-3') ||
+      request.model.includes('3.0') ||
       request.model.includes('thinking') ||
       request.model.includes('2.5');
 
