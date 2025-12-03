@@ -82,22 +82,46 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
 
           {/* Attachment */}
           {message.attachment_url && (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="mt-3 p-3 bg-slate-900/50 border border-cyan-500/30 rounded-lg flex items-center gap-3 group hover:bg-slate-900/70 transition-colors cursor-pointer"
-            >
-              {getFileIcon(message.attachment_type)}
-              <div className="flex-1 min-w-0">
-                <p className="text-cyan-300 text-xs font-semibold truncate">
-                  {message.attachment_url.split('/').pop()}
-                </p>
-                <p className="text-cyan-500/60 text-xs">
-                  {message.attachment_type?.split('/')[1]?.toUpperCase() || 'FILE'}
-                </p>
-              </div>
-              <Download className="w-4 h-4 text-cyan-400 group-hover:text-cyan-300 transition-colors" />
-            </motion.div>
+            <>
+              {message.attachment_type?.startsWith('image/') ? (
+                // Image embed - Discord style
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="mt-3 rounded-lg overflow-hidden border border-cyan-500/30 hover:border-cyan-500/50 transition-colors cursor-pointer max-w-md"
+                  onClick={() => window.open(message.attachment_url, '_blank')}
+                >
+                  <img
+                    src={message.attachment_url}
+                    alt="Attachment"
+                    className="w-full h-auto object-cover max-h-96 hover:opacity-90 transition-opacity"
+                    loading="lazy"
+                  />
+                </motion.div>
+              ) : (
+                // File download box for non-images
+                <motion.a
+                  href={message.attachment_url}
+                  download
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="mt-3 p-3 bg-slate-900/50 border border-cyan-500/30 rounded-lg flex items-center gap-3 group hover:bg-slate-900/70 transition-colors cursor-pointer"
+                >
+                  {getFileIcon(message.attachment_type)}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-cyan-300 text-xs font-semibold truncate">
+                      {message.attachment_url.split('/').pop()}
+                    </p>
+                    <p className="text-cyan-500/60 text-xs">
+                      {message.attachment_type?.split('/')[1]?.toUpperCase() || 'FILE'}
+                    </p>
+                  </div>
+                  <Download className="w-4 h-4 text-cyan-400 group-hover:text-cyan-300 transition-colors" />
+                </motion.a>
+              )}
+            </>
           )}
         </motion.div>
 

@@ -248,6 +248,9 @@ export const analyzeImageWithVision = async (
   const ai = new GoogleGenAI({ apiKey });
 
   try {
+    // NOTE: media_resolution (high quality) is available in Python SDK v1alpha but not yet in TypeScript SDK
+    // For now, using optimized settings: temperature 1.0 for Gemini 3, dynamic thinking, 8K tokens
+
     // Clean base64 - remove data URL prefix if present
     const cleanBase64 = image.replace(/^data:image\/\w+;base64,/, '');
 
@@ -284,14 +287,16 @@ export const analyzeImageWithVision = async (
 
     const response = await ai.models.generateContent({
       model: model,
-      systemInstruction: 'You are an advanced multimodal AI with superior vision and reasoning capabilities. Analyze images thoroughly, think critically about what you see, and provide detailed, accurate explanations. Use your deep understanding to extract maximum insight from visual information.',
       contents,
       config: {
-        temperature: 0.7,
-        maxOutputTokens: 4096, // Increased for more comprehensive analysis
-        thinkingConfig: model.includes('2.5-pro')
-          ? { thinkingBudget: -1 } // Dynamic thinking for Pro
-          : { thinkingBudget: 8192 }, // Deep thinking for Flash models
+        systemInstruction: 'You are an advanced multimodal AI with superior vision and reasoning capabilities. Analyze images thoroughly, think critically about what you see, and provide detailed, accurate explanations. Use your deep understanding to extract maximum insight from visual information.',
+        temperature: model.includes('gemini-3') ? 1.0 : 0.7,
+        maxOutputTokens: 8192, // Increased for more comprehensive analysis
+        thinkingConfig: model.includes('gemini-3')
+          ? { thinkingBudget: -1 } // Dynamic thinking for Gemini 3
+          : model.includes('2.5-pro')
+            ? { thinkingBudget: -1 } // Dynamic thinking for Pro
+            : { thinkingBudget: 8192 }, // Deep thinking for Flash models
         safetySettings: [
           { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
           { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -362,7 +367,6 @@ If you cannot read the form clearly, explain why.`;
 
     const response = await ai.models.generateContent({
       model: model,
-      systemInstruction: 'You are an advanced AI with expert-level knowledge in analyzing educational content. Think carefully about each question, use your reasoning capabilities to provide accurate answers, and extract information with precision.',
       contents: [
         {
           role: 'user',
@@ -380,11 +384,14 @@ If you cannot read the form clearly, explain why.`;
         }
       ],
       config: {
-        temperature: 0.3, // Lower temperature for more accurate extraction
+        systemInstruction: 'You are an advanced AI with expert-level knowledge in analyzing educational content. Think carefully about each question, use your reasoning capabilities to provide accurate answers, and extract information with precision.',
+        temperature: model.includes('gemini-3') ? 1.0 : 0.3,
         maxOutputTokens: 8192, // Increased for detailed form analysis
-        thinkingConfig: model.includes('2.5-pro')
-          ? { thinkingBudget: -1 } // Dynamic thinking for Pro
-          : { thinkingBudget: 12288 }, // Deep thinking for complex forms
+        thinkingConfig: model.includes('gemini-3')
+          ? { thinkingBudget: -1 } // Dynamic thinking for Gemini 3
+          : model.includes('2.5-pro')
+            ? { thinkingBudget: -1 } // Dynamic thinking for Pro
+            : { thinkingBudget: 12288 }, // Deep thinking for complex forms
         safetySettings: [
           { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
           { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -406,3 +413,122 @@ If you cannot read the form clearly, explain why.`;
     throw new Error(`Form analysis failed: ${error.message}`);
   }
 };
+
+// ============================================
+// RESEARCH LAB - CHAT MODE
+// ============================================
+
+export interface ChatRequest {
+  message: string;
+  model: string;
+  thinkingLevel?: 'low' | 'medium' | 'high';
+  systemInstructions?: string;
+  temperature?: number;
+  maxTokens?: number;
+  conversationHistory?: Array<{ role: 'user' | 'model', text: string }>;
+}
+
+export interface ChatResponse {
+  text: string;
+  thinking?: string;
+  thinkingUsed?: boolean;
+}
+
+/**
+ * Send a chat message to Gemini with optional thinking mode.
+ * Supports all Gemini models with customizable thinking levels for supported models.
+ *
+ * @param request - Chat request with message, model, and optional parameters
+ */
+export const sendChatMessage = async (request: ChatRequest): Promise<ChatResponse> => {
+  const apiKey = getApiKey();
+  if (!apiKey) {
+    throw new Error("Gemini API key not configured");
+  }
+
+  const ai = new GoogleGenAI({ apiKey });
+
+  try {
+    // Build conversation contents
+    const contents = [
+      ...(request.conversationHistory?.map(msg => ({
+        role: msg.role,
+        parts: [{ text: msg.text }]
+      })) || []),
+      {
+        role: 'user' as const,
+        parts: [{ text: request.message }]
+      }
+    ];
+
+    // Configure thinking based on model and level
+    const config: any = {
+      temperature: request.model.includes('gemini-3') ? 1.0 : (request.temperature ?? 0.7),
+      maxOutputTokens: request.maxTokens ?? 4096,
+      safetySettings: [
+        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+      ]
+    };
+
+    // Add thinking config for supported models
+    const supportsThinking = request.model.includes('3.0') ||
+      request.model.includes('thinking') ||
+      request.model.includes('2.5');
+
+    if (request.thinkingLevel && supportsThinking) {
+      const thinkingBudgets = {
+        'low': 2048,
+        'medium': 8192,
+        'high': 16384
+      };
+      config.thinkingConfig = {
+        thinkingBudget: thinkingBudgets[request.thinkingLevel],
+        includeThoughts: true // Enable viewing model's reasoning
+      };
+    }
+
+    // Use streaming to get live thoughts and response
+    const stream = await ai.models.generateContentStream({
+      model: request.model,
+      contents,
+      config: {
+        ...config,
+        systemInstruction: request.systemInstructions || 'You are a helpful AI assistant. Provide clear, accurate, and thoughtful responses to help with homework, coding, explanations, and general questions.'
+      }
+    });
+
+    let thoughtSummary = '';
+    let mainText = '';
+
+    for await (const chunk of stream) {
+      const parts = chunk.candidates?.[0]?.content?.parts || [];
+      for (const part of parts) {
+        if (part.text) {
+          if ((part as any).thought) {
+            thoughtSummary += part.text;
+          } else {
+            mainText += part.text;
+          }
+        }
+      }
+    }
+
+    if (!mainText) {
+      throw new Error("No response from Gemini");
+    }
+
+    return {
+      text: mainText,
+      thinking: thoughtSummary || undefined,
+      thinkingUsed: !!config.thinkingConfig
+    };
+
+  } catch (error: any) {
+    console.error('Error sending chat message:', error);
+    throw new Error(`Chat failed: ${error.message}`);
+  }
+};
+

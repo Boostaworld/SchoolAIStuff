@@ -168,9 +168,23 @@ export const HordeFeed: React.FC = () => {
                       {drop.related_concepts.length} concepts
                     </span>
                   </div>
-                  <button className="text-[10px] text-cyan-400 hover:text-cyan-300 font-mono uppercase tracking-wider transition-colors opacity-0 group-hover:opacity-100">
-                    View Full
-                  </button>
+
+                  <div className="flex items-center gap-2">
+                    {/* Image Thumbnail Preview */}
+                    {drop.attachment_url && drop.attachment_type?.startsWith('image/') && (
+                      <div className="relative w-10 h-10 rounded border border-cyan-500/30 overflow-hidden flex-shrink-0">
+                        <img
+                          src={drop.attachment_url}
+                          alt="Attachment preview"
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                    )}
+
+                    <button className="text-[10px] text-cyan-400 hover:text-cyan-300 font-mono uppercase tracking-wider transition-colors opacity-0 group-hover:opacity-100">
+                      View Full
+                    </button>
+                  </div>
                 </div>
               </motion.div>
             ))

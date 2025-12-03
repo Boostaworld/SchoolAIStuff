@@ -1,18 +1,23 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Upload, Send, X, Loader2, Image as ImageIcon, FileText, Zap, CheckCircle2, Database, BrainCircuit, Settings, Lock, Search, Sparkles } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Upload, Send, X, Loader2, Image as ImageIcon, MessageSquare, Settings as SettingsIcon, Trash2, BrainCircuit, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useOrbitStore } from '../../store/useOrbitStore';
 import { LockedResearchLab } from './LockedResearchLab';
 import { useToast } from '../Shared/ToastManager';
-import { analyzeImageWithVision, analyzeGoogleForm, VisionMessage } from '../../lib/ai/gemini';
-import { IntelResults } from '../Intel/IntelResults';
-import { SaveDropModal } from '../Intel/SaveDropModal';
-import { toast } from '@/lib/toast';
+import { analyzeImageWithVision, analyzeGoogleForm, VisionMessage, sendChatMessage, ChatRequest } from '../../lib/ai/gemini';
 import clsx from 'clsx';
 
-type Tab = 'intel' | 'vision';
+type Tab = 'chat' | 'vision';
 
-interface Message {
+interface ChatMessage {
+  id: string;
+  role: 'user' | 'model';
+  text: string;
+  thinking?: string;
+  timestamp: Date;
+}
+
+interface VisionChatMessage {
   id: string;
   role: 'user' | 'model';
   text: string;
@@ -20,131 +25,125 @@ interface Message {
   timestamp: Date;
 }
 
+const CHAT_MODELS = [
+  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', badge: 'FAST', color: 'cyan', supportsThinking: true },
+  { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', badge: 'BEST', color: 'purple', supportsThinking: true },
+  { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash Exp', badge: 'EXPERIMENTAL', color: 'amber', supportsThinking: false },
+  { id: 'gemini-3-pro-preview', name: 'Gemini 3.0 Pro Preview', badge: 'LATEST', color: 'emerald', supportsThinking: true },
+];
+
 const VISION_MODELS = [
-  { id: 'gemini-2.0-flash-exp', name: 'Flash Experimental', badge: 'FAST', color: 'cyan', requiredAccess: 'flash' },
-  { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', badge: 'BALANCED', color: 'purple', requiredAccess: 'pro' },
-  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', badge: 'VISION+', color: 'amber', requiredAccess: 'flash' },
-  { id: 'gemini-exp-1206', name: 'Gemini Experimental', badge: 'NEXT-GEN', color: 'green', requiredAccess: 'orbit-x' },
+  { id: 'gemini-3-pro-preview', name: 'Gemini 3.0 Pro Preview', badge: 'SMARTEST', color: 'emerald' },
+  { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', badge: 'BEST', color: 'purple' },
+  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', badge: 'FAST', color: 'cyan' },
 ];
 
 export const ResearchLab: React.FC = () => {
-  const { currentUser, sendIntelQuery, isIntelLoading, currentIntelResult, intelMessages, clearIntelHistory } = useOrbitStore();
+  const { currentUser } = useOrbitStore();
   const toastManager = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const visionEndRef = useRef<HTMLDivElement>(null);
 
   // Tab state
-  const [activeTab, setActiveTab] = useState<Tab>('intel');
+  const [activeTab, setActiveTab] = useState<Tab>('chat');
 
-  // Intel Engine state
-  const [intelQuery, setIntelQuery] = useState('');
-  const [showCommandDeck, setShowCommandDeck] = useState(false);
-  const [selectedIntelModel, setSelectedIntelModel] = useState<'flash' | 'pro' | 'orbit-x' | 'gemini-3-pro' | 'gemini-3-image'>('flash');
-  const [depth, setDepth] = useState(3);
-  const [researchMode, setResearchMode] = useState(false);
-  const [customInstructions, setCustomInstructions] = useState('');
+  // Chat Mode state
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [selectedChatModel, setSelectedChatModel] = useState('gemini-2.5-flash');
   const [thinkingLevel, setThinkingLevel] = useState<'low' | 'medium' | 'high'>('medium');
-  const [showSaveModal, setShowSaveModal] = useState(false);
-  const [currentQuery, setCurrentQuery] = useState('');
+  const [isChatLoading, setIsChatLoading] = useState(false);
+  const [showChatSettings, setShowChatSettings] = useState(false);
+  const [systemInstructions, setSystemInstructions] = useState('');
+  const [temperature, setTemperature] = useState(1.0);
 
   // Vision Lab state
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [visionMessages, setVisionMessages] = useState<VisionChatMessage[]>([]);
   const [visionInput, setVisionInput] = useState('');
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [selectedVisionModel, setSelectedVisionModel] = useState<string>('gemini-2.0-flash-exp');
+  const [selectedVisionModel, setSelectedVisionModel] = useState('gemini-3-pro-preview');
   const [isFormMode, setIsFormMode] = useState(false);
 
   // Access control
   const hasAccess = currentUser?.can_customize_ai;
-  const canCustomize = !!currentUser?.can_customize_ai;
-  const unlockedModels = useMemo(() => currentUser?.unlocked_models || ['flash'], [currentUser?.unlocked_models]);
-  const conversationLength = intelMessages.length;
-
-  const intelModels = [
-    { id: 'flash' as const, name: 'Flash 2.5', color: 'from-cyan-500 to-blue-500', locked: false, tier: 1 },
-    { id: 'pro' as const, name: 'Pro 2.5', color: 'from-purple-500 to-pink-500', locked: !unlockedModels.includes('pro'), tier: 2 },
-    { id: 'orbit-x' as const, name: 'Orbit-X', color: 'from-violet-500 to-indigo-500', locked: !unlockedModels.includes('orbit-x'), tier: 3 },
-    { id: 'gemini-3-pro' as const, name: 'Gemini 3.0 Pro', color: 'from-emerald-500 to-teal-500', locked: !unlockedModels.includes('gemini-3-pro'), tier: 4 },
-    { id: 'gemini-3-image' as const, name: 'Gemini 3.0 Image', color: 'from-rose-500 to-orange-500', locked: !unlockedModels.includes('gemini-3-image'), tier: 4 }
-  ];
-
-  const availableVisionModels = VISION_MODELS.filter(model => {
-    if (model.requiredAccess === 'flash') return unlockedModels.includes('flash');
-    if (model.requiredAccess === 'pro') return unlockedModels.includes('pro');
-    return false;
-  });
-
-  const supportsThinkingLevel = ['gemini-3-pro', 'gemini-3-image'].includes(selectedIntelModel);
+  const currentChatModel = CHAT_MODELS.find(m => m.id === selectedChatModel);
+  const supportsThinking = currentChatModel?.supportsThinking || false;
 
   // If no access, show locked screen
   if (!hasAccess) {
     return <LockedResearchLab />;
   }
 
-  // Auto-scroll for vision chat
+  // Auto-scroll for chat
   useEffect(() => {
-    if (activeTab === 'vision') {
+    if (activeTab === 'chat') {
       chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages, activeTab]);
+  }, [chatMessages, activeTab]);
 
-  // Intel Engine handlers
-  const handleIntelSubmit = async (e: React.FormEvent) => {
+  // Auto-scroll for vision
+  useEffect(() => {
+    if (activeTab === 'vision') {
+      visionEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [visionMessages, activeTab]);
+
+  // Chat Mode handlers
+  const handleChatSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!intelQuery.trim() || isIntelLoading) return;
+    if (!chatInput.trim() || isChatLoading) return;
 
-    setCurrentQuery(intelQuery);
-    const queryToSend = intelQuery;
-    setIntelQuery('');
+    const userMessage: ChatMessage = {
+      id: Date.now().toString(),
+      role: 'user',
+      text: chatInput,
+      timestamp: new Date()
+    };
+
+    setChatMessages(prev => [...prev, userMessage]);
+    setChatInput('');
+    setIsChatLoading(true);
+
     try {
-      const effectiveDepth = canCustomize ? depth : Math.min(depth, 3);
-      const effectiveModel = unlockedModels.includes(selectedIntelModel) ? selectedIntelModel : 'flash';
-      await sendIntelQuery(queryToSend, {
-        depthLevel: effectiveDepth,
-        modelUsed: effectiveModel,
-        researchMode,
-        customInstructions: customInstructions.trim() || undefined,
-        thinkingLevel
+      const request: ChatRequest = {
+        message: chatInput,
+        model: selectedChatModel,
+        thinkingLevel: supportsThinking ? thinkingLevel : undefined,
+        systemInstructions: systemInstructions.trim() || undefined,
+        temperature,
+        conversationHistory: chatMessages.map(msg => ({
+          role: msg.role,
+          text: msg.text
+        }))
+      };
+
+      const response = await sendChatMessage(request);
+
+      const aiMessage: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        role: 'model',
+        text: response.text,
+        thinking: response.thinking,
+        timestamp: new Date()
+      };
+
+      setChatMessages(prev => [...prev, aiMessage]);
+      toastManager.success('Response received', {
+        description: response.thinkingUsed ? 'Used thinking mode' : undefined,
+        duration: 2000
       });
-    } catch (error) {
-      // Error already handled
-    }
-  };
 
-  const handleFollowUp = async (followUpQuery: string) => {
-    try {
-      const effectiveModel = unlockedModels.includes(selectedIntelModel) ? selectedIntelModel : 'flash';
-      await sendIntelQuery(followUpQuery, {
-        modelUsed: effectiveModel,
-        conversationMode: true
+    } catch (error: any) {
+      toastManager.error('Chat failed', {
+        description: error.message || 'Please try again',
+        duration: 5000
       });
-    } catch (error) {
-      // Error already handled
+      console.error('Chat error:', error);
+    } finally {
+      setIsChatLoading(false);
     }
-  };
-
-  const openSettings = () => {
-    setSelectedIntelModel(unlockedModels.includes(selectedIntelModel) ? selectedIntelModel : 'flash');
-    setDepth(canCustomize ? depth : Math.min(depth, 3));
-    setCustomInstructions(currentUser?.intel_instructions || '');
-    setResearchMode(false);
-    setShowCommandDeck(true);
-  };
-
-  const saveSettings = () => {
-    if (!canCustomize && depth > 3) {
-      setDepth(3);
-      toast.error('Depth above 3 requires AI+ access');
-      return;
-    }
-    if (!unlockedModels.includes(selectedIntelModel)) {
-      setSelectedIntelModel('flash');
-      toast.error('Model not unlocked; using Flash');
-      return;
-    }
-    setShowCommandDeck(false);
-    toast.success('Intel settings saved');
   };
 
   // Vision Lab handlers
@@ -180,7 +179,7 @@ export const ResearchLab: React.FC = () => {
       return;
     }
 
-    const userMessage: Message = {
+    const userMessage: VisionChatMessage = {
       id: Date.now().toString(),
       role: 'user',
       text: visionInput || (isFormMode ? 'Analyze this Google Form' : 'What do you see in this image?'),
@@ -188,12 +187,12 @@ export const ResearchLab: React.FC = () => {
       timestamp: new Date()
     };
 
-    setMessages(prev => [...prev, userMessage]);
+    setVisionMessages(prev => [...prev, userMessage]);
     setVisionInput('');
     setIsAnalyzing(true);
 
     try {
-      const history: VisionMessage[] = messages.map(msg => ({
+      const history: VisionMessage[] = visionMessages.map(msg => ({
         role: msg.role,
         text: msg.text,
         image: msg.image
@@ -212,14 +211,14 @@ export const ResearchLab: React.FC = () => {
         );
       }
 
-      const aiMessage: Message = {
+      const aiMessage: VisionChatMessage = {
         id: (Date.now() + 1).toString(),
         role: 'model',
         text: response.text,
         timestamp: new Date()
       };
 
-      setMessages(prev => [...prev, aiMessage]);
+      setVisionMessages(prev => [...prev, aiMessage]);
       setUploadedImage(null);
       setIsFormMode(false);
 
@@ -304,33 +303,22 @@ export const ResearchLab: React.FC = () => {
                 CLEARANCE: AI+
               </span>
             </div>
-            {activeTab === 'intel' && (
+            {activeTab === 'chat' && (
               <div className="flex items-center gap-2">
-                {conversationLength > 0 && (
-                  <div className="flex items-center gap-2 mr-2">
-                    <span className="text-slate-600 text-xs font-mono">THREAD:</span>
-                    <span className="text-violet-400 flex items-center gap-1 text-xs font-mono">
-                      <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
-                      {Math.floor(conversationLength / 2)} msg{Math.floor(conversationLength / 2) !== 1 ? 's' : ''}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        clearIntelHistory();
-                        setCurrentQuery('');
-                      }}
-                      className="px-2 py-0.5 rounded border border-slate-700 text-[9px] uppercase tracking-wider text-slate-500 hover:text-red-400 hover:border-red-500/50 transition-colors font-mono"
-                    >
-                      Clear
-                    </button>
-                  </div>
+                {chatMessages.length > 0 && (
+                  <button
+                    onClick={() => setChatMessages([])}
+                    className="flex items-center gap-1 px-2 py-1 rounded-md border border-slate-700 text-xs uppercase tracking-wider text-slate-500 hover:text-red-400 hover:border-red-500/50 transition-colors font-mono"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Clear
+                  </button>
                 )}
                 <button
-                  type="button"
-                  onClick={openSettings}
-                  className="flex items-center gap-1 px-2 py-1 rounded-md border border-slate-800 text-[10px] uppercase tracking-wider text-slate-400 hover:text-cyan-300 hover:border-cyan-500/50 transition-colors font-mono"
+                  onClick={() => setShowChatSettings(!showChatSettings)}
+                  className="flex items-center gap-1 px-2 py-1 rounded-md border border-slate-800 text-xs uppercase tracking-wider text-slate-400 hover:text-cyan-300 hover:border-cyan-500/50 transition-colors font-mono"
                 >
-                  <Settings className="w-3.5 h-3.5" />
+                  <SettingsIcon className="w-3.5 h-3.5" />
                   Settings
                 </button>
               </div>
@@ -342,21 +330,21 @@ export const ResearchLab: React.FC = () => {
             <motion.div
               className="absolute bottom-0 h-0.5 bg-gradient-to-r from-cyan-400 to-teal-400"
               animate={{
-                left: activeTab === 'intel' ? '0%' : '50%',
+                left: activeTab === 'chat' ? '0%' : '50%',
                 width: '50%'
               }}
               transition={{ type: 'spring', stiffness: 300, damping: 30 }}
             />
             <button
-              onClick={() => setActiveTab('intel')}
+              onClick={() => setActiveTab('chat')}
               className={clsx(
                 "flex-1 px-4 py-2 font-mono text-sm font-bold uppercase tracking-wider transition-all border-2 relative overflow-hidden",
-                activeTab === 'intel'
+                activeTab === 'chat'
                   ? 'bg-cyan-500/10 border-cyan-500/50 text-cyan-300'
                   : 'bg-transparent border-slate-800 text-slate-500 hover:border-cyan-500/30 hover:text-slate-400'
               )}
             >
-              {activeTab === 'intel' && (
+              {activeTab === 'chat' && (
                 <motion.div
                   className="absolute inset-0 bg-gradient-to-b from-transparent via-cyan-500/20 to-transparent"
                   animate={{ top: ['-100%', '200%'] }}
@@ -364,8 +352,8 @@ export const ResearchLab: React.FC = () => {
                 />
               )}
               <span className="relative flex items-center justify-center gap-2">
-                <Database className="w-4 h-4" />
-                INTEL ENGINE
+                <MessageSquare className="w-4 h-4" />
+                CHAT MODE
               </span>
             </button>
             <button
@@ -395,137 +383,219 @@ export const ResearchLab: React.FC = () => {
 
       {/* Content area */}
       <AnimatePresence mode="wait">
-        {activeTab === 'intel' ? (
+        {activeTab === 'chat' ? (
           <motion.div
-            key="intel"
+            key="chat"
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 20 }}
             transition={{ duration: 0.3 }}
             className="flex-1 flex flex-col overflow-hidden"
           >
-            {/* Intel search area */}
-            <div className="p-4 border-b border-slate-800 bg-slate-900/40 space-y-3 flex-shrink-0">
-              <form onSubmit={handleIntelSubmit} className="relative">
-                <div className="relative group">
-                  <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/20 to-violet-500/20 rounded-lg opacity-0 group-focus-within:opacity-100 blur transition-opacity" />
-                  <div className="relative flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg overflow-hidden group-focus-within:border-cyan-500/50 transition-colors">
-                    <Search className="w-4 h-4 text-slate-500 ml-3" />
-                    <input
-                      type="text"
-                      value={intelQuery}
-                      onChange={(e) => setIntelQuery(e.target.value)}
-                      placeholder="Enter research query..."
-                      disabled={isIntelLoading}
-                      className="flex-1 bg-transparent px-2 py-3 text-sm text-slate-200 focus:outline-none placeholder:text-slate-600 font-mono"
-                    />
-                    <button
-                      type="submit"
-                      disabled={!intelQuery.trim() || isIntelLoading}
-                      className="px-4 py-3 bg-gradient-to-r from-cyan-600 to-violet-600 text-white font-mono text-xs uppercase tracking-wider disabled:opacity-50 disabled:cursor-not-allowed hover:from-cyan-500 hover:to-violet-500 transition-all"
-                    >
-                      {isIntelLoading ? (
-                        <span className="flex items-center gap-2">
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          PROCESSING
+            {/* Chat messages */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 relative z-10">
+              <AnimatePresence>
+                {chatMessages.map((message) => (
+                  <motion.div
+                    key={message.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.3 }}
+                    className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                  >
+                    <div className={`max-w-[80%] ${message.role === 'user' ? 'bg-cyan-950/50 border-cyan-500/50' : 'bg-slate-900/50 border-slate-700/50'} border-2 p-4 relative rounded-lg space-y-3`}>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs font-mono font-bold ${message.role === 'user' ? 'text-cyan-400' : 'text-slate-400'}`}>
+                          {message.role === 'user' ? 'YOU' : 'AI'}
                         </span>
-                      ) : (
-                        'EXECUTE'
-                      )}
-                    </button>
-                  </div>
-                </div>
-              </form>
+                        <span className="text-[10px] text-slate-600 font-mono">
+                          {message.timestamp.toLocaleTimeString()}
+                        </span>
+                      </div>
 
-              <div className="flex items-center justify-between">
-                <p className="text-[10px] text-slate-500 font-mono uppercase tracking-wide">
-                  Query structured intelligence from global sources
-                </p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setResearchMode(!researchMode);
-                  }}
-                  disabled={isIntelLoading}
-                  className={clsx(
-                    "flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all text-xs font-mono disabled:opacity-50",
-                    researchMode
-                      ? "bg-violet-500/10 border-violet-500 text-violet-300 shadow-[0_0_10px_rgba(139,92,246,0.3)]"
-                      : "bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500"
-                  )}
+                      {message.thinking && (
+                        <details className="bg-slate-800/50 rounded p-2 border border-emerald-500/30">
+                          <summary className="cursor-pointer text-xs font-mono text-emerald-400 font-bold flex items-center gap-2">
+                            <BrainCircuit className="w-3 h-3" />
+                            💭 View Thinking Process
+                          </summary>
+                          <div className="mt-2 text-xs text-slate-400 font-mono leading-relaxed whitespace-pre-wrap max-h-64 overflow-y-auto">
+                            {message.thinking}
+                          </div>
+                        </details>
+                      )}
+
+                      <p className="text-slate-300 text-sm font-mono leading-relaxed whitespace-pre-wrap">
+                        {message.text}
+                      </p>
+                    </div>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+
+              {isChatLoading && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="flex justify-start"
                 >
-                  <div className="relative">
-                    <BrainCircuit className={clsx("w-3.5 h-3.5", researchMode && "animate-pulse")} />
-                    {researchMode && (
-                      <motion.div
-                        layoutId="sparkles"
-                        className="absolute -top-1 -right-1"
-                      >
-                        <Sparkles className="w-2 h-2 text-yellow-400" />
-                      </motion.div>
-                    )}
+                  <div className="bg-slate-900/50 border-2 border-cyan-500/50 p-4 relative rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <Loader2 className="w-5 h-5 text-cyan-400 animate-spin" />
+                      <span className="text-cyan-400 font-mono text-sm font-bold">
+                        THINKING...
+                      </span>
+                    </div>
                   </div>
-                  <span>DEEP THINKING</span>
-                  {researchMode && <span className="px-1 bg-violet-600 text-white text-[9px] rounded ml-1">ACTIVE</span>}
-                </button>
-              </div>
+                </motion.div>
+              )}
+
+              {chatMessages.length === 0 && !isChatLoading && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="flex flex-col items-center justify-center h-full text-center gap-4"
+                >
+                  <div className="w-20 h-20 rounded-full bg-slate-800/50 flex items-center justify-center border border-slate-700">
+                    <MessageSquare className="w-10 h-10 text-slate-600" />
+                  </div>
+                  <div>
+                    <p className="text-slate-400 font-mono text-sm uppercase tracking-widest mb-1">Chat Mode Ready</p>
+                    <p className="text-slate-600 text-xs max-w-xs">
+                      Ask anything - homework help, coding questions, explanations, and more
+                    </p>
+                  </div>
+                </motion.div>
+              )}
+
+              <div ref={chatEndRef} />
             </div>
 
-            {/* Intel results area */}
-            <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
-              <AnimatePresence mode="wait">
-                {isIntelLoading && (
-                  <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    className="flex flex-col items-center justify-center h-full gap-6"
-                  >
-                    <div className="relative">
-                      <div className="w-20 h-20 border-4 border-slate-800 rounded-full" />
-                      <div className="absolute inset-0 w-20 h-20 border-4 border-transparent rounded-full animate-spin border-t-cyan-500 border-r-violet-500" />
-                    </div>
-                    <div className="text-center max-w-xs">
-                      <p className="font-mono text-sm uppercase tracking-widest mb-2 text-slate-400">
-                        Analyzing Query
-                      </p>
-                      <div className="flex gap-1 justify-center mt-2">
-                        <span className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-pulse" style={{ animationDelay: '0ms' }} />
-                        <span className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-pulse" style={{ animationDelay: '150ms' }} />
-                        <span className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-pulse" style={{ animationDelay: '300ms' }} />
+            {/* Chat Settings Panel */}
+            <AnimatePresence>
+              {showChatSettings && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  className="flex-shrink-0 border-t-2 border-cyan-500/30 bg-slate-900/90 backdrop-blur-sm overflow-hidden"
+                >
+                  <div className="p-4 space-y-4">
+                    {/* Model Selection */}
+                    <div>
+                      <label className="text-xs text-cyan-400 font-mono uppercase mb-2 block">Model</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        {CHAT_MODELS.map(model => (
+                          <button
+                            key={model.id}
+                            onClick={() => setSelectedChatModel(model.id)}
+                            className={`p-3 rounded-lg border-2 transition-all text-left ${selectedChatModel === model.id
+                              ? `bg-${model.color}-500/20 border-${model.color}-500 text-${model.color}-300`
+                              : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-500'
+                              }`}
+                          >
+                            <div className="text-sm font-bold font-mono">{model.name}</div>
+                            <div className="text-xs opacity-70 mt-1">{model.badge}</div>
+                          </button>
+                        ))}
                       </div>
                     </div>
-                  </motion.div>
-                )}
 
-                {!isIntelLoading && currentIntelResult && (
-                  <IntelResults
-                    result={currentIntelResult}
-                    query={currentQuery}
-                    onSave={() => setShowSaveModal(true)}
-                    onFollowUp={handleFollowUp}
-                    isLoading={isIntelLoading}
-                  />
-                )}
+                    {/* Thinking Level */}
+                    {supportsThinking && (
+                      <div>
+                        <label className="text-xs text-cyan-400 font-mono uppercase mb-2 block flex items-center gap-2">
+                          <BrainCircuit className="w-3 h-3" />
+                          Thinking Level
+                        </label>
+                        <div className="grid grid-cols-3 gap-2">
+                          {['low', 'medium', 'high'].map((level) => (
+                            <button
+                              key={level}
+                              onClick={() => setThinkingLevel(level as typeof thinkingLevel)}
+                              className={`px-4 py-2 rounded-lg border-2 transition-all text-sm font-mono uppercase ${thinkingLevel === level
+                                ? 'bg-emerald-500 border-emerald-400 text-white'
+                                : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-500'
+                                }`}
+                            >
+                              {level}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
-                {!isIntelLoading && !currentIntelResult && (
-                  <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    className="flex flex-col items-center justify-center h-full text-center gap-4"
-                  >
-                    <div className="w-20 h-20 rounded-full bg-slate-800/50 flex items-center justify-center border border-slate-700">
-                      <Database className="w-10 h-10 text-slate-600" />
-                    </div>
+                    {/* System Instructions */}
                     <div>
-                      <p className="text-slate-400 font-mono text-sm uppercase tracking-widest mb-1">No Active Query</p>
-                      <p className="text-slate-600 text-xs max-w-xs">
-                        Execute a research query to generate structured intelligence dossiers
-                      </p>
+                      <label className="text-xs text-cyan-400 font-mono uppercase mb-2 block">System Instructions (Optional)</label>
+                      <textarea
+                        value={systemInstructions}
+                        onChange={(e) => setSystemInstructions(e.target.value)}
+                        placeholder="E.g., 'Always respond in simple terms' or 'Focus on Python examples'"
+                        className="w-full h-20 bg-slate-950/50 border border-cyan-500/30 rounded-lg px-4 py-3 text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500/50 font-mono resize-none"
+                      />
                     </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+
+                    {/* Temperature */}
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="text-xs text-cyan-400 font-mono uppercase">Temperature: {temperature}</label>
+                        <span className="text-xs text-slate-500 font-mono">
+                          {temperature < 0.4 ? 'Precise' : temperature < 0.8 ? 'Balanced' : 'Creative'}
+                        </span>
+                      </div>
+                      {selectedChatModel.includes('gemini-3') && (
+                        <div className="mb-2 px-2 py-1 bg-emerald-500/10 border border-emerald-500/30 rounded text-xs text-emerald-300 font-mono">
+                          ⚠️ Gemini 3 optimized for temperature 1.0
+                        </div>
+                      )}
+                      <input
+                        type="range"
+                        min="0"
+                        max="2"
+                        step="0.1"
+                        value={temperature}
+                        onChange={(e) => setTemperature(parseFloat(e.target.value))}
+                        disabled={selectedChatModel.includes('gemini-3')}
+                        className="w-full"
+                      />
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Chat input area */}
+            <div className="flex-shrink-0 border-t-2 border-cyan-500/30 bg-black/40 backdrop-blur-sm p-4 relative z-10">
+              <form onSubmit={handleChatSubmit} className="flex gap-3">
+                <input
+                  type="text"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  placeholder="Ask me anything..."
+                  disabled={isChatLoading}
+                  className="flex-1 px-4 py-3 bg-slate-900/50 border-2 border-cyan-500/30 text-slate-300 font-mono text-sm focus:outline-none focus:border-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-slate-600 transition-all rounded-lg"
+                />
+
+                <button
+                  type="submit"
+                  disabled={isChatLoading || !chatInput.trim()}
+                  className="px-6 py-3 bg-cyan-600 border-2 border-cyan-500 text-black hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-mono font-bold text-sm flex items-center gap-2 rounded-lg"
+                >
+                  {isChatLoading ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      THINKING
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-5 h-5" />
+                      SEND
+                    </>
+                  )}
+                </button>
+              </form>
             </div>
           </motion.div>
         ) : (
@@ -544,9 +614,9 @@ export const ResearchLab: React.FC = () => {
                 <select
                   value={selectedVisionModel}
                   onChange={(e) => setSelectedVisionModel(e.target.value)}
-                  className="bg-slate-900/50 border border-orange-500/30 text-orange-300 px-3 py-1 text-xs font-mono focus:outline-none focus:border-orange-500 transition-colors"
+                  className="bg-slate-900/50 border border-orange-500/30 text-orange-300 px-3 py-1 text-xs font-mono focus:outline-none focus:border-orange-500 transition-colors rounded"
                 >
-                  {availableVisionModels.map(model => (
+                  {VISION_MODELS.map(model => (
                     <option key={model.id} value={model.id}>
                       {model.name}
                     </option>
@@ -558,22 +628,16 @@ export const ResearchLab: React.FC = () => {
             {/* Vision chat messages */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4 relative z-10">
               <AnimatePresence>
-                {messages.map((message, index) => (
+                {visionMessages.map((message) => (
                   <motion.div
                     key={message.id}
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0 }}
-                    transition={{ duration: 0.3, delay: index * 0.05 }}
+                    transition={{ duration: 0.3 }}
                     className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
                   >
-                    <div className={`max-w-[80%] ${message.role === 'user' ? 'bg-orange-950/50 border-orange-500/50' : 'bg-slate-900/50 border-slate-700/50'} border-2 p-4 relative`}>
-                      {/* Corner brackets */}
-                      <div className="absolute top-0 left-0 w-3 h-3 border-t-2 border-l-2 border-current opacity-50" />
-                      <div className="absolute top-0 right-0 w-3 h-3 border-t-2 border-r-2 border-current opacity-50" />
-                      <div className="absolute bottom-0 left-0 w-3 h-3 border-b-2 border-l-2 border-current opacity-50" />
-                      <div className="absolute bottom-0 right-0 w-3 h-3 border-b-2 border-r-2 border-current opacity-50" />
-
+                    <div className={`max-w-[80%] ${message.role === 'user' ? 'bg-orange-950/50 border-orange-500/50' : 'bg-slate-900/50 border-slate-700/50'} border-2 p-4 relative rounded-lg`}>
                       <div className="flex items-center gap-2 mb-2">
                         <span className={`text-xs font-mono font-bold ${message.role === 'user' ? 'text-orange-400' : 'text-slate-400'}`}>
                           {message.role === 'user' ? 'OPERATOR' : 'AI ANALYSIS'}
@@ -607,27 +671,18 @@ export const ResearchLab: React.FC = () => {
                   animate={{ opacity: 1 }}
                   className="flex justify-start"
                 >
-                  <div className="bg-slate-900/50 border-2 border-orange-500/50 p-4 relative">
-                    <div className="absolute top-0 left-0 w-3 h-3 border-t-2 border-l-2 border-orange-500" />
-                    <div className="absolute top-0 right-0 w-3 h-3 border-t-2 border-r-2 border-orange-500" />
-
+                  <div className="bg-slate-900/50 border-2 border-orange-500/50 p-4 relative rounded-lg">
                     <div className="flex items-center gap-3">
                       <Loader2 className="w-5 h-5 text-orange-400 animate-spin" />
                       <span className="text-orange-400 font-mono text-sm font-bold">
                         ANALYZING...
                       </span>
                     </div>
-
-                    <motion.div
-                      className="absolute inset-0 bg-gradient-to-b from-transparent via-orange-500/20 to-transparent"
-                      animate={{ top: ['-100%', '200%'] }}
-                      transition={{ duration: 1.5, repeat: Infinity, ease: 'linear' }}
-                    />
                   </div>
                 </motion.div>
               )}
 
-              <div ref={chatEndRef} />
+              <div ref={visionEndRef} />
             </div>
 
             {/* Image preview */}
@@ -644,17 +699,12 @@ export const ResearchLab: React.FC = () => {
                       <img
                         src={uploadedImage}
                         alt="Preview"
-                        className="w-32 h-32 object-cover border-2 border-orange-500/50"
-                      />
-                      <motion.div
-                        className="absolute inset-0 bg-gradient-to-b from-transparent via-orange-500/30 to-transparent"
-                        animate={{ top: ['-100%', '100%'] }}
-                        transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
+                        className="w-32 h-32 object-cover border-2 border-orange-500/50 rounded"
                       />
                     </div>
                     <div className="flex-1">
                       <div className="flex items-center gap-2 mb-2">
-                        <CheckCircle2 className="w-4 h-4 text-green-400" />
+                        <Sparkles className="w-4 h-4 text-green-400" />
                         <span className="text-green-400 font-mono text-xs font-bold">
                           IMAGE LOADED
                         </span>
@@ -665,31 +715,28 @@ export const ResearchLab: React.FC = () => {
                       <div className="flex gap-2">
                         <button
                           onClick={() => setIsFormMode(false)}
-                          className={`px-3 py-1 text-xs font-mono font-bold border-2 transition-all ${
-                            !isFormMode
-                              ? 'bg-orange-500/20 border-orange-500 text-orange-300'
-                              : 'bg-transparent border-slate-700 text-slate-500 hover:border-orange-500/50'
-                          }`}
+                          className={`px-3 py-1 text-xs font-mono font-bold border-2 transition-all rounded ${!isFormMode
+                            ? 'bg-orange-500/20 border-orange-500 text-orange-300'
+                            : 'bg-transparent border-slate-700 text-slate-500 hover:border-orange-500/50'
+                            }`}
                         >
                           <ImageIcon className="w-3 h-3 inline mr-1" />
                           GENERAL
                         </button>
                         <button
                           onClick={() => setIsFormMode(true)}
-                          className={`px-3 py-1 text-xs font-mono font-bold border-2 transition-all ${
-                            isFormMode
-                              ? 'bg-amber-500/20 border-amber-500 text-amber-300'
-                              : 'bg-transparent border-slate-700 text-slate-500 hover:border-amber-500/50'
-                          }`}
+                          className={`px-3 py-1 text-xs font-mono font-bold border-2 transition-all rounded ${isFormMode
+                            ? 'bg-amber-500/20 border-amber-500 text-amber-300'
+                            : 'bg-transparent border-slate-700 text-slate-500 hover:border-amber-500/50'
+                            }`}
                         >
-                          <FileText className="w-3 h-3 inline mr-1" />
                           GOOGLE FORM
                         </button>
                       </div>
                     </div>
                     <button
                       onClick={() => setUploadedImage(null)}
-                      className="flex-shrink-0 p-2 bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20 transition-colors"
+                      className="flex-shrink-0 p-2 bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20 transition-colors rounded"
                     >
                       <X className="w-4 h-4" />
                     </button>
@@ -713,7 +760,7 @@ export const ResearchLab: React.FC = () => {
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={isAnalyzing}
-                  className="px-4 py-3 bg-slate-900 border-2 border-orange-500/30 text-orange-400 hover:border-orange-500 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-mono text-sm font-bold"
+                  className="px-4 py-3 bg-slate-900 border-2 border-orange-500/30 text-orange-400 hover:border-orange-500 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-mono text-sm font-bold rounded-lg"
                 >
                   <Upload className="w-5 h-5" />
                 </button>
@@ -724,13 +771,13 @@ export const ResearchLab: React.FC = () => {
                   onChange={(e) => setVisionInput(e.target.value)}
                   placeholder={uploadedImage ? "Enter your question... (optional)" : "Upload or paste an image first (Ctrl+V)"}
                   disabled={isAnalyzing || !uploadedImage}
-                  className="flex-1 px-4 py-3 bg-slate-900/50 border-2 border-orange-500/30 text-slate-300 font-mono text-sm focus:outline-none focus:border-orange-500 disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-slate-600 transition-all"
+                  className="flex-1 px-4 py-3 bg-slate-900/50 border-2 border-orange-500/30 text-slate-300 font-mono text-sm focus:outline-none focus:border-orange-500 disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-slate-600 transition-all rounded-lg"
                 />
 
                 <button
                   type="submit"
                   disabled={isAnalyzing || !uploadedImage}
-                  className="px-6 py-3 bg-orange-600 border-2 border-orange-500 text-black hover:bg-orange-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-mono font-bold text-sm flex items-center gap-2"
+                  className="px-6 py-3 bg-orange-600 border-2 border-orange-500 text-black hover:bg-orange-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-mono font-bold text-sm flex items-center gap-2 rounded-lg"
                 >
                   {isAnalyzing ? (
                     <>
@@ -752,196 +799,6 @@ export const ResearchLab: React.FC = () => {
               </div>
             </div>
           </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Command Deck Modal */}
-      <AnimatePresence>
-        {showCommandDeck && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-xl flex items-center justify-center p-4"
-            onClick={() => setShowCommandDeck(false)}
-          >
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-4xl bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden"
-            >
-              <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/70">
-                <div className="text-sm font-mono text-slate-400 uppercase tracking-wider">Intel Command Deck</div>
-                <button
-                  onClick={() => setShowCommandDeck(false)}
-                  className="flex items-center gap-1 px-2 py-1 rounded-md border border-slate-700 text-slate-400 hover:text-cyan-300 hover:border-cyan-500/50 transition-colors"
-                >
-                  <X className="w-3.5 h-3.5" />
-                  Close
-                </button>
-              </div>
-
-              <div className="p-4 space-y-6">
-                {/* Model Selection */}
-                <div>
-                  <label className="text-xs text-blue-400 font-mono uppercase mb-2 block">AI Model</label>
-                  <div className="grid grid-cols-3 gap-3">
-                    {intelModels.map(model => (
-                      <button
-                        key={model.id}
-                        onClick={() => {
-                          if (model.locked) {
-                            toast.error('Model not unlocked. Ask owner for access.');
-                            return;
-                          }
-                          setSelectedIntelModel(model.id);
-                        }}
-                        className={`relative p-4 rounded-xl border-2 transition-all ${
-                          selectedIntelModel === model.id
-                            ? `bg-gradient-to-br ${model.color} border-transparent text-white shadow-[0_0_20px_rgba(59,130,246,0.5)]`
-                            : model.locked
-                            ? 'bg-slate-800/30 border-slate-700 text-slate-600 cursor-not-allowed'
-                            : 'bg-slate-800/50 border-blue-500/30 text-slate-300 hover:border-blue-500/50'
-                        }`}
-                      >
-                        {model.locked && (
-                          <div className="absolute top-2 right-2">
-                            <Lock className="w-4 h-4 text-red-400" />
-                          </div>
-                        )}
-                        <div className="text-sm font-bold">{model.name}</div>
-                        <div className="text-xs opacity-70 mt-1">Tier {model.tier}</div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Thinking Level */}
-                {supportsThinkingLevel && (
-                  <div>
-                    <label className="text-xs text-emerald-400 font-mono uppercase mb-2 block flex items-center gap-2">
-                      <BrainCircuit className="w-3 h-3" />
-                      Thinking Level
-                    </label>
-                    <div className="grid grid-cols-3 gap-2">
-                      {['low', 'medium', 'high'].map((level) => (
-                        <button
-                          key={level}
-                          onClick={() => setThinkingLevel(level as typeof thinkingLevel)}
-                          className={`px-4 py-2 rounded-lg border-2 transition-all text-sm font-mono uppercase ${
-                            thinkingLevel === level
-                              ? 'bg-emerald-500 border-emerald-400 text-white'
-                              : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-500'
-                          }`}
-                        >
-                          {level}
-                        </button>
-                      ))}
-                    </div>
-                    <p className="text-xs text-slate-500 mt-1 font-mono">
-                      {thinkingLevel === 'low' ? 'Fast, simple reasoning' : thinkingLevel === 'medium' ? 'Balanced thinking' : 'Deep, complex analysis'}
-                    </p>
-                  </div>
-                )}
-
-                {/* Depth */}
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-xs text-blue-400 font-mono uppercase flex items-center gap-2">
-                      Depth (1-9)
-                    </label>
-                    {!canCustomize && <span className="text-[11px] text-red-400 font-mono">AI+ required for 4-9</span>}
-                  </div>
-                  <input
-                    type="range"
-                    min={1}
-                    max={9}
-                    value={depth}
-                    onChange={(e) => {
-                      const next = parseInt(e.target.value);
-                      if (!canCustomize && next > 3) {
-                        setDepth(3);
-                        toast.error('Depth above 3 requires AI+ access.');
-                        return;
-                      }
-                      setDepth(next);
-                    }}
-                    className="w-full h-3 bg-slate-800 rounded-full appearance-none cursor-pointer"
-                    style={{
-                      background: `linear-gradient(to right, rgb(6 182 212) 0%, rgb(147 51 234) ${((depth - 1) / 8) * 100}%, rgb(239 68 68) 100%)`
-                    }}
-                  />
-                  <p className="text-xs text-slate-500 mt-1 font-mono">
-                    {depth <= 3 ? 'Surface (fast, bullet points)' : depth <= 6 ? 'Standard (academic, citations)' : 'Abyss (slow, deep analysis)'}
-                  </p>
-                </div>
-
-                {/* Research Mode */}
-                <div className="flex items-center justify-between bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-3">
-                  <div>
-                    <p className="text-sm text-slate-200 font-medium">Research Mode</p>
-                    <p className="text-xs text-slate-500">Forces structured JSON output</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setResearchMode(!researchMode)}
-                    className={`relative w-14 h-7 rounded-full transition-all ${researchMode ? 'bg-blue-500' : 'bg-slate-700'}`}
-                  >
-                    <motion.div
-                      animate={{ x: researchMode ? 28 : 2 }}
-                      className="absolute top-1 w-5 h-5 bg-white rounded-full shadow-lg"
-                    />
-                  </button>
-                </div>
-
-                {/* Custom Instructions */}
-                <div>
-                  <label className="text-xs text-blue-400 font-mono uppercase mb-2 block flex items-center gap-2">
-                    <Settings className="w-3 h-3" />
-                    Custom Instructions
-                  </label>
-                  <textarea
-                    value={customInstructions}
-                    onChange={(e) => setCustomInstructions(e.target.value)}
-                    placeholder={canCustomize ? 'Provide comprehensive, factual research with credible sources.' : 'AI+ required for custom instructions.'}
-                    disabled={!canCustomize}
-                    className="w-full h-24 bg-slate-950/50 border border-blue-500/30 rounded-lg px-4 py-3 text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-blue-500/50 font-mono resize-none disabled:opacity-50"
-                  />
-                  {!canCustomize && (
-                    <p className="text-[11px] text-red-400 font-mono mt-1">Custom instructions require AI+ access.</p>
-                  )}
-                </div>
-
-                {/* Save button */}
-                <div className="flex justify-end gap-2">
-                  <button
-                    onClick={() => setShowCommandDeck(false)}
-                    className="px-4 py-2 bg-slate-800 text-slate-200 rounded-lg text-sm font-mono uppercase tracking-wider border border-slate-700 hover:border-slate-500 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={saveSettings}
-                    className="px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg text-sm font-mono uppercase tracking-wider shadow-[0_0_14px_rgba(59,130,246,0.3)]"
-                  >
-                    Save Settings
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Save Modal */}
-      <AnimatePresence>
-        {showSaveModal && currentIntelResult && (
-          <SaveDropModal
-            query={currentQuery}
-            onClose={() => setShowSaveModal(false)}
-          />
         )}
       </AnimatePresence>
 

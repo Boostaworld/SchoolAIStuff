@@ -76,7 +76,7 @@ interface OrbitState {
   clearIntelHistory: () => void;
   setIntelInstructions: (instructions: string) => void;
   saveIntelDrop: (query: string, isPrivate: boolean) => Promise<void>;
-  publishManualDrop: (title: string, content: string, tags?: string[]) => Promise<void>;
+  publishManualDrop: (title: string, content: string, tags?: string[], attachmentFile?: File) => Promise<void>;
   deleteIntelDrop: (id: string) => Promise<void>; // Admin-only deletion
   fetchIntelDrops: () => Promise<void>;
 
@@ -292,7 +292,23 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
           })
           .subscribe();
 
-        // 4. Setup Realtime DM Message Listeners
+        // 4. Setup Realtime DM Channel Listeners
+        supabase.channel('public:dm_channels')
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'dm_channels' }, (payload: any) => {
+            const userId = get().currentUser?.id;
+            if (!userId) return;
+
+            const involvesUser =
+              (payload.new && (payload.new.user1_id === userId || payload.new.user2_id === userId)) ||
+              (payload.old && (payload.old.user1_id === userId || payload.old.user2_id === userId));
+
+            if (involvesUser) {
+              get().fetchDMChannels();
+            }
+          })
+          .subscribe();
+
+        // 5. Setup Realtime DM Message Listeners
         supabase.channel('public:messages')
           .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload: any) => {
             const newMessage = payload.new as Message;
@@ -320,7 +336,7 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
           })
           .subscribe();
 
-        // 5. Setup Realtime Reaction Listeners
+        // 6. Setup Realtime Reaction Listeners
         supabase.channel('public:message_reactions')
           .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'message_reactions' }, (payload: any) => {
             const newReaction = payload.new as MessageReaction;
@@ -351,7 +367,7 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
           })
           .subscribe();
 
-        // 6. Setup Realtime Notification Listeners
+        // 7. Setup Realtime Notification Listeners
         supabase.channel('public:notifications')
           .on('postgres_changes', {
             event: 'INSERT',
@@ -474,28 +490,50 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     };
     set((state) => ({ tasks: [...state.tasks, optimisticTask] }));
 
-    // 2. AI Analysis if difficulty not manually set
-    let difficulty = task.difficulty;
-    if (!difficulty) {
-      const analysis = await assessTaskDifficulty(optimisticTask.title);
-      difficulty = analysis.difficulty;
-    }
+    try {
+      // 2. AI Analysis if difficulty not manually set
+      let difficulty = task.difficulty;
+      if (!difficulty) {
+        const analysis = await assessTaskDifficulty(optimisticTask.title);
+        difficulty = analysis.difficulty;
+      }
 
-    // 3. DB Insert
-    const { data, error } = await supabase.from('tasks').insert({
-      user_id: currentUser.id,
-      title: optimisticTask.title,
-      category: optimisticTask.category,
-      difficulty: difficulty,
-      completed: false,
-      is_public: task.is_public || false
-    }).select().single();
+      // 3. DB Insert with profile join (matching initialization query format)
+      const { data, error } = await supabase.from('tasks').insert({
+        user_id: currentUser.id,
+        title: optimisticTask.title,
+        category: optimisticTask.category,
+        difficulty: difficulty,
+        completed: false,
+        is_public: task.is_public || false
+      }).select(`
+        *,
+        profiles!tasks_user_id_fkey(username, avatar_url)
+      `).single();
 
-    // 4. Reconcile Optimistic Task with Real DB Task
-    if (data && !error) {
+      // 4. Handle errors properly - throw if insert failed
+      if (error) {
+        console.error('Task creation failed:', error);
+        // Remove optimistic task on failure
+        set((state) => ({
+          tasks: state.tasks.filter(t => t.id !== tempId)
+        }));
+        throw error;
+      }
+
+      // 5. Reconcile Optimistic Task with Real DB Task
+      if (data) {
+        set((state) => ({
+          tasks: state.tasks.map(t => t.id === tempId ? data as Task : t)
+        }));
+      }
+    } catch (err) {
+      console.error('Error in addTask:', err);
+      // Ensure optimistic task is removed on any error
       set((state) => ({
-        tasks: state.tasks.map(t => t.id === tempId ? data as Task : t)
+        tasks: state.tasks.filter(t => t.id !== tempId)
       }));
+      throw err; // Re-throw so UI can handle it
     }
   },
 
@@ -883,9 +921,31 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     set({ intelDrops: mappedDrops });
   },
 
-  publishManualDrop: async (title: string, content: string, tags: string[] = []) => {
+  publishManualDrop: async (title: string, content: string, tags: string[] = [], attachmentFile?: File) => {
     const { currentUser } = get();
     if (!currentUser) return;
+
+    // Handle file upload if present
+    let attachmentUrl = null;
+    let attachmentType = null;
+
+    if (attachmentFile) {
+      const filePath = `${currentUser.id}/${Date.now()}_${attachmentFile.name}`;
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('intel_attachments')
+        .upload(filePath, attachmentFile);
+
+      if (uploadError) {
+        console.error('File upload error:', uploadError);
+      } else {
+        const { data: urlData } = supabase.storage
+          .from('intel_attachments')
+          .getPublicUrl(uploadData.path);
+
+        attachmentUrl = urlData.publicUrl;
+        attachmentType = attachmentFile.type;
+      }
+    }
 
     // Create a manual drop by structuring the content
     const { data, error } = await supabase
@@ -896,7 +956,9 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
         summary_bullets: [content], // Treat the main content as a single bullet point or summary
         sources: [],
         related_concepts: ['Manual Broadcast', ...tags],
-        is_private: false // Manual posts are usually public transmissions
+        is_private: false, // Manual posts are usually public transmissions
+        attachment_url: attachmentUrl,
+        attachment_type: attachmentType
       })
       .select()
       .single();
@@ -978,32 +1040,45 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
   },
 
   createOrGetChannel: async (otherUserId: string) => {
-    const { currentUser } = get();
+    const { currentUser, fetchDMChannels } = get();
     if (!currentUser) throw new Error('Not authenticated');
 
     const [user1, user2] = [currentUser.id, otherUserId].sort();
 
-    // Try to insert new channel
-    const { data, error } = await supabase
-      .from('dm_channels')
-      .insert({ user1_id: user1, user2_id: user2 })
-      .select()
-      .single();
-
-    // If channel already exists (unique constraint violation)
-    if (error?.code === '23505') {
-      const { data: existing } = await supabase
+    try {
+      // Try to insert new channel
+      const { data, error } = await supabase
         .from('dm_channels')
+        .insert({ user1_id: user1, user2_id: user2 })
         .select()
-        .eq('user1_id', user1)
-        .eq('user2_id', user2)
         .single();
 
-      return existing!.id;
-    }
+      // If channel already exists (unique constraint violation), fetch it
+      if (error?.code === '23505') {
+        const { data: existing, error: existingError } = await supabase
+          .from('dm_channels')
+          .select()
+          .eq('user1_id', user1)
+          .eq('user2_id', user2)
+          .single();
 
-    if (error) throw error;
-    return data.id;
+        if (existingError) throw existingError;
+        await fetchDMChannels();
+        return existing!.id;
+      }
+
+      if (error) throw error;
+
+      await fetchDMChannels();
+      return data.id;
+    } catch (error: any) {
+      if (missingTable(error, 'public.dm_channels')) {
+        console.warn('Comms: dm_channels table not found; run sql/add_dm_comms.sql');
+      }
+      const { toast } = await import('../lib/toast');
+      toast.error(error?.message || 'Failed to initialize uplink.');
+      throw error;
+    }
   },
 
   fetchMessages: async (channelId: string) => {

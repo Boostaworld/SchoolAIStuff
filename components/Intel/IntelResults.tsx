@@ -62,6 +62,27 @@ export const IntelResults: React.FC<IntelResultsProps> = ({ result, query, onSav
             </button>
           )}
         </div>
+
+        {/* Attached Image - Subtle display below query */}
+        {result.attachment_url && result.attachment_type?.startsWith('image/') && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1 }}
+            className="mt-4 rounded-lg overflow-hidden border border-cyan-500/30 hover:border-cyan-500/50 transition-colors cursor-pointer max-w-sm"
+            onClick={() => window.open(result.attachment_url, '_blank')}
+          >
+            <img
+              src={result.attachment_url}
+              alt="Transmission attachment"
+              className="w-full h-auto object-cover max-h-64 hover:opacity-90 transition-opacity"
+              loading="lazy"
+            />
+            <div className="px-2 py-1 bg-slate-900/80 text-[9px] text-slate-500 font-mono uppercase tracking-wider text-center">
+              Click to expand
+            </div>
+          </motion.div>
+        )}
       </div>
 
       {/* Response Content - Different rendering for conversation vs research */}

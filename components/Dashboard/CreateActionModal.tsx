@@ -35,9 +35,15 @@ export const CreateActionModal: React.FC<CreateActionModalProps> = ({ onClose })
         if (!taskTitle.trim()) return;
         setIsSubmitting(true);
         try {
+            // Map difficulty to category (Easy=Quick, Medium=Grind, Hard=Cooked)
+            const categoryMap = {
+                'Easy': 'Quick',
+                'Medium': 'Grind',
+                'Hard': 'Cooked'
+            };
             await addTask({
                 title: taskTitle,
-                category: taskCourse || 'Grind', // Map Course to Category
+                category: categoryMap[taskDifficulty], // Use difficulty-based category
                 difficulty: taskDifficulty,
                 is_public: !taskPrivate // Invert because UI says "private" but DB stores "public"
             });
@@ -56,8 +62,7 @@ export const CreateActionModal: React.FC<CreateActionModalProps> = ({ onClose })
         try {
             // Tag handling
             const tags = postTag ? [postTag] : [];
-            // TODO: Pass selectedFile to publishManualDrop when backend supports it
-            await publishManualDrop(postSubject, postContent, tags);
+            await publishManualDrop(postSubject, postContent, tags, selectedFile || undefined);
             onClose();
         } catch (err) {
             console.error(err);

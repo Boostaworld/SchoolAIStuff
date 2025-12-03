@@ -19,7 +19,7 @@ interface ProfileModalProps {
 }
 
 export const ProfileModal: React.FC<ProfileModalProps> = ({ profile, onClose }) => {
-  const { createOrGetChannel, setActiveChannel, toggleCommsPanel, currentUser } = useOrbitStore();
+  const { createOrGetChannel, setActiveChannel, currentUser } = useOrbitStore();
   const [showPublicPreview, setShowPublicPreview] = useState(false);
 
   const reliability = profile.tasks_completed > 0
@@ -34,7 +34,9 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ profile, onClose }) 
     try {
       const channelId = await createOrGetChannel(profile.id);
       setActiveChannel(channelId);
-      toggleCommsPanel();
+      if (typeof window !== 'undefined') {
+        window.location.hash = '#comms';
+      }
       onClose();
     } catch (error) {
       console.error('Failed to initialize uplink:', error);

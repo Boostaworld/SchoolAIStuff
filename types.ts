@@ -71,6 +71,9 @@ export interface IntelDrop {
   related_concepts: string[];
   is_private: boolean;
   created_at: string;
+  attachment_url?: string;
+  attachment_type?: string;
+  essay?: string;
 }
 
 // ============================================

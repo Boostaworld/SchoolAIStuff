@@ -1,13 +1,14 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Nebula } from '../Trails/Nebula';
 import { OracleWidget } from '../Oracle/OracleWidget';
 import { HordeFeed } from '../Horde/HordeFeed';
 import { TaskBoard } from './TaskBoard';
+import { PublicTaskMarketplace } from './PublicTaskMarketplace';
 import { IntelPanel } from '../Intel/IntelPanel';
 import { OperativeSearchPanel } from '../Operative/OperativeSearchPanel';
 import { EditIdentityModal } from '../Registry/EditIdentityModal';
 import { CreateActionModal } from './CreateActionModal';
-import { LayoutGrid, Database, Users, Bell, LogOut, Edit3, Plus, MessageSquare, Map, Zap, Flag, Coins, Shield, Menu, X, Sparkles, Microscope } from 'lucide-react';
+import { LayoutGrid, Database, Users, Bell, LogOut, Edit3, Plus, MessageSquare, Map, Zap, Flag, Coins, Shield, Menu, X, Sparkles, Microscope, Briefcase } from 'lucide-react';
 import clsx from 'clsx';
 import { useOrbitStore } from '../../store/useOrbitStore';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -23,6 +24,7 @@ import { PassiveMiner } from '../Economy/PassiveMiner';
 import { TheVault } from '../Economy/TheVault';
 import { GodModePanel } from '../Admin/GodModePanel';
 import { ResearchLab } from '../Research/ResearchLab';
+import CommsPage from '../Social/CommsPage';
 
 import RacingTerminal from '../Training/RacingTerminal';
 import { TypingChallenge } from '../../types';
@@ -30,7 +32,7 @@ import { useToast } from '../Shared/ToastManager';
 import { CoinAnimation } from '../Shared/CoinAnimation';
 import { WRITING_FALLBACK_CHALLENGES } from '../Training/writingFallbacks';
 
-type ViewState = 'dashboard' | 'intel' | 'registry' | 'notifications' | 'comms' | 'constellation' | 'training' | 'race' | 'economy' | 'research' | 'admin';
+type ViewState = 'dashboard' | 'intel' | 'registry' | 'notifications' | 'comms' | 'constellation' | 'training' | 'race' | 'economy' | 'research' | 'admin' | 'marketplace';
 
 const defaultRaceChallenge: TypingChallenge = {
   id: 'race-demo',
@@ -82,6 +84,37 @@ export const Dashboard: React.FC = () => {
     fetchNotifications
   } = useOrbitStore();
   const isAdminUser = currentUser?.is_admin;
+
+  // Hash-based navigation for shareable tabs (comms, research, intel)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const syncFromHash = () => {
+      const hash = window.location.hash.slice(1); // Remove #
+      const shareableTabs: ViewState[] = ['comms', 'research', 'intel'];
+
+      if (hash && shareableTabs.includes(hash as ViewState)) {
+        setActiveView(hash as ViewState);
+      }
+    };
+    syncFromHash();
+    window.addEventListener('hashchange', syncFromHash);
+    return () => window.removeEventListener('hashchange', syncFromHash);
+  }, []);
+
+  // Update hash when activeView changes (for shareable tabs only)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const shareableTabs: ViewState[] = ['comms', 'research', 'intel'];
+
+    if (shareableTabs.includes(activeView)) {
+      window.location.hash = activeView;
+    } else {
+      // Clear hash for local tabs
+      if (window.location.hash) {
+        history.pushState("", document.title, window.location.pathname + window.location.search);
+      }
+    }
+  }, [activeView]);
   const addCounts = React.useCallback((challenge: TypingChallenge) => {
     const wordCount = challenge.text_content.trim().split(/\s+/).length;
     return {
@@ -214,9 +247,9 @@ export const Dashboard: React.FC = () => {
               tasksCompleted: p.tasks_completed || 0,
               tasksForfeited: p.tasks_forfeited || 0,
               streakDays: 0
-          }
-        })));
-      }
+            }
+          })));
+        }
       } catch (err) {
         console.error('❌ Constellation Map - Error fetching users:', err);
       }
@@ -297,7 +330,7 @@ export const Dashboard: React.FC = () => {
             ? "lg:-translate-x-full" + (isSidebarOpen ? " translate-x-0" : " -translate-x-full")
             : isSidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         )}>
-        <div className="flex items-center justify-between w-full px-4 lg:justify-center lg:px-0">
+          <div className="flex items-center justify-between w-full px-4 lg:justify-center lg:px-0">
             <div className="w-10 h-10 rounded-xl bg-violet-600 flex items-center justify-center shadow-[0_0_15px_rgba(124,58,237,0.5)]">
               <LayoutGrid className="text-white w-6 h-6" />
             </div>
@@ -342,6 +375,23 @@ export const Dashboard: React.FC = () => {
             >
               <LayoutGrid className="w-5 h-5 flex-shrink-0" />
               <span className="lg:hidden text-sm font-mono">Dashboard</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setActiveView('marketplace');
+                setIsSidebarOpen(false);
+              }}
+              className={clsx(
+                "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 flex items-center gap-3 lg:justify-center",
+                activeView === 'marketplace'
+                  ? "bg-slate-800 text-amber-400 border-slate-700 shadow-lg shadow-amber-900/20"
+                  : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
+              )}
+              title="Public Contracts"
+            >
+              <Briefcase className="w-5 h-5 flex-shrink-0" />
+              <span className="lg:hidden text-sm font-mono">Marketplace</span>
             </button>
 
             <button
@@ -412,41 +462,8 @@ export const Dashboard: React.FC = () => {
               <span className="lg:hidden text-sm font-mono">Comms</span>
             </button>
 
-            <button
-              onClick={() => {
-                setActiveView('training');
-                setIsSidebarOpen(false);
-              }}
-              className={clsx(
-                "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 flex items-center gap-3 lg:justify-center",
-                activeView === 'training'
-                  ? "bg-slate-800 text-violet-400 border-slate-700 shadow-lg shadow-violet-900/20"
-                  : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
-              )}
-              title="Velocity Training"
-            >
-              <Zap className="w-5 h-5 flex-shrink-0" />
-              <span className="lg:hidden text-sm font-mono">Training</span>
-            </button>
-
-            <button
-              onClick={() => {
-                setActiveView('race');
-                setIsSidebarOpen(false);
-              }}
-              className={clsx(
-                "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 flex items-center gap-3 lg:justify-center",
-                activeView === 'race'
-                  ? "bg-slate-800 text-amber-400 border-slate-700 shadow-lg shadow-amber-900/20"
-                  : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
-              )}
-              title="Race Arena"
-            >
-              <Flag className="w-5 h-5 flex-shrink-0" />
-              <span className="lg:hidden text-sm font-mono">Race Arena</span>
-            </button>
-
-            <button
+            {/* TRAINING/RACE/ECONOMY BUTTONS REMOVED - See git history to restore */}
+            {/* <button
               onClick={() => {
                 setActiveView('economy');
                 setIsSidebarOpen(false);
@@ -461,7 +478,7 @@ export const Dashboard: React.FC = () => {
             >
               <Coins className="w-5 h-5 flex-shrink-0" />
               <span className="lg:hidden text-sm font-mono">Economy</span>
-            </button>
+            </button> */}
 
             <button
               onClick={() => {
@@ -608,6 +625,12 @@ export const Dashboard: React.FC = () => {
             </div>
           )}
 
+          {activeView === 'marketplace' && (
+            <div className="absolute inset-0 overflow-hidden animate-in fade-in duration-300">
+              <PublicTaskMarketplace />
+            </div>
+          )}
+
           {activeView === 'intel' && (
             <div className="absolute inset-0 p-3 md:p-6 overflow-hidden animate-in fade-in duration-300">
               <IntelPanel />
@@ -636,25 +659,15 @@ export const Dashboard: React.FC = () => {
 
           {activeView === 'comms' && (
             <div className="absolute inset-0 p-3 md:p-6 overflow-hidden animate-in fade-in duration-300">
-              <div className="h-full flex items-center justify-center">
-                <div className="text-center">
-                  <MessageSquare className="w-20 h-20 text-cyan-500/30 mx-auto mb-4" />
-                  <p className="text-cyan-400 font-mono text-lg mb-2">SECURE COMMS</p>
-                  <p className="text-cyan-500/60 text-sm font-mono mb-6">
-                    Initialize uplink from operative profiles<br />
-                    or use the floating comms panel
-                  </p>
-                  <button
-                    onClick={() => setActiveView('registry')}
-                    className="bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-mono px-6 py-3 rounded-lg transition-colors"
-                  >
-                    BROWSE OPERATIVES
-                  </button>
-                </div>
+              <div className="h-full">
+                <CommsPage />
               </div>
             </div>
           )}
 
+          {/* TRAINING & RACE VIEWS TEMPORARILY DISABLED - Uncomment to re-enable */}
+          {/* Full training and race view content commented out - see lines 663-1018 for code */}
+          {/*
           {activeView === 'training' && (
             <div className="absolute inset-0 p-3 md:p-6 overflow-y-auto animate-in fade-in duration-300">
               <div className="mb-4 md:mb-6">
@@ -668,7 +681,6 @@ export const Dashboard: React.FC = () => {
 
               {!activeTrainingChallenge ? (
                 <div className="space-y-6">
-                  {/* Category Selector & Generate Button */}
                   <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
                     <CategorySelector
                       selected={trainingCategory}
@@ -691,13 +703,11 @@ export const Dashboard: React.FC = () => {
                           }
                         `}
                       >
-                        {/* Animated gradient background */}
                         <div className={`
                           absolute inset-0 bg-gradient-to-r from-amber-400/0 via-amber-400/10 to-amber-400/0
                           ${isGenerating ? 'animate-shimmer' : ''}
                         `} />
 
-                        {/* Button content */}
                         <div className="relative flex items-center gap-2">
                           {isGenerating ? (
                             <>
@@ -778,237 +788,18 @@ export const Dashboard: React.FC = () => {
               )}
             </div>
           )}
+          */}
 
           {activeView === 'economy' && (
-            <div className="absolute inset-0 overflow-hidden animate-in fade-in duration-300">
-              <div className="h-full grid grid-cols-1 lg:grid-cols-12 gap-4 md:gap-6 p-3 md:p-6 overflow-y-auto lg:overflow-hidden">
-                {/* Left: PassiveMiner (5 cols on desktop, full width on mobile) */}
-                <div className="lg:col-span-5 h-auto lg:h-full flex items-center justify-center overflow-hidden">
-                  <PassiveMiner />
-                </div>
-
-                {/* Right: Shop & Vault (7 cols on desktop, full width on mobile) */}
-                <div className="lg:col-span-7 h-auto lg:h-full overflow-y-auto space-y-4 md:space-y-6">
-                  <BlackMarket />
-                  <TheVault />
-                </div>
-              </div>
+            <div className="absolute inset-0 p-3 md:p-6 overflow-y-auto animate-in fade-in duration-300">
+              {/* Economy Hub content goes here */}
+              <p className="text-slate-400">Economy Hub content goes here.</p>
             </div>
           )}
 
           {activeView === 'research' && (
             <div className="absolute inset-0 overflow-hidden animate-in fade-in duration-300">
               <ResearchLab />
-            </div>
-          )}
-
-          {activeView === 'race' && (
-            <div className="absolute inset-0 p-3 md:p-6 overflow-y-auto animate-in fade-in duration-300">
-              <div className="mb-4 md:mb-6">
-                <h2 className="text-xl md:text-2xl font-bold text-amber-400 font-mono tracking-wider mb-2">
-                  RACE ARENA
-                </h2>
-                <p className="text-amber-500/60 text-xs md:text-sm font-mono">
-                  BOT DUELS // LIVE WPM SPRINTS
-                </p>
-              </div>
-
-              {activeRaceChallenge ? (
-                <RacingTerminal
-                  challenge={activeRaceChallenge}
-                  botRanges={botRanges}
-                  onComplete={async (result) => {
-                    setRaceResults(result);
-                    await loadRaceStats();
-
-                    // Calculate points earned
-                    const pointsEarned = Math.floor((result.wpm * result.accuracy) / 10);
-
-                    // Get element positions for coin animation
-                    const raceElement = document.querySelector('.racing-terminal') as HTMLElement;
-                    const balanceElement = document.querySelector('[data-balance-counter]') as HTMLElement;
-
-                    if (raceElement && balanceElement && currentUser) {
-                      const raceRect = raceElement.getBoundingClientRect();
-                      const balanceRect = balanceElement.getBoundingClientRect();
-
-                      // Trigger coin animation
-                      setActiveCoinAnimation({
-                        amount: pointsEarned,
-                        startX: raceRect.left + raceRect.width / 2,
-                        startY: raceRect.top + raceRect.height / 2,
-                        endX: balanceRect.left + balanceRect.width / 2,
-                        endY: balanceRect.top + balanceRect.height / 2,
-                      });
-
-                      // Award points after animation completes (1.5 seconds)
-                      setTimeout(async () => {
-                        const { supabase } = await import('../../lib/supabase');
-                        const newPoints = orbitPoints + pointsEarned;
-
-                        // Update database
-                        await supabase.from('profiles')
-                          .update({ orbit_points: newPoints })
-                          .eq('id', currentUser.id);
-
-                        // Update store in real-time
-                        updateOrbitPoints(newPoints);
-
-                        // Show success toast
-                        toast.success(`Race completed! +${pointsEarned} points`, {
-                          description: `${result.wpm} WPM • ${result.accuracy}% accuracy • ${['🥇 1st', '🥈 2nd', '🥉 3rd', '4th'][result.position - 1]} place`,
-                          duration: 5000,
-                        });
-                      }, 1500);
-                    }
-
-                    setActiveRaceChallenge(null);
-                  }}
-                  onExit={() => {
-                    setActiveRaceChallenge(null);
-                  }}
-                />
-              ) : (
-                <div className="space-y-6">
-                  {raceResults && (
-                    <div className="bg-slate-900/50 border border-amber-500/30 rounded-2xl p-4 shadow-lg shadow-amber-900/10">
-                      <div className="flex items-center justify-between">
-                        <h3 className="text-lg font-bold text-amber-300 font-mono">Last Race Results</h3>
-                        <span className="text-xs text-slate-500 font-mono">Position: {raceResults.position}</span>
-                      </div>
-                      <div className="grid grid-cols-3 gap-4 mt-3 text-sm font-mono text-slate-200">
-                        <div>
-                          <p className="text-slate-500">WPM</p>
-                          <p className="text-xl text-amber-300 font-bold">{raceResults.wpm}</p>
-                        </div>
-                        <div>
-                          <p className="text-slate-500">Accuracy</p>
-                          <p className="text-xl text-amber-300 font-bold">{raceResults.accuracy}%</p>
-                        </div>
-                        <div>
-                          <p className="text-slate-500">Time</p>
-                          <p className="text-xl text-amber-300 font-bold">{raceResults.time.toFixed(2)}s</p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-                    <div className="p-4 bg-gradient-to-br from-amber-500/10 to-orange-500/5 border border-amber-500/30 rounded-2xl shadow-lg shadow-amber-900/10">
-                      <p className="text-xs text-amber-400 font-mono uppercase tracking-wider mb-1">Avg WPM</p>
-                      <p className="text-3xl font-black text-amber-300 font-mono">{raceStats.avgWPM || '–'}</p>
-                    </div>
-                    <div className="p-4 bg-gradient-to-br from-cyan-500/10 to-blue-500/5 border border-cyan-500/30 rounded-2xl shadow-lg shadow-cyan-900/10">
-                      <p className="text-xs text-cyan-400 font-mono uppercase tracking-wider mb-1">Avg Accuracy</p>
-                      <p className="text-3xl font-black text-cyan-300 font-mono">{raceStats.avgAccuracy ? `${raceStats.avgAccuracy}%` : '–'}</p>
-                    </div>
-                    <div className="p-4 bg-gradient-to-br from-violet-500/10 to-indigo-500/5 border border-violet-500/30 rounded-2xl shadow-lg shadow-violet-900/10">
-                      <p className="text-xs text-violet-400 font-mono uppercase tracking-wider mb-1">Top WPM</p>
-                      <p className="text-3xl font-black text-violet-300 font-mono">{raceStats.maxWPM || '–'}</p>
-                    </div>
-                    <div className="p-4 bg-gradient-to-br from-emerald-500/10 to-teal-500/5 border border-emerald-500/30 rounded-2xl shadow-lg shadow-emerald-900/10">
-                      <p className="text-xs text-emerald-400 font-mono uppercase tracking-wider mb-1">Race Count</p>
-                      <p className="text-3xl font-black text-emerald-300 font-mono">{raceStats.raceCount || 0}</p>
-                    </div>
-                  </div>
-
-                  {/* Category Selector */}
-                  <CategorySelector
-                    selected={raceCategory}
-                    onChange={setRaceCategory}
-                    className="mb-4"
-                  />
-
-                  <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                    <div>
-                      <h3 className="text-xl font-bold text-white font-mono">Start a Race</h3>
-                      <p className="text-slate-400 text-sm font-mono">
-                        {raceCategory === 'code'
-                          ? 'Code snippets, functions, and syntax challenges'
-                          : 'Article excerpts, stories, and prose challenges'}
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => {
-                        // Filter challenges by selected category (prefer prose; include fallbacks)
-                        const codeCategories = ['Programming'];
-                        const proseCategories = [
-                          'Science',
-                          'Creative',
-                          'History',
-                          'Literature',
-                          'Health',
-                          'Economics',
-                          'Technology',
-                          'Quick Start',
-                          'Speed Training',
-                          'Article',
-                          'Reading',
-                          'ELA'
-                        ];
-
-                        const filtered = trainingChallenges.filter(challenge => {
-                          if (raceCategory === 'code') {
-                            return codeCategories.includes(challenge.category || '');
-                          } else {
-                            return proseCategories.includes(challenge.category || '');
-                          }
-                        });
-
-                        const pool = filtered.length ? filtered : (trainingChallenges.length ? trainingChallenges : [defaultRaceChallenge]);
-                        const chosen = pool[Math.floor(Math.random() * pool.length)];
-
-                        console.log(`🎯 Selected ${raceCategory} challenge: "${chosen.title}" (${chosen.category})`);
-
-
-                        // Generate bot difficulty based on user skill (adaptive scaling)
-                        // Use the HIGHER of max_wpm or avg_wpm for dynamic difficulty
-                        const userMaxWPM = currentUser?.max_wpm || 0;
-                        const userAvgWPM = currentUser?.avg_wpm || 0;
-                        const skillLevel = Math.max(userMaxWPM, userAvgWPM) || 40; // Default to 40 for new users
-
-                        const bots = [
-                          Math.max(20, Math.floor(skillLevel * 0.5 + Math.random() * 15)), // Slow bot
-                          Math.max(30, Math.floor(skillLevel * 0.75 + Math.random() * 15)), // Medium bot
-                          Math.max(40, Math.floor(skillLevel * 0.95 + Math.random() * 15)), // Fast bot
-                        ].sort((a, b) => a - b);
-
-                        console.log(`🎯 Adaptive Bots: User skill=${skillLevel} WPM → Bots=[${bots.join(', ')}]`);
-                        setBotRanges(bots);
-                        setRaceResults(null);
-                        setActiveRaceChallenge(chosen);
-                      }}
-                      className="px-4 py-2 bg-amber-400 text-slate-950 rounded-lg font-mono text-sm hover:bg-amber-300 transition-colors"
-                    >
-                      Launch Race
-                    </button>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-4">
-                      <h4 className="text-sm text-slate-300 font-mono mb-2">How it works</h4>
-                      <ul className="text-slate-500 text-sm font-mono space-y-1">
-                        <li>• 3, 2, 1 countdown before typing starts</li>
-                        <li>• Two bots with target WPM race you to the finish</li>
-                        <li>• Results show WPM, accuracy, and placement</li>
-                      </ul>
-                    </div>
-                    <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-4">
-                      <h4 className="text-sm text-slate-300 font-mono mb-2">Practice vs Race</h4>
-                      <p className="text-slate-500 text-sm font-mono">
-                        Use{' '}
-                        <button
-                          onClick={() => setActiveView('training')}
-                          className="text-violet-400 hover:text-violet-300 underline decoration-dotted hover:decoration-solid transition-all"
-                        >
-                          Training
-                        </button>
-                        {' '}for focused drills; hop into Race Arena when you want the pressure of real-time opponents.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
           )}
 
@@ -1133,4 +924,3 @@ export const Dashboard: React.FC = () => {
     </div>
   );
 };
-
