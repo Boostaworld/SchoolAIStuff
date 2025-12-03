@@ -153,9 +153,13 @@ export const TaskBoard: React.FC = () => {
                   {/* Admin can force delete any task */}
                   {currentUser?.is_admin && (
                     <button
-                      onClick={() => {
+                      onClick={async () => {
                         if (confirm("⚠️ ADMIN DELETION PROTOCOL?\n\nThis will permanently remove this task.")) {
-                          deleteTask(task.id);
+                          try {
+                            await deleteTask(task.id);
+                          } catch (error) {
+                            console.error('Admin task deletion failed', error);
+                          }
                         }
                       }}
                       className="opacity-0 group-hover:opacity-100 p-2 text-red-500 hover:text-red-300 hover:bg-red-950/30 rounded-lg transition-all flex items-center gap-2"

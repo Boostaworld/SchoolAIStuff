@@ -626,6 +626,7 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       });
       // Revert on error
       set({ tasks: currentTasks });
+      throw new Error(error.message || 'Failed to delete task');
     } else {
       console.log("✅ Task deleted successfully:", id);
     }
