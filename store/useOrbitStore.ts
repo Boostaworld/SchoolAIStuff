@@ -58,6 +58,7 @@ interface OrbitState {
   toggleTask: (id: string, currentStatus: boolean) => Promise<void>;
   forfeitTask: (id: string) => Promise<void>;
   deleteTask: (id: string) => Promise<void>; // Admin-only deletion
+  claimTask: (taskId: string) => Promise<void>; // Claim a public task as your own
   askOracle: (query: string) => Promise<void>;
   triggerSOS: () => void;
 
@@ -200,11 +201,14 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
           }
         }
 
-        // Fetch Tasks (filter by user_id to ensure only user's tasks are loaded)
+        // Fetch Tasks: Get user's own tasks + public tasks from others
         const { data: tasks } = await supabase
           .from('tasks')
-          .select('*')
-          .eq('user_id', session.user.id)
+          .select(`
+            *,
+            profiles!tasks_user_id_fkey(username, avatar_url)
+          `)
+          .or(`user_id.eq.${session.user.id},is_public.eq.true`)
           .order('created_at', { ascending: true });
 
         // Map DB Profile to App Type
@@ -569,6 +573,32 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
 
     // DB Delete
     await supabase.from('tasks').delete().eq('id', id);
+  },
+
+  claimTask: async (taskId: string) => {
+    const { currentUser, tasks } = get();
+    if (!currentUser) return;
+
+    // Find the public task
+    const publicTask = tasks.find(t => t.id === taskId);
+    if (!publicTask || !publicTask.is_public) return;
+
+    // Create a copy for the current user (private by default)
+    const { data, error } = await supabase.from('tasks').insert({
+      user_id: currentUser.id,
+      title: publicTask.title,
+      category: publicTask.category,
+      difficulty: publicTask.difficulty,
+      completed: false,
+      is_public: false // Claimed tasks are private
+    }).select().single();
+
+    if (data && !error) {
+      // Add to local state
+      set((state) => ({
+        tasks: [...state.tasks, data as Task]
+      }));
+    }
   },
 
   askOracle: async (query) => {

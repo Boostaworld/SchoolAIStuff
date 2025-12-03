@@ -1,11 +1,11 @@
 import React from 'react';
 import { useOrbitStore } from '../../store/useOrbitStore';
-import { CheckCircle2, CircleSlash, Loader2, Trash2, XCircle } from 'lucide-react';
+import { CheckCircle2, CircleSlash, Loader2, Trash2, XCircle, UserPlus, Globe } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import clsx from 'clsx';
 
 export const TaskBoard: React.FC = () => {
-  const { tasks, currentUser, toggleTask, forfeitTask, deleteTask } = useOrbitStore();
+  const { tasks, currentUser, toggleTask, forfeitTask, deleteTask, claimTask } = useOrbitStore();
 
   const completedCount = tasks.filter(t => t.completed).length;
 
@@ -85,7 +85,7 @@ export const TaskBoard: React.FC = () => {
                 )}>
                   {task.title}
                 </h4>
-                <div className="flex gap-2 mt-1 items-center">
+                <div className="flex gap-2 mt-1 items-center flex-wrap">
                   <span className={clsx(
                     "text-[10px] px-1.5 rounded border uppercase",
                     task.category === 'Cooked' ? "border-red-900 text-red-400 bg-red-900/10" :
@@ -103,14 +103,42 @@ export const TaskBoard: React.FC = () => {
                       {task.difficulty}
                     </span>
                   )}
+
+                  {/* Public task indicator */}
+                  {task.is_public && (
+                    <span className="flex items-center gap-1 text-[10px] px-1.5 rounded border border-cyan-900 text-cyan-400 bg-cyan-900/10 uppercase font-mono">
+                      <Globe className="w-2.5 h-2.5" />
+                      PUBLIC
+                    </span>
+                  )}
+
+                  {/* Author info for public tasks from others */}
+                  {task.is_public && task.user_id !== currentUser?.id && task.profiles && (
+                    <div className="flex items-center gap-1 text-[9px] text-slate-400">
+                      <span>by</span>
+                      <span className="font-semibold text-slate-300">{task.profiles.username}</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
-              {/* Actions: Forfeit/Admin Delete */}
+              {/* Actions: Claim/Forfeit/Admin Delete */}
               {!task.completed && (
                 <>
+                  {/* Claim button for public tasks from others */}
+                  {task.is_public && task.user_id !== currentUser?.id && (
+                    <button
+                      onClick={() => claimTask(task.id)}
+                      className="opacity-0 group-hover:opacity-100 p-2 text-cyan-500 hover:text-cyan-300 hover:bg-cyan-950/30 rounded-lg transition-all flex items-center gap-2"
+                      title="Claim this task as your own"
+                    >
+                      <span className="text-[10px] font-mono hidden group-hover:block">CLAIM</span>
+                      <UserPlus className="w-4 h-4" />
+                    </button>
+                  )}
+
                   {/* Regular user can forfeit their own task */}
-                  {!currentUser?.is_admin && (
+                  {!currentUser?.is_admin && task.user_id === currentUser?.id && (
                     <button
                       onClick={() => forfeitTask(task.id)}
                       className="opacity-0 group-hover:opacity-100 p-2 text-slate-600 hover:text-red-500 hover:bg-red-950/30 rounded-lg transition-all flex items-center gap-2"

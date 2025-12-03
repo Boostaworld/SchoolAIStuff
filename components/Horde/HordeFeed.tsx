@@ -39,7 +39,7 @@ export const HordeFeed: React.FC = () => {
     setIsLoadingProfile(true);
     try {
       const { data, error } = await supabase
-        .from('users')
+        .from('profiles')
         .select('id, username, avatar_url, bio, tasks_completed, tasks_forfeited, status, max_wpm, orbit_points')
         .eq('id', userId)
         .single();

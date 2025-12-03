@@ -397,6 +397,80 @@ const { data: tasks } = await supabase
 
 ---
 
+### Public Task Visibility & Claiming (RESOLVED)
+**Problem:** Public tasks were not appearing in the task list across refreshes, despite database RLS policies being correct.
+
+**Root Cause:** The task fetch query in `useOrbitStore.ts` was filtering only by `user_id`, which excluded public tasks created by other users.
+
+**Previous Code (INCORRECT):**
+```typescript
+// store/useOrbitStore.ts:204-208
+const { data: tasks } = await supabase
+  .from('tasks')
+  .select('*')
+  .eq('user_id', session.user.id)  // ❌ Only fetches user's own tasks
+  .order('created_at', { ascending: true });
+```
+
+**Solution:**
+```typescript
+// store/useOrbitStore.ts:203-211
+const { data: tasks } = await supabase
+  .from('tasks')
+  .select(`
+    *,
+    profiles!tasks_user_id_fkey(username, avatar_url)
+  `)
+  .or(`user_id.eq.${session.user.id},is_public.eq.true`)  // ✅ Fetches own tasks AND public tasks
+  .order('created_at', { ascending: true });
+```
+
+**Features Added:**
+1. **Public Task Visibility**
+   - Users now see their own tasks (public + private)
+   - Users also see public tasks created by others
+   - Author information is fetched via join with profiles table
+
+2. **Task Claiming System** (`store/useOrbitStore.ts:578-602`)
+   - New `claimTask()` function allows users to claim public tasks
+   - Creates a private copy of the task for the claiming user
+   - Claimed tasks are automatically set to `is_public: false`
+
+3. **UI Enhancements** (`components/Dashboard/TaskBoard.tsx`)
+   - "PUBLIC" badge displays on public tasks with globe icon
+   - Author username shown for public tasks (e.g., "by username")
+   - "CLAIM" button appears on hover for public tasks from others
+   - Forfeit button only shows for tasks you own
+   - Visual indicators differentiate your tasks from others'
+
+**Type Updates:**
+```typescript
+// types.ts:1-15
+export interface Task {
+  id: string;
+  user_id?: string; // Owner of the task
+  title: string;
+  category: 'Quick' | 'Grind' | 'Cooked';
+  difficulty?: 'Easy' | 'Medium' | 'Hard';
+  completed: boolean;
+  is_public?: boolean;
+  isCopied?: boolean;
+  isAnalyzing?: boolean;
+  profiles?: { // Author info (populated from join)
+    username: string;
+    avatar_url: string;
+  };
+}
+```
+
+**Impact:**
+- ✅ Public tasks now persist correctly across refreshes
+- ✅ Users can discover and claim tasks created by others
+- ✅ Clear visual distinction between owned and public tasks
+- ✅ Full author attribution for public tasks
+
+---
+
 ### ResearchLab Unification
 
 **Objective:** Combine Intel Engine and Vision Lab into a single dual-tab interface
@@ -466,6 +540,14 @@ const { data: tasks } = await supabase
 ---
 
 ## Changelog
+
+### v2.0.0 (December 2, 2025 - Update 3)
+- ✅ **CRITICAL:** Fixed public task visibility - tasks now fetch both owned and public tasks
+- ✅ **NEW FEATURE:** Task claiming system - users can claim public tasks as their own
+- ✅ **UI ENHANCEMENT:** Public task badges and author attribution in TaskBoard
+- ✅ Added "CLAIM" button with UserPlus icon for public tasks from others
+- ✅ Author username display for public tasks (via profile join)
+- ✅ Updated Task type to include user_id and author profile info
 
 ### v2.0.0 (December 2, 2025 - Update 2)
 - ✅ **CRITICAL:** Fixed task persistence bug - tasks now filter by user_id

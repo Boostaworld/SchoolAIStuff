@@ -1,5 +1,6 @@
 export interface Task {
   id: string;
+  user_id?: string; // Owner of the task
   title: string;
   category: 'Quick' | 'Grind' | 'Cooked';
   difficulty?: 'Easy' | 'Medium' | 'Hard';
@@ -7,6 +8,10 @@ export interface Task {
   is_public?: boolean; // Whether task is visible to all users
   isCopied?: boolean;
   isAnalyzing?: boolean; // For AI loading state
+  profiles?: { // Author info (populated from join)
+    username: string;
+    avatar_url: string;
+  };
 }
 
 export interface UserProfile {
