@@ -70,15 +70,17 @@ export function GodModePanel() {
   const fetchUsers = async () => {
     try {
       setLoading(true);
+      console.log('🔄 Fetching users from database...');
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
         .order('username', { ascending: true });
 
       if (error) throw error;
+      console.log(`✅ Fetched ${data?.length || 0} users from database`);
       setUsers(data || []);
     } catch (error: any) {
-      console.error('Fetch users error:', error);
+      console.error('❌ Fetch users error:', error);
       toast.error('Failed to load users');
     } finally {
       setLoading(false);
@@ -116,25 +118,41 @@ export function GodModePanel() {
     const targetUser = users.find(u => u.id === userId) || selectedUser || null;
 
     try {
+      console.log('🗑️ Attempting to delete user:', userId);
+
       const { error } = await supabase
         .from('profiles')
         .delete()
         .eq('id', userId);
 
-      if (error) throw error;
+      if (error) {
+        console.error('❌ Profile deletion failed:', error);
+        console.error('Error details:', {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+          hint: error.hint
+        });
+        throw error;
+      }
 
+      console.log('✅ Profile deleted from database');
+
+      // Try to log admin action (optional, may fail if table doesn't exist)
       await logAdminAction('delete_user', {
         target_user_id: userId,
         previous: targetUser
+      }).catch((err) => {
+        console.warn('⚠️ Admin audit log failed (non-critical):', err.message);
       });
 
-      toast.success('User deleted');
+      toast.success('User deleted successfully');
       await fetchUsers();
       setSelectedUser(null);
       setSelectedUserOriginal(null);
     } catch (error: any) {
-      console.error('Delete user error:', error);
-      toast.error(error.message || 'Failed to delete user');
+      console.error('❌ Delete user error:', error);
+      toast.error(error.message || 'Failed to delete user - check console for details');
     }
   };
 

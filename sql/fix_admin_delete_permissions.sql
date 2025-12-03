@@ -26,7 +26,25 @@ CREATE POLICY "Users can delete own tasks or admins can delete any"
   );
 
 -- =========================
--- 2. FIX INTEL_DROPS DELETE POLICY
+-- 2. FIX PROFILES DELETE POLICY (Admin User Deletion)
+-- =========================
+DROP POLICY IF EXISTS "Users can delete own profile" ON public.profiles;
+DROP POLICY IF EXISTS "Admins can delete any profile" ON public.profiles;
+
+-- Recreate with admin support
+CREATE POLICY "Users can delete own profile or admins can delete any"
+  ON public.profiles FOR DELETE
+  USING (
+    auth.uid() = id
+    OR
+    EXISTS (
+      SELECT 1 FROM public.profiles
+      WHERE id = auth.uid() AND is_admin = TRUE
+    )
+  );
+
+-- =========================
+-- 3. FIX INTEL_DROPS DELETE POLICY
 -- =========================
 DROP POLICY IF EXISTS "Users can delete own intel drops" ON public.intel_drops;
 DROP POLICY IF EXISTS "Admins can delete any intel drop" ON public.intel_drops;
@@ -44,7 +62,7 @@ CREATE POLICY "Users can delete own intel drops or admins can delete any"
   );
 
 -- =========================
--- 3. VERIFY POLICIES
+-- 4. VERIFY POLICIES
 -- =========================
 -- Run this to verify the policies are active:
 SELECT
@@ -53,7 +71,7 @@ SELECT
   policyname,
   cmd
 FROM pg_policies
-WHERE tablename IN ('tasks', 'intel_drops')
+WHERE tablename IN ('tasks', 'intel_drops', 'profiles')
   AND cmd = 'DELETE'
 ORDER BY tablename, policyname;
 
@@ -63,3 +81,4 @@ ORDER BY tablename, policyname;
 -- After running this, admins should be able to delete:
 --   1. Any task (including other users' tasks)
 --   2. Any intel drop (including other users' transmissions)
+--   3. Any user profile (user management)
