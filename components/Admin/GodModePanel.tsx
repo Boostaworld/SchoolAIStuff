@@ -147,7 +147,9 @@ export function GodModePanel() {
       });
 
       toast.success('User deleted successfully');
+      console.log('🔄 Refetching user list after delete...');
       await fetchUsers();
+      console.log('✅ User list refetched, UI should update now');
       setSelectedUser(null);
       setSelectedUserOriginal(null);
     } catch (error: any) {
