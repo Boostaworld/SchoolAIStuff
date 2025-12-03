@@ -66,6 +66,8 @@ export const CreateActionModal: React.FC<CreateActionModalProps> = ({ onClose })
             onClose();
         } catch (err) {
             console.error(err);
+            const { toast } = await import('@/lib/toast');
+            toast.error(err instanceof Error ? err.message : 'Failed to create transmission.');
         } finally {
             setIsSubmitting(false);
         }
