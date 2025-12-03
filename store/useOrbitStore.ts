@@ -464,6 +464,7 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       category: task.category || 'Grind',
       difficulty: task.difficulty || 'Medium',
       completed: false,
+      is_public: task.is_public || false,
       isAnalyzing: !task.difficulty // Only show analyzing if we need AI
     };
     set((state) => ({ tasks: [...state.tasks, optimisticTask] }));
@@ -481,7 +482,8 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       title: optimisticTask.title,
       category: optimisticTask.category,
       difficulty: difficulty,
-      completed: false
+      completed: false,
+      is_public: task.is_public || false
     }).select().single();
 
     // 4. Reconcile Optimistic Task with Real DB Task

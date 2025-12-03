@@ -57,6 +57,83 @@ BEGIN
 END $$;
 
 -- =========================
+-- AUTO-CREATE PROFILE TRIGGER
+-- =========================
+-- This trigger automatically creates a profile when a user signs up
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.profiles (id, username, avatar_url)
+  VALUES (
+    NEW.id,
+    COALESCE(NEW.raw_user_meta_data->>'username', split_part(NEW.email, '@', 1)),
+    'https://api.dicebear.com/7.x/avataaars/svg?seed=' || NEW.id::TEXT
+  );
+  RETURN NEW;
+EXCEPTION
+  WHEN OTHERS THEN
+    -- Log the error but don't fail the user creation
+    RAISE WARNING 'Failed to create profile for user %: %', NEW.id, SQLERRM;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Trigger that fires when a new user is created
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+-- =========================
+-- TASKS TABLE
+-- =========================
+CREATE TABLE IF NOT EXISTS public.tasks (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
+  title TEXT NOT NULL,
+  category TEXT DEFAULT 'Grind',
+  difficulty TEXT DEFAULT 'Medium',
+  completed BOOLEAN DEFAULT FALSE,
+  is_public BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
+
+-- RLS Policies for tasks
+DO $$
+BEGIN
+  -- Users can always see their own tasks
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'tasks' AND policyname = 'Users can view own tasks') THEN
+    CREATE POLICY "Users can view own tasks" ON public.tasks
+      FOR SELECT USING (auth.uid() = user_id);
+  END IF;
+
+  -- Anyone can view public tasks
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'tasks' AND policyname = 'Anyone can view public tasks') THEN
+    CREATE POLICY "Anyone can view public tasks" ON public.tasks
+      FOR SELECT USING (is_public = true);
+  END IF;
+
+  -- Users can insert their own tasks
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'tasks' AND policyname = 'Users can insert own tasks') THEN
+    CREATE POLICY "Users can insert own tasks" ON public.tasks
+      FOR INSERT WITH CHECK (auth.uid() = user_id);
+  END IF;
+
+  -- Users can update their own tasks
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'tasks' AND policyname = 'Users can update own tasks') THEN
+    CREATE POLICY "Users can update own tasks" ON public.tasks
+      FOR UPDATE USING (auth.uid() = user_id);
+  END IF;
+
+  -- Users can delete their own tasks
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'tasks' AND policyname = 'Users can delete own tasks') THEN
+    CREATE POLICY "Users can delete own tasks" ON public.tasks
+      FOR DELETE USING (auth.uid() = user_id);
+  END IF;
+END $$;
+
+-- =========================
 -- INTEL + ORACLE PERSISTENCE (intel_persistence_patch.sql)
 -- =========================
 CREATE TABLE IF NOT EXISTS public.intel_sessions (

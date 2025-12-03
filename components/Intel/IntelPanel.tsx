@@ -14,10 +14,13 @@ export const IntelPanel: React.FC = () => {
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [currentQuery, setCurrentQuery] = useState('');
   const [showCommandDeck, setShowCommandDeck] = useState(false);
-  const [selectedModel, setSelectedModel] = useState<'flash' | 'pro' | 'orbit-x'>('flash');
+  const [selectedModel, setSelectedModel] = useState<'flash' | 'pro' | 'orbit-x' | 'gemini-3-pro' | 'gemini-3-image'>('flash');
   const [depth, setDepth] = useState(3);
   const [researchMode, setResearchMode] = useState(false);
   const [customInstructions, setCustomInstructions] = useState('');
+  const [mode, setMode] = useState<'chat' | 'image' | 'generation'>('chat');
+  const [thinkingLevel, setThinkingLevel] = useState<'low' | 'medium' | 'high'>('medium');
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
   const { sendIntelQuery, isIntelLoading, currentIntelResult, currentUser, intelMessages, clearIntelHistory } = useOrbitStore();
   const canCustomize = !!currentUser?.can_customize_ai;
@@ -25,26 +28,48 @@ export const IntelPanel: React.FC = () => {
   const conversationLength = intelMessages.length;
 
   const models = [
-    { id: 'flash' as const, name: 'Flash 2.0', color: 'from-cyan-500 to-blue-500', locked: false },
-    { id: 'pro' as const, name: 'Pro 1.5', color: 'from-purple-500 to-pink-500', locked: !unlockedModels.includes('pro') },
-    { id: 'orbit-x' as const, name: 'Orbit-X', color: 'from-violet-500 to-indigo-500', locked: !unlockedModels.includes('orbit-x') }
+    { id: 'flash' as const, name: 'Flash 2.5', color: 'from-cyan-500 to-blue-500', locked: false, tier: 1 },
+    { id: 'pro' as const, name: 'Pro 2.5', color: 'from-purple-500 to-pink-500', locked: !unlockedModels.includes('pro'), tier: 2 },
+    { id: 'orbit-x' as const, name: 'Orbit-X', color: 'from-violet-500 to-indigo-500', locked: !unlockedModels.includes('orbit-x'), tier: 3 },
+    { id: 'gemini-3-pro' as const, name: 'Gemini 3.0 Pro', color: 'from-emerald-500 to-teal-500', locked: !unlockedModels.includes('gemini-3-pro'), tier: 4 },
+    { id: 'gemini-3-image' as const, name: 'Gemini 3.0 Image', color: 'from-rose-500 to-orange-500', locked: !unlockedModels.includes('gemini-3-image'), tier: 4 }
   ];
+
+  // Check if current model supports thinking
+  const supportsThinking = ['pro', 'orbit-x', 'flash', 'gemini-3-pro', 'gemini-3-image'].includes(selectedModel);
+
+  // Check if current model supports thinking level (not just budget)
+  const supportsThinkingLevel = ['gemini-3-pro', 'gemini-3-image'].includes(selectedModel);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query.trim() || isIntelLoading) return;
 
+    // Validate image mode
+    if (mode === 'image' && !selectedImage) {
+      toast.error('Please upload an image for image mode');
+      return;
+    }
+
     setCurrentQuery(query);
+    const queryToSend = query;
     setQuery(''); // Clear the input after submitting
     try {
       const effectiveDepth = canCustomize ? depth : Math.min(depth, 3);
       const effectiveModel = unlockedModels.includes(selectedModel) ? selectedModel : 'flash';
-      await sendIntelQuery(query, {
+      await sendIntelQuery(queryToSend, {
         depthLevel: effectiveDepth,
         modelUsed: effectiveModel,
         researchMode,
-        customInstructions: customInstructions.trim() || undefined
+        customInstructions: customInstructions.trim() || undefined,
+        mode,
+        thinkingLevel,
+        image: selectedImage || undefined
       });
+      // Clear image after successful submission
+      if (mode === 'image') {
+        setSelectedImage(null);
+      }
     } catch (error) {
       // Error is already logged and toasted in the store
     }
@@ -97,6 +122,35 @@ export const IntelPanel: React.FC = () => {
     }
     setShowCommandDeck(false);
     toast.success('Intel settings saved');
+  };
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Check file type
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please upload a valid image file');
+      return;
+    }
+
+    // Check file size (max 4MB)
+    if (file.size > 4 * 1024 * 1024) {
+      toast.error('Image size must be less than 4MB');
+      return;
+    }
+
+    // Convert to base64
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64 = event.target?.result as string;
+      setSelectedImage(base64);
+      toast.success('Image uploaded successfully');
+    };
+    reader.onerror = () => {
+      toast.error('Failed to read image file');
+    };
+    reader.readAsDataURL(file);
   };
 
   return (
@@ -157,7 +211,7 @@ export const IntelPanel: React.FC = () => {
 
       {/* Search Input Area */}
       <div className="p-4 border-b border-slate-800 bg-slate-900/40 space-y-3">
-        <form onSubmit={handleSubmit} className="relative">
+        <form onSubmit={handleSubmit} className="relative space-y-3">
           <div className="relative group">
             <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/20 to-violet-500/20 rounded-lg opacity-0 group-focus-within:opacity-100 blur transition-opacity" />
             <div className="relative flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg overflow-hidden group-focus-within:border-cyan-500/50 transition-colors">
@@ -166,7 +220,7 @@ export const IntelPanel: React.FC = () => {
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Enter research query..."
+                placeholder={mode === 'image' ? 'Describe what you want to know about the image...' : mode === 'generation' ? 'Describe the image to generate...' : 'Enter research query...'}
                 disabled={isIntelLoading}
                 className="flex-1 bg-transparent px-2 py-3 text-sm text-slate-200 focus:outline-none placeholder:text-slate-600 font-mono"
               />
@@ -186,6 +240,37 @@ export const IntelPanel: React.FC = () => {
               </button>
             </div>
           </div>
+
+          {/* Image Upload (only in image mode) */}
+          {mode === 'image' && (
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 px-4 py-3 bg-slate-950 border-2 border-dashed border-slate-700 rounded-lg cursor-pointer hover:border-cyan-500/50 transition-all">
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleImageUpload}
+                  className="hidden"
+                  disabled={isIntelLoading}
+                />
+                <Database className="w-4 h-4 text-cyan-400" />
+                <span className="text-sm font-mono text-slate-400">
+                  {selectedImage ? 'Image uploaded - Click to change' : 'Click to upload image (max 4MB)'}
+                </span>
+              </label>
+              {selectedImage && (
+                <div className="relative rounded-lg overflow-hidden border border-slate-700">
+                  <img src={selectedImage} alt="Uploaded" className="w-full h-32 object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => setSelectedImage(null)}
+                    className="absolute top-2 right-2 p-1 bg-red-500/80 hover:bg-red-500 rounded-full transition-colors"
+                  >
+                    <X className="w-4 h-4 text-white" />
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </form>
 
         {/* Deep Dive Toggle */}
@@ -342,35 +427,87 @@ export const IntelPanel: React.FC = () => {
               </div>
 
               <div className="p-4 space-y-6">
-                <div className="grid grid-cols-3 gap-3">
-                  {models.map(model => (
-                    <button
-                      key={model.id}
-                      onClick={() => {
-                        if (model.locked) {
-                          toast.error('Model not unlocked. Ask owner for access.');
-                          return;
-                        }
-                        setSelectedModel(model.id);
-                      }}
-                      className={`relative p-4 rounded-xl border-2 transition-all ${
-                        selectedModel === model.id
-                          ? `bg-gradient-to-br ${model.color} border-transparent text-white shadow-[0_0_20px_rgba(59,130,246,0.5)]`
-                          : model.locked
-                          ? 'bg-slate-800/30 border-slate-700 text-slate-600 cursor-not-allowed'
-                          : 'bg-slate-800/50 border-blue-500/30 text-slate-300 hover:border-blue-500/50'
-                      }`}
-                    >
-                      {model.locked && (
-                        <div className="absolute top-2 right-2">
-                          <Lock className="w-4 h-4 text-red-400" />
-                        </div>
-                      )}
-                      <div className="text-sm font-bold">{model.name}</div>
-                      <div className="text-xs opacity-70 mt-1">{model.id === 'orbit-x' ? 'Deep thinking mode' : 'Standard'}</div>
-                    </button>
-                  ))}
+                {/* Model Selection */}
+                <div>
+                  <label className="text-xs text-blue-400 font-mono uppercase mb-2 block">AI Model</label>
+                  <div className="grid grid-cols-3 gap-3">
+                    {models.map(model => (
+                      <button
+                        key={model.id}
+                        onClick={() => {
+                          if (model.locked) {
+                            toast.error('Model not unlocked. Ask owner for access.');
+                            return;
+                          }
+                          setSelectedModel(model.id);
+                        }}
+                        className={`relative p-4 rounded-xl border-2 transition-all ${
+                          selectedModel === model.id
+                            ? `bg-gradient-to-br ${model.color} border-transparent text-white shadow-[0_0_20px_rgba(59,130,246,0.5)]`
+                            : model.locked
+                            ? 'bg-slate-800/30 border-slate-700 text-slate-600 cursor-not-allowed'
+                            : 'bg-slate-800/50 border-blue-500/30 text-slate-300 hover:border-blue-500/50'
+                        }`}
+                      >
+                        {model.locked && (
+                          <div className="absolute top-2 right-2">
+                            <Lock className="w-4 h-4 text-red-400" />
+                          </div>
+                        )}
+                        <div className="text-sm font-bold">{model.name}</div>
+                        <div className="text-xs opacity-70 mt-1">Tier {model.tier}</div>
+                      </button>
+                    ))}
+                  </div>
                 </div>
+
+                {/* Mode Toggle */}
+                <div>
+                  <label className="text-xs text-blue-400 font-mono uppercase mb-2 block">Mode</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {['chat', 'image', 'generation'].map((m) => (
+                      <button
+                        key={m}
+                        onClick={() => setMode(m as typeof mode)}
+                        className={`px-4 py-2 rounded-lg border-2 transition-all text-sm font-mono uppercase ${
+                          mode === m
+                            ? 'bg-blue-500 border-blue-400 text-white'
+                            : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-500'
+                        }`}
+                      >
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Thinking Level (only for Gemini 3.0 models) */}
+                {supportsThinkingLevel && (
+                  <div>
+                    <label className="text-xs text-emerald-400 font-mono uppercase mb-2 block flex items-center gap-2">
+                      <BrainCircuit className="w-3 h-3" />
+                      Thinking Level
+                    </label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {['low', 'medium', 'high'].map((level) => (
+                        <button
+                          key={level}
+                          onClick={() => setThinkingLevel(level as typeof thinkingLevel)}
+                          className={`px-4 py-2 rounded-lg border-2 transition-all text-sm font-mono uppercase ${
+                            thinkingLevel === level
+                              ? 'bg-emerald-500 border-emerald-400 text-white'
+                              : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-500'
+                          }`}
+                        >
+                          {level}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1 font-mono">
+                      {thinkingLevel === 'low' ? 'Fast, simple reasoning' : thinkingLevel === 'medium' ? 'Balanced thinking' : 'Deep, complex analysis'}
+                    </p>
+                  </div>
+                )}
 
                 <div>
                   <div className="flex items-center justify-between mb-2">

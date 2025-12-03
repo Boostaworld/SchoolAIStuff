@@ -4,10 +4,15 @@ import { Database, Lock, ExternalLink, Trash2, ShieldAlert } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion';
 import { IntelDropModal } from './IntelDropModal';
 import { IntelDrop } from '../../types';
+import { ProfileModal } from '../Operative/ProfileModal';
+import { supabase } from '../../lib/supabase';
+import { toast } from '@/lib/toast';
 
 export const HordeFeed: React.FC = () => {
   const { intelDrops, currentUser, deleteIntelDrop } = useOrbitStore();
   const [selectedDrop, setSelectedDrop] = useState<IntelDrop | null>(null);
+  const [selectedProfile, setSelectedProfile] = useState<any | null>(null);
+  const [isLoadingProfile, setIsLoadingProfile] = useState(false);
 
   const formatTimeAgo = (dateString: string) => {
     const date = new Date(dateString);
@@ -28,6 +33,37 @@ export const HordeFeed: React.FC = () => {
     if (confirm("CONFIRM DELETION PROTOCOL? This item will be permanently purged.")) {
       await deleteIntelDrop(id);
     }
+  };
+
+  const fetchProfile = async (userId: string) => {
+    setIsLoadingProfile(true);
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('id, username, avatar_url, bio, tasks_completed, tasks_forfeited, status, max_wpm, orbit_points')
+        .eq('id', userId)
+        .single();
+
+      if (error) {
+        console.error('Error fetching profile:', error);
+        toast.error('Failed to load profile');
+        return;
+      }
+
+      if (data) {
+        setSelectedProfile(data);
+      }
+    } catch (error) {
+      console.error('Error fetching profile:', error);
+      toast.error('Failed to load profile');
+    } finally {
+      setIsLoadingProfile(false);
+    }
+  };
+
+  const handleAvatarClick = (e: React.MouseEvent, userId: string) => {
+    e.stopPropagation();
+    fetchProfile(userId);
   };
 
   return (
@@ -76,7 +112,9 @@ export const HordeFeed: React.FC = () => {
                     <img
                       src={drop.author_avatar}
                       alt={drop.author_username}
-                      className="w-5 h-5 rounded-full border border-slate-700"
+                      onClick={(e) => handleAvatarClick(e, drop.author_id)}
+                      className="w-5 h-5 rounded-full border border-slate-700 cursor-pointer hover:border-cyan-500 hover:shadow-[0_0_8px_rgba(34,211,238,0.5)] transition-all"
+                      title="View profile"
                     />
                     <span className="text-xs text-slate-400 font-mono">{drop.author_username}</span>
                     {drop.is_private && drop.author_id === currentUser?.id && (
@@ -145,6 +183,15 @@ export const HordeFeed: React.FC = () => {
           <IntelDropModal
             drop={selectedDrop}
             onClose={() => setSelectedDrop(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {selectedProfile && (
+          <ProfileModal
+            profile={selectedProfile}
+            onClose={() => setSelectedProfile(null)}
           />
         )}
       </AnimatePresence>

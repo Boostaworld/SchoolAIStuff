@@ -11,12 +11,15 @@ export interface IntelResult {
 export interface IntelQueryParams {
   prompt: string;
   instructions: string;
-  model: 'flash' | 'pro' | 'orbit-x';
+  model: 'flash' | 'pro' | 'orbit-x' | 'gemini-3-pro' | 'gemini-3-image';
   researchMode?: boolean;
   depth?: number;
   conversationHistory?: Array<{ role: 'user' | 'model'; text: string }>;
   conversationMode?: boolean; // If true, returns plain text chat instead of JSON research
   thinkingEnabled?: boolean; // If true, enables thinking mode
+  thinkingLevel?: 'low' | 'medium' | 'high'; // Thinking depth level
+  mode?: 'chat' | 'image' | 'generation'; // Interaction mode
+  image?: string; // Base64 encoded image data or file URI
 }
 
 const getIntelApiKey = () => {
@@ -52,24 +55,57 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
     depth = 3,
     conversationHistory = [],
     conversationMode = false,
-    thinkingEnabled = true // Default to enabled
+    thinkingEnabled = true, // Default to enabled
+    thinkingLevel = 'medium', // Default thinking level
+    mode = 'chat',
+    image
   } = params;
 
   const modelMap: Record<IntelQueryParams['model'], string> = {
     flash: 'gemini-2.5-flash',
     pro: 'gemini-2.5-pro', // Updated to 2.5 Pro with thinking
-    'orbit-x': 'gemini-2.5-pro' // Use 2.5 Pro for premium queries
+    'orbit-x': 'gemini-2.5-pro', // Use 2.5 Pro for premium queries
+    'gemini-3-pro': 'gemini-3.0-pro-preview', // Gemini 3.0 Pro with advanced thinking
+    'gemini-3-image': 'gemini-3.0-pro-image-preview' // Gemini 3.0 Image Generation
   };
 
-  const contents = [
-    ...conversationHistory
+  // Build contents with image support
+  const buildContents = () => {
+    const history = conversationHistory
       .filter(msg => msg.text?.trim())
       .map(msg => ({
         role: msg.role,
         parts: [{ text: msg.text }]
-      })),
-    { role: 'user', parts: [{ text: prompt }] }
-  ];
+      }));
+
+    const userParts: any[] = [{ text: prompt }];
+
+    // Add image if provided (base64 inline data)
+    if (image && mode === 'image') {
+      // Extract base64 data and mime type
+      const base64Match = image.match(/^data:(.+);base64,(.+)$/);
+      if (base64Match) {
+        const [, mimeType, data] = base64Match;
+        const imagePart: any = {
+          inlineData: {
+            mimeType,
+            data
+          }
+        };
+
+        // For Gemini 3.0 models, add media_resolution for high-quality analysis
+        if (model === 'gemini-3-pro' || model === 'gemini-3-image') {
+          imagePart.mediaResolution = { level: 'media_resolution_high' };
+        }
+
+        userParts.push(imagePart);
+      }
+    }
+
+    return [...history, { role: 'user', parts: userParts }];
+  };
+
+  const contents = buildContents();
 
   try {
     console.log(`Intel Query - Model: ${model}, Depth: ${depth}, Research Mode: ${researchMode}, Conversation Mode: ${conversationMode}`);
@@ -82,13 +118,22 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
         maxOutputTokens: 2048 // Increased for better responses
       };
 
-      // Only add thinking if enabled
+      // Only add thinking if enabled and model supports it
       if (thinkingEnabled) {
-        config.thinkingConfig = model === 'flash' ? {
-          thinkingBudget: 4096 // Enable thinking for Flash
-        } : {
-          thinkingBudget: -1 // Dynamic thinking for Pro
-        };
+        // Gemini 3.0 uses thinkingLevel, 2.5 models use thinkingBudget
+        if (model === 'gemini-3-pro' || model === 'gemini-3-image') {
+          config.thinkingConfig = {
+            thinkingLevel: thinkingLevel.toUpperCase() // "LOW", "MEDIUM", "HIGH"
+          };
+        } else if (model === 'pro' || model === 'orbit-x' || model === 'flash') {
+          // 2.5 models support thinkingBudget
+          config.thinkingConfig = model === 'flash' ? {
+            thinkingBudget: 4096 // Enable thinking for Flash
+          } : {
+            thinkingBudget: -1 // Dynamic thinking for Pro
+          };
+        }
+        // If model doesn't support thinking, config.thinkingConfig stays undefined
       }
 
       const response = await ai.models.generateContent({
@@ -200,11 +245,19 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
       temperature: 0.7 // Balanced creativity and consistency
     };
 
-    // Only add thinking config if enabled
-    if (thinkingEnabled && thinkingBudget > 0) {
-      researchConfig.thinkingConfig = {
-        thinkingBudget: thinkingBudget
-      };
+    // Only add thinking config if enabled and model supports it
+    if (thinkingEnabled) {
+      if (model === 'gemini-3-pro' || model === 'gemini-3-image') {
+        // Gemini 3.0 uses thinkingLevel
+        researchConfig.thinkingConfig = {
+          thinkingLevel: thinkingLevel.toUpperCase()
+        };
+      } else if (thinkingBudget > 0) {
+        // 2.5 models use thinkingBudget
+        researchConfig.thinkingConfig = {
+          thinkingBudget: thinkingBudget
+        };
+      }
     }
 
     const response = await ai.models.generateContent({

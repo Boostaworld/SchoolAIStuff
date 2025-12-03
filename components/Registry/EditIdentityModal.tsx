@@ -72,6 +72,21 @@ export const EditIdentityModal: React.FC<EditIdentityModalProps> = ({ onClose })
     setError(null);
     setIsSaving(true);
     try {
+      // Check if username is taken (only if it's different from current)
+      if (username.trim().toLowerCase() !== currentUser.username.toLowerCase()) {
+        const { data: existingUser } = await supabase
+          .from('profiles')
+          .select('id')
+          .ilike('username', username.trim())
+          .single();
+
+        if (existingUser && existingUser.id !== currentUser.id) {
+          setError(`Username "${username}" is already taken. Please choose another.`);
+          setIsSaving(false);
+          return;
+        }
+      }
+
       let avatarUrl = currentUser.avatar;
 
       // Upload new avatar if selected
@@ -116,7 +131,17 @@ export const EditIdentityModal: React.FC<EditIdentityModalProps> = ({ onClose })
       onClose();
     } catch (error: any) {
       console.error('Failed to update profile:', error);
-      setError(error.message || 'Failed to save changes. Please try again.');
+
+      // Handle specific error types
+      let errorMessage = 'Failed to save changes. Please try again.';
+
+      if (error.message?.includes('duplicate key') || error.message?.includes('profiles_username_key')) {
+        errorMessage = `Username "${username}" is already taken. Please choose another.`;
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+
+      setError(errorMessage);
       setIsSaving(false);
       setIsUploading(false);
     }

@@ -1,50 +1,74 @@
-# Implementation Plan - Critical Fixes
+# Implementation Plan - Gemini 3.0 Integration & Profile Viewing
 
-## Goal Description
-Address the critical issues identified in `SESSION_LOG_2025-11-25.md` and `MASTER_ROADMAP.md`, specifically focusing on the "Intel Messages Disappearing" bug, missing database schema, and incomplete Race Arena stats.
+## Goal
+Integrate Gemini 3.0 Pro Preview capabilities into the Intel Engine, including Thinking Mode, Image Analysis, and Image Generation. Also, enable profile viewing from the Horde Feed.
 
 ## User Review Required
 > [!IMPORTANT]
-> The "Intel Messages Disappearing" issue is likely due to the missing backend integration noted in `ROADMAP_UPDATE_11_25.md`. The plan involves implementing the missing `IntelService.ts` and connecting it.
+> **Gemini 3.0 Access**: Ensure your API key has access to `gemini-3.0-pro-preview` and `gemini-3.0-pro-image-preview`. If not, these features will fail or fallback.
+> **Image Upload**: We will use base64 encoding for image analysis for now, as `media.upload` requires a more complex backend setup or specific client configuration not fully visible here.
 
 ## Proposed Changes
 
-### Intel System (Fix Issue #11)
-#### [NEW] [IntelService.ts](file:///c:/Users/kayla/Downloads/copy-of-orbit/lib/ai/IntelService.ts) ✅
-- Implemented Gemini calls with persistence to `intel_sessions`.
-- Wired message history loading/saving via store.
+### 1. AI Logic Layer (`lib/ai`)
 
-#### [MODIFY] [IntelCommandDeck.tsx](file:///c:/Users/kayla/Downloads/copy-of-orbit/components/Intel/IntelCommandDeck.tsx) ✅
-- Send uses store/IntelService; history hydrates on load.
+#### [MODIFY] [intel.ts](file:///c:/Users/kayla/OneDrive/Desktop/SchoolAIStuff/lib/ai/intel.ts)
+- Update `IntelQueryParams` to include:
+    - `thinkingLevel`: 'low' | 'medium' | 'high'
+    - `image`: string (base64 data)
+    - `mode`: 'chat' | 'image' | 'generation'
+- Update `runIntelQuery` to:
+    - Map `gemini-3.0-pro-preview` and `gemini-3.0-pro-image-preview`.
+    - Construct `thinkingConfig` based on `thinkingLevel`.
+    - Handle image input in `contents`.
+    - Handle image generation response processing.
 
-#### [MODIFY] [useOrbitStore.ts](file:///c:/Users/kayla/Downloads/copy-of-orbit/store/useOrbitStore.ts) ✅
-- Added intel slice + oracle persistence; profile auto-create if missing.
+#### [MODIFY] [IntelService.ts](file:///c:/Users/kayla/OneDrive/Desktop/SchoolAIStuff/lib/ai/IntelService.ts)
+- Update `IntelQueryOptions` to pass through new parameters.
+- Update `sendIntelQueryWithPersistence` to handle the new options.
 
-### Database Schema (Issue #12)
-#### [NEW] [MASTER_SCHEMA.sql](file:///c:/Users/kayla/Downloads/copy-of-orbit/sql/MASTER_SCHEMA.sql)
-- Consolidate all table definitions found in `sql/` and codebase references.
+### 2. UI Components (`components/Intel`)
 
-### Race Arena (Fix #10)
-#### [MODIFY] [Dashboard.tsx](file:///c:/Users/kayla/Downloads/copy-of-orbit/components/Dashboard/Dashboard.tsx) ✅
-- Race Stats panel added (Avg WPM/Accuracy, Top WPM, Race Count) using `typing_sessions`.
-- Race completions now persist sessions; betting reads/writes `orbit_points`.
-- Stats query now orders by `completed_at` (added `created_at` in SQL patch for compatibility).
+#### [MODIFY] [IntelPanel.tsx](file:///c:/Users/kayla/OneDrive/Desktop/SchoolAIStuff/components/Intel/IntelPanel.tsx)
+- **Command Deck Updates**:
+    - Add **Mode Toggle**: Chat / Image Analysis / Image Generation.
+    - Add **Model Selector**: Add "Gemini 3.0 Pro" and "Gemini 3.0 Image".
+    - Add **Thinking Level**: Slider/Selector (Low, Medium, High) - visible only for supported models.
+- **Input Area Updates**:
+    - Add **Image Upload**: Button/Dropzone for image mode.
+- **Logic**:
+    - Handle file selection and conversion to base64.
+    - Pass new state to `sendIntelQuery`.
 
-### UX TODOs
-- Add clear/new chat controls for Intel/Oracle sessions (persistence is in place).
+### 3. Horde Feed (`components/Horde`)
 
-### Economy: Passive Miner
-#### [MODIFY] Passive Miner + Store ✅
-- Miner now calls `claim_passive_points` via store; store updates `orbit_points`/`points` and top-bar balance.
-- Requires `sql/economy_race_patch.sql` (adds RPC + racing tables/RLS).
+#### [MODIFY] [HordeFeed.tsx](file:///c:/Users/kayla/OneDrive/Desktop/SchoolAIStuff/components/Horde/HordeFeed.tsx)
+- Add `fetchProfile` function to get full profile data from Supabase by `author_id`.
+- Add `showProfileModal` state.
+- Make avatar clickable to trigger fetch and show `ProfileModal`.
 
 ## Verification Plan
+
 ### Automated Tests
-- None currently available.
+- None (Frontend/API integration).
 
 ### Manual Verification
-1. **Intel Messages**: Open Intel Command Deck, send a message. Verify it appears in the chat history and persists after reload (if DB connected).
-2. **Schema**: Run `sql/economy_race_patch.sql` (adds miner RPC + racing tables/RLS). Run `sql/intel_persistence_patch.sql` if not already.
-3. **Race Stats**: Finish a race, return to Race lobby; verify stat cards populate from `typing_sessions`.
-4. **Passive Miner**: Claim once; header Orbit points should increase.
-5. **Racing column fix**: Ensure `sql/economy_race_patch.sql` applied so `typing_sessions` has `created_at`; stats query now uses `completed_at`.
+1.  **Gemini 3.0 Chat**:
+    - Open Intel Panel -> Settings.
+    - Select "Gemini 3.0 Pro".
+    - Set Thinking Level to "High".
+    - Send a complex query (e.g., "Solve this riddle...").
+    - Verify response indicates deep thinking (or check logs for model usage).
+2.  **Image Analysis**:
+    - Switch to "Image Mode".
+    - Upload an image.
+    - Ask "What is in this image?".
+    - Verify accurate description.
+3.  **Image Generation**:
+    - Switch to "Image Generation Mode".
+    - Prompt "Cyberpunk city".
+    - Verify an image is generated and displayed.
+4.  **Profile Viewing**:
+    - Go to Horde Feed.
+    - Click on a user's avatar.
+    - Verify `ProfileModal` opens with their stats.

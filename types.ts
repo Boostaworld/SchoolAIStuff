@@ -4,6 +4,7 @@ export interface Task {
   category: 'Quick' | 'Grind' | 'Cooked';
   difficulty?: 'Easy' | 'Medium' | 'Hard';
   completed: boolean;
+  is_public?: boolean; // Whether task is visible to all users
   isCopied?: boolean;
   isAnalyzing?: boolean; // For AI loading state
 }

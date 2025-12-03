@@ -17,7 +17,7 @@ export interface IntelChatMessage {
 export interface IntelQueryOptions {
   prompt: string;
   userId: string;
-  modelUsed?: 'flash' | 'pro' | 'orbit-x';
+  modelUsed?: 'flash' | 'pro' | 'orbit-x' | 'gemini-3-pro' | 'gemini-3-image';
   depthLevel?: number;
   researchMode?: boolean;
   customInstructions?: string;
@@ -27,6 +27,9 @@ export interface IntelQueryOptions {
   conversationHistory?: Array<{ role: 'user' | 'model'; text: string }>;
   conversationMode?: boolean; // If true, simple chat instead of research
   thinkingEnabled?: boolean; // If true, enables thinking mode
+  thinkingLevel?: 'low' | 'medium' | 'high'; // Thinking depth level
+  mode?: 'chat' | 'image' | 'generation'; // Interaction mode
+  image?: string; // Base64 encoded image data
 }
 
 const buildInstructions = (
@@ -148,6 +151,9 @@ export const sendIntelQueryWithPersistence = async (options: IntelQueryOptions) 
   const hasCustomInstruction = Boolean(options.customInstructions && options.customInstructions.trim().length > 0);
   const conversationMode = options.conversationMode || false;
   const thinkingEnabled = options.thinkingEnabled ?? true; // Default to enabled
+  const thinkingLevel = options.thinkingLevel || 'medium'; // Default to medium
+  const mode = options.mode || 'chat'; // Default to chat mode
+  const image = options.image; // Image data if provided
 
   if (modelUsed !== 'flash' && !unlockedModels.includes(modelUsed)) {
     throw new Error('CLEARANCE_DENIED: Model not unlocked');
@@ -178,7 +184,10 @@ export const sendIntelQueryWithPersistence = async (options: IntelQueryOptions) 
     depth: depthLevel,
     conversationHistory: options.conversationHistory,
     conversationMode,
-    thinkingEnabled // Pass thinking preference
+    thinkingEnabled, // Pass thinking preference
+    thinkingLevel, // Pass thinking level
+    mode, // Pass interaction mode
+    image // Pass image data
   });
 
   let sessionId: string | undefined;

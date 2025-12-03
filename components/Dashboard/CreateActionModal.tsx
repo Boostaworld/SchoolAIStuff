@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Target, Radio, Loader2, Send, Globe, Lock, Rocket, Calendar, Tag, Image as ImageIcon } from 'lucide-react';
+import { Target, Radio, Loader2, Send, Globe, Lock, Rocket, Calendar, Tag, Image as ImageIcon, X } from 'lucide-react';
 import { useOrbitStore } from '../../store/useOrbitStore';
 import clsx from 'clsx';
 
@@ -15,6 +15,7 @@ export const CreateActionModal: React.FC<CreateActionModalProps> = ({ onClose })
     const [activeTab, setActiveTab] = useState<Tab>('directive');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const { addTask, publishManualDrop } = useOrbitStore();
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     // Task State
     const [taskTitle, setTaskTitle] = useState('');
@@ -27,6 +28,7 @@ export const CreateActionModal: React.FC<CreateActionModalProps> = ({ onClose })
     const [postContent, setPostContent] = useState('');
     const [postTag, setPostTag] = useState('');
     const [postPrivate, setPostPrivate] = useState(false);
+    const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
     const handleDirectiveSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -36,7 +38,8 @@ export const CreateActionModal: React.FC<CreateActionModalProps> = ({ onClose })
             await addTask({
                 title: taskTitle,
                 category: taskCourse || 'Grind', // Map Course to Category
-                difficulty: taskDifficulty
+                difficulty: taskDifficulty,
+                is_public: !taskPrivate // Invert because UI says "private" but DB stores "public"
             });
             onClose();
         } catch (err) {
@@ -53,12 +56,32 @@ export const CreateActionModal: React.FC<CreateActionModalProps> = ({ onClose })
         try {
             // Tag handling
             const tags = postTag ? [postTag] : [];
+            // TODO: Pass selectedFile to publishManualDrop when backend supports it
             await publishManualDrop(postSubject, postContent, tags);
             onClose();
         } catch (err) {
             console.error(err);
         } finally {
             setIsSubmitting(false);
+        }
+    };
+
+    const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            // Validate file type (images only)
+            if (file.type.startsWith('image/')) {
+                setSelectedFile(file);
+            } else {
+                alert('Please select an image file (PNG, JPG, GIF, etc.)');
+            }
+        }
+    };
+
+    const handleRemoveFile = () => {
+        setSelectedFile(null);
+        if (fileInputRef.current) {
+            fileInputRef.current.value = '';
         }
     };
 
@@ -300,15 +323,42 @@ export const CreateActionModal: React.FC<CreateActionModalProps> = ({ onClose })
                                         />
                                     </div>
 
-                                    {/* Attachment Mock */}
+                                    {/* Attachment */}
                                     <div>
                                         <label className="flex items-center gap-2 text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-2">
                                             <ImageIcon className="w-3 h-3" /> Attachment
                                         </label>
-                                        <button type="button" className="w-full bg-slate-950 border border-slate-800 border-dashed hover:border-cyan-500/50 rounded-lg px-4 py-3 text-slate-500 hover:text-cyan-400 transition-colors font-mono text-xs flex items-center justify-center gap-2">
-                                            <ImageIcon className="w-4 h-4" />
-                                            UPLOAD_IMG
-                                        </button>
+                                        <input
+                                            ref={fileInputRef}
+                                            type="file"
+                                            accept="image/*"
+                                            onChange={handleFileSelect}
+                                            className="hidden"
+                                        />
+                                        {selectedFile ? (
+                                            <div className="w-full bg-slate-950 border border-cyan-500/50 rounded-lg px-4 py-3 text-cyan-400 font-mono text-xs flex items-center justify-between gap-2">
+                                                <div className="flex items-center gap-2 truncate">
+                                                    <ImageIcon className="w-4 h-4 flex-shrink-0" />
+                                                    <span className="truncate">{selectedFile.name}</span>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={handleRemoveFile}
+                                                    className="flex-shrink-0 text-slate-500 hover:text-red-400 transition-colors"
+                                                >
+                                                    <X className="w-4 h-4" />
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <button
+                                                type="button"
+                                                onClick={() => fileInputRef.current?.click()}
+                                                className="w-full bg-slate-950 border border-slate-800 border-dashed hover:border-cyan-500/50 rounded-lg px-4 py-3 text-slate-500 hover:text-cyan-400 transition-colors font-mono text-xs flex items-center justify-center gap-2"
+                                            >
+                                                <ImageIcon className="w-4 h-4" />
+                                                UPLOAD_IMG
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
 
