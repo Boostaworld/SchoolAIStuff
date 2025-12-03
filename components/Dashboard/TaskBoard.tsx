@@ -7,7 +7,9 @@ import clsx from 'clsx';
 export const TaskBoard: React.FC = () => {
   const { tasks, currentUser, toggleTask, forfeitTask, deleteTask, claimTask } = useOrbitStore();
 
-  const completedCount = tasks.filter(t => t.completed).length;
+  // ✅ FIX: Only show user's OWN tasks (not public tasks from others)
+  const myTasks = tasks.filter(t => t.user_id === currentUser?.id);
+  const completedCount = myTasks.filter(t => t.completed).length;
 
   return (
     <div className="flex flex-col h-full">
@@ -32,7 +34,7 @@ export const TaskBoard: React.FC = () => {
       {/* Task List */}
       <div className="flex-1 space-y-2 overflow-y-auto overflow-x-hidden p-1">
         <AnimatePresence mode='popLayout'>
-          {tasks.map((task) => (
+          {myTasks.map((task) => (
             <motion.div
               key={task.id}
               layout

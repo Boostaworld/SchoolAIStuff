@@ -270,7 +270,11 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
           .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `user_id=eq.${session.user.id}` }, (payload: any) => {
             const currentTasks = get().tasks;
             if (payload.eventType === 'INSERT') {
-              set({ tasks: [...currentTasks, payload.new as Task] });
+              // ✅ FIX: Only add if not already in state (prevents duplication)
+              const exists = currentTasks.some(t => t.id === payload.new.id);
+              if (!exists) {
+                set({ tasks: [...currentTasks, payload.new as Task] });
+              }
             } else if (payload.eventType === 'UPDATE') {
               set({ tasks: currentTasks.map(t => t.id === payload.new.id ? payload.new as Task : t) });
             } else if (payload.eventType === 'DELETE') {
@@ -607,10 +611,24 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
   deleteTask: async (id) => {
     // Admin-only deletion (no stat penalty)
     // Optimistic Delete
-    set(state => ({ tasks: state.tasks.filter(t => t.id !== id) }));
+    const currentTasks = get().tasks;
+    set({ tasks: currentTasks.filter(t => t.id !== id) });
 
-    // DB Delete
-    await supabase.from('tasks').delete().eq('id', id);
+    // DB Delete with error handling
+    const { error } = await supabase.from('tasks').delete().eq('id', id);
+    if (error) {
+      console.error("❌ Failed to delete task:", error);
+      console.error("Error details:", {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint
+      });
+      // Revert on error
+      set({ tasks: currentTasks });
+    } else {
+      console.log("✅ Task deleted successfully:", id);
+    }
   },
 
   claimTask: async (taskId: string) => {
@@ -621,6 +639,18 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     const publicTask = tasks.find(t => t.id === taskId);
     if (!publicTask || !publicTask.is_public) return;
 
+    // ✅ FIX: Check if user already has this exact task
+    const alreadyHas = tasks.some(t =>
+      t.user_id === currentUser.id &&
+      t.title === publicTask.title &&
+      t.category === publicTask.category
+    );
+
+    if (alreadyHas) {
+      console.log('⚠️ Task already claimed or exists');
+      return;
+    }
+
     // Create a copy for the current user (private by default)
     const { data, error } = await supabase.from('tasks').insert({
       user_id: currentUser.id,
@@ -629,14 +659,19 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       difficulty: publicTask.difficulty,
       completed: false,
       is_public: false // Claimed tasks are private
-    }).select().single();
+    }).select(`
+      *,
+      profiles!tasks_user_id_fkey(username, avatar_url)
+    `).single();
 
-    if (data && !error) {
-      // Add to local state
-      set((state) => ({
-        tasks: [...state.tasks, data as Task]
-      }));
+    if (error) {
+      console.error('❌ Failed to claim task:', error);
+      throw error;
     }
+
+    // ✅ FIX: Don't manually add to state - let realtime handle it
+    // This prevents duplication when realtime INSERT event fires
+    console.log('✅ Task claimed successfully, waiting for realtime sync');
   },
 
   askOracle: async (query) => {
@@ -1186,6 +1221,44 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
           )
         }
       }));
+
+      // Create notification for recipient
+      // First, get the channel to find the recipient
+      supabase
+        .from('dm_channels')
+        .select('user1_id, user2_id')
+        .eq('id', channelId)
+        .single()
+        .then(({ data: channel }) => {
+          if (channel) {
+            // Recipient is the other user (not the sender)
+            const recipientId = channel.user1_id === currentUser.id
+              ? channel.user2_id
+              : channel.user1_id;
+
+            // Create notification for the recipient
+            supabase
+              .from('notifications')
+              .insert({
+                recipient_id: recipientId,
+                sender_id: currentUser.id,
+                type: 'dm',
+                title: `New message from ${currentUser.username}`,
+                content: content.length > 50 ? content.substring(0, 50) + '...' : content,
+                link_url: `#comms?channel=${channelId}`,
+                metadata: {
+                  channel_id: channelId,
+                  message_id: data.id
+                }
+              })
+              .then(() => {
+                console.log('✅ DM notification created');
+              })
+              .catch((err) => {
+                console.error('❌ Failed to create DM notification:', err);
+              });
+          }
+        });
     }
   },
 
