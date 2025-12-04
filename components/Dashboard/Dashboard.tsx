@@ -14,6 +14,7 @@ import { useOrbitStore } from '../../store/useOrbitStore';
 import { AnimatePresence, motion } from 'framer-motion';
 import CommsPanel from '../Social/CommsPanel';
 import ConstellationMap from '../Social/ConstellationMap';
+import UnreadDMBanner from '../Social/UnreadDMBanner';
 import { TypingTerminal } from '../Training/TypingTerminal';
 import { TypingHeatmap } from '../Training/TypingHeatmap';
 import EnhancedChallengeSelector from '../Training/EnhancedChallengeSelector';
@@ -896,6 +897,9 @@ export const Dashboard: React.FC = () => {
           )}
         </div>
       </main>
+
+      {/* Unread DM Alert Banner */}
+      <UnreadDMBanner />
 
       {/* Floating Comms Panel */}
       {commsPanelOpen && <CommsPanel />}

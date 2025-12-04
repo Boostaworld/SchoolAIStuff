@@ -36,7 +36,9 @@ interface OrbitState {
   reactions: Record<string, MessageReaction[]>;
   unreadCounts: Record<string, number>;
   typingUsers: Record<string, string[]>;
+  typingChannels: Record<string, any>;
   commsPanelOpen: boolean;
+  heartbeatInterval: NodeJS.Timeout | null;
 
   // Phase 3: Training State
   typingChallenges: TypingChallenge[];
@@ -160,7 +162,9 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
   reactions: {},
   unreadCounts: {},
   typingUsers: {},
+  typingChannels: {},
   commsPanelOpen: false,
+  heartbeatInterval: null,
 
   // Phase 3: Training State
   typingChallenges: [],
@@ -252,6 +256,13 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
         await get().fetchRecentSessions();
         await get().loadInventory();
 
+        // Request browser notification permission
+        if (typeof window !== 'undefined') {
+          import('../lib/utils/notifications').then(({ requestNotificationPermission }) => {
+            requestNotificationPermission();
+          });
+        }
+
         // Phase 3: Setup Online Presence Tracking
         const presenceChannel = supabase.channel('online_presence')
           .on('presence', { event: 'sync' }, () => {
@@ -314,7 +325,7 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
 
         // 5. Setup Realtime DM Message Listeners
         supabase.channel('public:messages')
-          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload: any) => {
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, async (payload: any) => {
             const newMessage = payload.new as Message;
             const currentMessages = get().messages;
             const currentUser = get().currentUser;
@@ -324,9 +335,9 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
 
             // Check if this message is for a channel the user is part of
             const userChannels = get().dmChannels;
-            const isRelevant = userChannels.some(ch => ch.id === newMessage.channel_id);
+            const relevantChannel = userChannels.find(ch => ch.id === newMessage.channel_id);
 
-            if (isRelevant) {
+            if (relevantChannel) {
               set({
                 messages: {
                   ...currentMessages,
@@ -336,6 +347,35 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
                   ]
                 }
               });
+
+              // Refresh channel list to update unread counts
+              await get().fetchDMChannels();
+
+              // Show browser notification if not currently viewing this channel
+              const activeChannelId = get().activeChannelId;
+              if (activeChannelId !== newMessage.channel_id) {
+                // Import notification utilities
+                import('../lib/utils/notifications').then(({ showDMNotification, updateFaviconBadge, getTotalUnreadCount }) => {
+                  const sender = relevantChannel.otherUser;
+                  if (sender) {
+                    showDMNotification({
+                      senderUsername: sender.username,
+                      senderAvatar: sender.avatar,
+                      messagePreview: newMessage.content,
+                      channelId: newMessage.channel_id,
+                      onClick: () => {
+                        get().setActiveChannel(newMessage.channel_id);
+                        get().toggleCommsPanel();
+                      }
+                    });
+                  }
+
+                  // Update favicon badge
+                  const channels = get().dmChannels;
+                  const totalUnread = getTotalUnreadCount(channels);
+                  updateFaviconBadge(totalUnread);
+                });
+              }
             }
           })
           .subscribe();
@@ -411,6 +451,21 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
 
         // Fetch initial notifications
         await get().fetchNotifications();
+
+        // Setup heartbeat to update last_active every 30 seconds
+        const heartbeat = setInterval(async () => {
+          const { error } = await supabase
+            .from('profiles')
+            .update({ last_active: new Date().toISOString() })
+            .eq('id', session.user.id);
+
+          if (error) {
+            console.error('❌ Heartbeat failed:', error);
+          }
+        }, 30000); // 30 seconds
+
+        // Store interval ID for cleanup
+        set({ heartbeatInterval: heartbeat });
       }
     } catch (error) {
       console.warn("Orbit Init Warning: Supabase disconnected or unconfigured.", error);
@@ -466,13 +521,20 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
   },
 
   logout: async () => {
+    // Clear heartbeat interval
+    const state = get();
+    if (state.heartbeatInterval) {
+      clearInterval(state.heartbeatInterval);
+    }
+
     await supabase.auth.signOut();
     set({
       isAuthenticated: false,
       currentUser: null,
       tasks: [],
       intelDrops: [],
-      currentIntelResult: null
+      currentIntelResult: null,
+      heartbeatInterval: null
     });
   },
 
@@ -928,7 +990,9 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
         *,
         profiles!intel_drops_author_id_fkey (
           username,
-          avatar_url
+          avatar_url,
+          is_admin,
+          can_customize_ai
         )
       `)
       .or(`is_private.eq.false,author_id.eq.${currentUser.id}`)
@@ -945,6 +1009,8 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       author_id: drop.author_id,
       author_username: drop.profiles?.username,
       author_avatar: drop.profiles?.avatar_url,
+      author_is_admin: drop.profiles?.is_admin || false,
+      author_ai_plus: drop.profiles?.can_customize_ai || false,
       query: drop.query,
       summary_bullets: drop.summary_bullets,
       sources: drop.sources,
@@ -953,7 +1019,9 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       attachment_url: drop.attachment_url ?? drop.attachmentUrl ?? undefined,
       attachment_type: drop.attachment_type ?? drop.attachmentType ?? undefined,
       is_private: drop.is_private,
-      created_at: drop.created_at
+      created_at: drop.created_at,
+      attachment_url: drop.attachment_url,
+      attachment_type: drop.attachment_type
     }));
 
     set({ intelDrops: mappedDrops });
@@ -1074,33 +1142,56 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       return;
     }
 
-    // Map channels and populate otherUser field
-    const mappedChannels: DMChannel[] = (data || []).map((channel: any) => {
-      const otherUserData = channel.user1_id === currentUser.id ? channel.user2 : channel.user1;
+    // Calculate unread counts for each channel
+    const channelsWithUnread = await Promise.all(
+      (data || []).map(async (channel: any) => {
+        const otherUserData = channel.user1_id === currentUser.id ? channel.user2 : channel.user1;
 
-      return {
-        id: channel.id,
-        user1_id: channel.user1_id,
-        user2_id: channel.user2_id,
-        created_at: channel.created_at,
-        otherUser: otherUserData ? {
-          id: otherUserData.id,
-          username: otherUserData.username,
-          avatar: otherUserData.avatar_url,
-          joinedAt: '',
-          max_wpm: otherUserData.max_wpm,
-          orbit_points: otherUserData.orbit_points,
-          last_active: otherUserData.last_active,
-          stats: {
-            tasksCompleted: otherUserData.tasks_completed || 0,
-            tasksForfeited: otherUserData.tasks_forfeited || 0,
-            streakDays: 0
-          }
-        } : undefined
-      };
-    });
+        // Count unread messages where sender is NOT current user
+        const { count, error: countError } = await supabase
+          .from('messages')
+          .select('*', { count: 'exact', head: true })
+          .eq('channel_id', channel.id)
+          .eq('read', false)
+          .neq('sender_id', currentUser.id);
 
-    set({ dmChannels: mappedChannels });
+        if (countError) {
+          console.error('Error counting unread messages:', countError);
+        }
+
+        return {
+          id: channel.id,
+          user1_id: channel.user1_id,
+          user2_id: channel.user2_id,
+          created_at: channel.created_at,
+          unreadCount: count || 0,
+          otherUser: otherUserData ? {
+            id: otherUserData.id,
+            username: otherUserData.username,
+            avatar: otherUserData.avatar_url,
+            joinedAt: '',
+            max_wpm: otherUserData.max_wpm,
+            orbit_points: otherUserData.orbit_points,
+            last_active: otherUserData.last_active,
+            stats: {
+              tasksCompleted: otherUserData.tasks_completed || 0,
+              tasksForfeited: otherUserData.tasks_forfeited || 0,
+              streakDays: 0
+            }
+          } : undefined
+        };
+      })
+    );
+
+    set({ dmChannels: channelsWithUnread });
+
+    // Update favicon badge with total unread count
+    if (typeof window !== 'undefined') {
+      import('../lib/utils/notifications').then(({ updateFaviconBadge, getTotalUnreadCount }) => {
+        const totalUnread = getTotalUnreadCount(channelsWithUnread);
+        updateFaviconBadge(totalUnread);
+      });
+    }
   },
 
   createOrGetChannel: async (otherUserId: string) => {
@@ -1148,7 +1239,10 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
   fetchMessages: async (channelId: string) => {
     const { data, error } = await supabase
       .from('messages')
-      .select('*')
+      .select(`
+        *,
+        profiles:sender_id (username, avatar, is_admin, can_customize_ai)
+      `)
       .eq('channel_id', channelId)
       .order('created_at', { ascending: true });
 
@@ -1157,8 +1251,18 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       return;
     }
 
+    // Map sender profile data to message
+    const messagesWithSender = (data || []).map((msg: any) => ({
+      ...msg,
+      senderUsername: msg.profiles?.username,
+      senderAvatar: msg.profiles?.avatar,
+      senderIsAdmin: msg.profiles?.is_admin || false,
+      senderCanCustomizeAI: msg.profiles?.can_customize_ai || false,
+      profiles: undefined // Remove nested object
+    }));
+
     set(state => ({
-      messages: { ...state.messages, [channelId]: data || [] }
+      messages: { ...state.messages, [channelId]: messagesWithSender }
     }));
 
     // Fetch reactions for these messages
@@ -1324,69 +1428,141 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     if (!currentUser) return;
 
     const channelName = `typing:${channelId}`;
+    const existingChannel = get().typingChannels[channelName];
 
-    if (isTyping) {
-      // Send a broadcast event that user is typing
-      const channel = supabase.channel(channelName);
-      channel.subscribe(async (status) => {
-        if (status === 'SUBSCRIBED') {
-          await channel.send({
-            type: 'broadcast',
-            event: 'typing',
-            payload: { user_id: currentUser.id, typing: true }
-          });
-        }
+    if (existingChannel) {
+      // Reuse existing channel
+      existingChannel.send({
+        type: 'broadcast',
+        event: 'typing',
+        payload: { user_id: currentUser.id, typing: isTyping }
       });
     } else {
-      // Send a broadcast event that user stopped typing
+      // Create new channel and store it
       const channel = supabase.channel(channelName);
-      channel.subscribe(async (status) => {
-        if (status === 'SUBSCRIBED') {
-          await channel.send({
-            type: 'broadcast',
-            event: 'typing',
-            payload: { user_id: currentUser.id, typing: false }
-          });
-        }
-      });
+      channel
+        .on('broadcast', { event: 'typing' }, ({ payload }) => {
+          const { user_id, typing } = payload;
+          const currentTyping = get().typingUsers[channelId] || [];
+
+          if (typing) {
+            // Add user to typing list if not already there
+            if (!currentTyping.includes(user_id)) {
+              set({
+                typingUsers: {
+                  ...get().typingUsers,
+                  [channelId]: [...currentTyping, user_id]
+                }
+              });
+            }
+          } else {
+            // Remove user from typing list
+            set({
+              typingUsers: {
+                ...get().typingUsers,
+                [channelId]: currentTyping.filter(id => id !== user_id)
+              }
+            });
+          }
+        })
+        .subscribe(async (status) => {
+          if (status === 'SUBSCRIBED') {
+            await channel.send({
+              type: 'broadcast',
+              event: 'typing',
+              payload: { user_id: currentUser.id, typing: isTyping }
+            });
+          }
+        });
+
+      // Store channel for reuse
+      set(state => ({
+        typingChannels: { ...state.typingChannels, [channelName]: channel }
+      }));
     }
   },
 
   setActiveChannel: (channelId: string | null) => {
+    const prevChannelId = get().activeChannelId;
+
+    // Clean up previous channel's typing subscription
+    if (prevChannelId && prevChannelId !== channelId) {
+      const prevChannelName = `typing:${prevChannelId}`;
+      const prevChannel = get().typingChannels[prevChannelName];
+      if (prevChannel) {
+        prevChannel.unsubscribe();
+        // Remove from stored channels
+        set(state => {
+          const { [prevChannelName]: removed, ...rest } = state.typingChannels;
+          return { typingChannels: rest };
+        });
+      }
+    }
+
     set({ activeChannelId: channelId });
 
     // Fetch messages when opening a channel
     if (channelId) {
       get().fetchMessages(channelId);
 
-      // Subscribe to typing indicators for this channel
-      const typingChannel = supabase.channel(`typing:${channelId}`);
-      typingChannel
-        .on('broadcast', { event: 'typing' }, (payload: any) => {
-          const { user_id, typing } = payload.payload;
-          const currentTyping = get().typingUsers;
+      // Mark all messages in this channel as read
+      const currentUser = get().currentUser;
+      if (currentUser) {
+        supabase
+          .from('messages')
+          .update({ read: true })
+          .eq('channel_id', channelId)
+          .eq('read', false)
+          .neq('sender_id', currentUser.id)
+          .then(({ error }) => {
+            if (error) {
+              console.error('Error marking messages as read:', error);
+            } else {
+              // Refresh channel list to update unread counts and favicon
+              get().fetchDMChannels();
+            }
+          });
+      }
 
-          if (typing) {
-            // Add user to typing list
-            set({
-              typingUsers: {
-                ...currentTyping,
-                [channelId]: [...(currentTyping[channelId] || []), user_id].filter(
-                  (id, idx, arr) => arr.indexOf(id) === idx // dedupe
-                )
-              }
-            });
-          } else {
-            // Remove user from typing list
-            set({
-              typingUsers: {
-                ...currentTyping,
-                [channelId]: (currentTyping[channelId] || []).filter(id => id !== user_id)
-              }
-            });
-          }
-        })
-        .subscribe();
+      // Only subscribe if we don't already have a channel
+      const channelName = `typing:${channelId}`;
+      const existingChannel = get().typingChannels[channelName];
+
+      if (!existingChannel) {
+        // Subscribe to typing indicators for this channel
+        const typingChannel = supabase.channel(channelName);
+        typingChannel
+          .on('broadcast', { event: 'typing' }, (payload: any) => {
+            const { user_id, typing } = payload.payload;
+            const currentTyping = get().typingUsers;
+
+            if (typing) {
+              // Add user to typing list
+              set({
+                typingUsers: {
+                  ...currentTyping,
+                  [channelId]: [...(currentTyping[channelId] || []), user_id].filter(
+                    (id, idx, arr) => arr.indexOf(id) === idx // dedupe
+                  )
+                }
+              });
+            } else {
+              // Remove user from typing list
+              set({
+                typingUsers: {
+                  ...currentTyping,
+                  [channelId]: (currentTyping[channelId] || []).filter(id => id !== user_id)
+                }
+              });
+            }
+          })
+          .subscribe();
+
+        // Store the channel
+        set(state => ({
+          typingChannels: { ...state.typingChannels, [channelName]: typingChannel }
+        }));
+      }
     }
   },
 

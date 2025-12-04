@@ -1,9 +1,12 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Send, Paperclip, AlertTriangle, Signal, Users } from 'lucide-react';
 import { useOrbitStore } from '../../store/useOrbitStore';
 import { DMChannel } from '../../types';
 import MessageBubble from './MessageBubble';
+import { formatLastSeen } from '../../lib/utils/time';
+import { groupMessagesByDate } from '../../lib/utils/messageGrouping';
+import { supabase } from '../../lib/supabase';
 
 export default function CommsPanel() {
   const {
@@ -25,13 +28,38 @@ export default function CommsPanel() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom when new messages arrive
+  // Force presence sync when panel opens
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, activeChannelId]);
+    if (commsPanelOpen) {
+      // Get latest presence state from Supabase
+      const presenceChannel = supabase.channel('online_presence');
+      presenceChannel.subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          const state = presenceChannel.presenceState();
+          const userIds = Object.values(state).flat().map((p: any) => p.user_id);
+          console.log('🔄 Synced online users in CommsPanel:', userIds.length);
+        }
+      });
+    }
+  }, [commsPanelOpen]);
+
+  // Instant scroll when channel changes (before paint)
+  useLayoutEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'instant' });
+    }
+  }, [activeChannelId]);
+
+  // Smooth scroll when new messages arrive
+  useEffect(() => {
+    if (messagesEndRef.current && activeChannelId) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages]);
 
   const activeChannel = dmChannels.find(ch => ch.id === activeChannelId);
   const activeMessages = activeChannelId ? messages[activeChannelId] || [] : [];
+  const groupedMessages = groupMessagesByDate(activeMessages);
   const currentTypingUsers = activeChannelId ? typingUsers[activeChannelId] || [] : [];
 
   const handleSend = async (e: React.FormEvent) => {
@@ -137,16 +165,34 @@ export default function CommsPanel() {
               dmChannels.map(channel => {
                 const otherUser = getOtherUser(channel);
                 const online = otherUser ? isUserOnline(otherUser.id) : false;
+                const unreadCount = channel.unreadCount || 0;
+                const hasUnread = unreadCount > 0;
 
                 return (
                   <motion.button
                     key={channel.id}
                     onClick={() => setActiveChannel(channel.id)}
-                    className="w-full p-4 bg-slate-900/50 hover:bg-slate-800/50 border border-cyan-500/20 hover:border-cyan-500/40 rounded-lg transition-all text-left group"
+                    className="w-full p-4 bg-slate-900/50 hover:bg-slate-800/50 border border-cyan-500/20 hover:border-cyan-500/40 rounded-lg transition-all text-left group relative overflow-hidden"
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
                   >
-                    <div className="flex items-center gap-3">
+                    {/* Unread pulse effect background */}
+                    {hasUnread && (
+                      <motion.div
+                        animate={{
+                          opacity: [0.1, 0.2, 0.1],
+                          scale: [1, 1.05, 1]
+                        }}
+                        transition={{
+                          duration: 2,
+                          repeat: Infinity,
+                          ease: "easeInOut"
+                        }}
+                        className="absolute inset-0 bg-gradient-to-r from-orange-500/10 via-red-500/10 to-orange-500/10 pointer-events-none"
+                      />
+                    )}
+
+                    <div className="flex items-center gap-3 relative z-10">
                       <div className="relative">
                         <img
                           src={otherUser?.avatar}
@@ -169,6 +215,69 @@ export default function CommsPanel() {
                           {online ? 'ONLINE' : 'OFFLINE'}
                         </p>
                       </div>
+
+                      {/* Unread badge */}
+                      {hasUnread && (
+                        <motion.div
+                          initial={{ scale: 0, rotate: -180 }}
+                          animate={{
+                            scale: 1,
+                            rotate: 0,
+                          }}
+                          className="relative"
+                        >
+                          {/* Glowing background */}
+                          <motion.div
+                            animate={{
+                              scale: [1, 1.4, 1],
+                              opacity: [0.5, 0.8, 0.5]
+                            }}
+                            transition={{
+                              duration: 1.5,
+                              repeat: Infinity,
+                              ease: "easeInOut"
+                            }}
+                            className="absolute inset-0 bg-gradient-to-br from-orange-400 to-red-500 rounded-full blur-md"
+                          />
+
+                          {/* Badge container */}
+                          <div className="relative flex items-center justify-center min-w-[28px] h-7 px-2 bg-gradient-to-br from-orange-500 via-red-500 to-orange-600 rounded-full border-2 border-orange-300/50 shadow-lg shadow-orange-500/50">
+                            {/* Inner glow */}
+                            <div className="absolute inset-0 bg-gradient-to-t from-transparent to-white/20 rounded-full" />
+
+                            {/* Count text */}
+                            <span className="relative text-white font-mono text-xs font-bold tracking-wider drop-shadow-lg">
+                              {unreadCount > 9 ? '9+' : unreadCount}
+                            </span>
+
+                            {/* Scanline effect */}
+                            <motion.div
+                              animate={{ y: ['-100%', '100%'] }}
+                              transition={{
+                                duration: 2,
+                                repeat: Infinity,
+                                ease: "linear"
+                              }}
+                              className="absolute inset-0 bg-gradient-to-b from-transparent via-white/30 to-transparent rounded-full"
+                              style={{ height: '50%' }}
+                            />
+                          </div>
+
+                          {/* Alert pulse rings */}
+                          <motion.div
+                            animate={{
+                              scale: [1, 2, 2],
+                              opacity: [0.6, 0, 0]
+                            }}
+                            transition={{
+                              duration: 2,
+                              repeat: Infinity,
+                              ease: "easeOut"
+                            }}
+                            className="absolute inset-0 border-2 border-orange-400 rounded-full"
+                          />
+                        </motion.div>
+                      )}
                     </div>
                   </motion.button>
                 );
@@ -210,7 +319,7 @@ export default function CommsPanel() {
                         {otherUser?.username || 'Unknown'}
                       </p>
                       <p className="text-cyan-500/60 text-xs font-mono">
-                        {online ? 'ONLINE' : `LAST SEEN: ${otherUser?.last_active || 'UNKNOWN'}`}
+                        {online ? 'ONLINE' : `LAST SEEN: ${formatLastSeen(otherUser?.last_active)}`}
                       </p>
                     </div>
                   </div>
@@ -268,8 +377,22 @@ export default function CommsPanel() {
                   </p>
                 </div>
               ) : (
-                activeMessages.map(message => (
-                  <MessageBubble key={message.id} message={message} />
+                groupedMessages.map((group, groupIndex) => (
+                  <div key={groupIndex}>
+                    {/* Date separator */}
+                    <div className="flex items-center gap-3 my-6">
+                      <div className="flex-1 h-px bg-gradient-to-r from-transparent via-cyan-500/20 to-transparent"></div>
+                      <span className="text-xs text-cyan-400/60 font-mono uppercase tracking-wider px-3 py-1 bg-slate-900/50 rounded-full border border-cyan-500/20">
+                        {group.date}
+                      </span>
+                      <div className="flex-1 h-px bg-gradient-to-r from-transparent via-cyan-500/20 to-transparent"></div>
+                    </div>
+
+                    {/* Messages for this day */}
+                    {group.messages.map(message => (
+                      <MessageBubble key={message.id} message={message} />
+                    ))}
+                  </div>
                 ))
               )}
               <div ref={messagesEndRef} />

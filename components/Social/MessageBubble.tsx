@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Download, FileText, Image as ImageIcon, Smile } from 'lucide-react';
+import { Download, FileText, Image as ImageIcon, Smile, Maximize2 } from 'lucide-react';
 import { Message } from '../../types';
 import { useOrbitStore } from '../../store/useOrbitStore';
 import ReactionPicker from './ReactionPicker';
+import { getUserBadgeStyle } from '../../lib/utils/badges';
+import { MarkdownRenderer } from './MarkdownRenderer';
+import { MessageModal } from './MessageModal';
 
 interface MessageBubbleProps {
   message: Message;
@@ -12,9 +15,20 @@ interface MessageBubbleProps {
 const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
   const { currentUser, reactions, addReaction, removeReaction } = useOrbitStore();
   const [showReactionPicker, setShowReactionPicker] = useState(false);
+  const [showModal, setShowModal] = useState(false);
 
   const isSelf = message.sender_id === currentUser?.id;
   const messageReactions = reactions[message.id] || [];
+
+  // Get badge styling for sender
+  const badgeStyle = getUserBadgeStyle({
+    is_admin: message.senderIsAdmin,
+    can_customize_ai: message.senderCanCustomizeAI
+  });
+
+  // Check if message is long (10+ lines)
+  const lineCount = message.content.split('\n').length;
+  const isLongMessage = lineCount >= 10;
 
   const handleAddReaction = (emoji: string) => {
     addReaction(message.id, emoji);
@@ -44,12 +58,30 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
     >
       {/* Avatar (only for received messages) */}
       {!isSelf && (
-        <div className="w-8 h-8 rounded-full bg-slate-800 border border-cyan-500/30 flex items-center justify-center flex-shrink-0">
-          <span className="text-cyan-400 text-xs font-mono">OP</span>
+        <div className="w-8 h-8 rounded-full overflow-hidden bg-slate-800 border border-cyan-500/30 flex items-center justify-center flex-shrink-0">
+          {message.senderAvatar ? (
+            <img
+              src={message.senderAvatar}
+              alt={message.senderUsername || 'User'}
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <span className="text-cyan-400 text-xs font-mono">OP</span>
+          )}
         </div>
       )}
 
       <div className={`flex flex-col gap-1 max-w-[75%] ${isSelf ? 'items-end' : 'items-start'}`}>
+        {/* Sender Name with Badge (only for received messages) */}
+        {!isSelf && message.senderUsername && (
+          <div className={`flex items-center gap-1.5 px-2 ${badgeStyle.glowClasses}`}>
+            {badgeStyle.badgeIcon}
+            <span className={`text-xs font-mono ${badgeStyle.nameClasses}`}>
+              {message.senderUsername}
+            </span>
+          </div>
+        )}
+
         {/* Message Content */}
         <motion.div
           whileHover={{ scale: 1.01 }}
@@ -75,10 +107,21 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
             }}
           />
 
-          {/* Message text */}
-          <p className="relative z-10 break-words whitespace-pre-wrap">
-            {message.content}
-          </p>
+          {/* Message text with markdown support */}
+          <div className="relative z-10">
+            <MarkdownRenderer content={message.content} />
+          </div>
+
+          {/* Expand button for long messages */}
+          {isLongMessage && (
+            <button
+              onClick={() => setShowModal(true)}
+              className="relative z-10 mt-2 flex items-center gap-1.5 text-xs text-cyan-400 hover:text-cyan-300 transition-colors group"
+            >
+              <Maximize2 className="w-3.5 h-3.5 group-hover:scale-110 transition-transform" />
+              <span>Expand full message</span>
+            </button>
+          )}
 
           {/* Attachment */}
           {message.attachment_url && (
@@ -177,6 +220,17 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
           />
         )}
       </div>
+
+      {/* Message Modal for Long Messages */}
+      <MessageModal
+        isOpen={showModal}
+        onClose={() => setShowModal(false)}
+        content={message.content}
+        timestamp={message.created_at}
+        senderUsername={message.senderUsername}
+        senderAvatar={message.senderAvatar}
+        isSelf={isSelf}
+      />
     </motion.div>
   );
 };

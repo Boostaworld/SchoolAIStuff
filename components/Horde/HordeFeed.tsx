@@ -7,6 +7,7 @@ import { IntelDrop } from '../../types';
 import { ProfileModal } from '../Operative/ProfileModal';
 import { supabase } from '../../lib/supabase';
 import { toast } from '@/lib/toast';
+import { getUserBadgeStyle } from '../../lib/utils/badges';
 
 export const HordeFeed: React.FC = () => {
   const { intelDrops, currentUser, deleteIntelDrop } = useOrbitStore();
@@ -116,7 +117,20 @@ export const HordeFeed: React.FC = () => {
                       className="w-5 h-5 rounded-full border border-slate-700 cursor-pointer hover:border-cyan-500 hover:shadow-[0_0_8px_rgba(34,211,238,0.5)] transition-all"
                       title="View profile"
                     />
-                    <span className="text-xs text-slate-400 font-mono">{drop.author_username}</span>
+                    {(() => {
+                      const badgeStyle = getUserBadgeStyle({
+                        is_admin: drop.author_is_admin,
+                        can_customize_ai: drop.author_ai_plus
+                      });
+                      return (
+                        <div className={`flex items-center gap-1 ${badgeStyle.glowClasses}`}>
+                          {badgeStyle.badgeIcon}
+                          <span className={`text-xs font-mono ${badgeStyle.nameClasses || 'text-slate-400'}`}>
+                            {drop.author_username}
+                          </span>
+                        </div>
+                      );
+                    })()}
                     {drop.is_private && drop.author_id === currentUser?.id && (
                       <div className="flex items-center gap-1 bg-violet-500/10 px-1.5 py-0.5 rounded border border-violet-500/20">
                         <Lock className="w-2.5 h-2.5 text-violet-400" />

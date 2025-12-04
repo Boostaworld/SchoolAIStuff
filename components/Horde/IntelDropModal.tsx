@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { X, Trash2, ShieldAlert } from 'lucide-react';
 import { IntelDrop } from '../../types';
@@ -12,6 +12,18 @@ interface IntelDropModalProps {
 
 export const IntelDropModal: React.FC<IntelDropModalProps> = ({ drop, onClose }) => {
     const { currentUser, deleteIntelDrop } = useOrbitStore();
+
+    // ESC key handler
+    useEffect(() => {
+        const handleEscape = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                onClose();
+            }
+        };
+
+        window.addEventListener('keydown', handleEscape);
+        return () => window.removeEventListener('keydown', handleEscape);
+    }, [onClose]);
 
     const handleDelete = async () => {
         if (confirm("CONFIRM DELETION PROTOCOL? This item will be permanently purged.")) {

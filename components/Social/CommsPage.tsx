@@ -1,9 +1,12 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { AlertTriangle, Paperclip, Send, Signal, Users } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useOrbitStore } from '../../store/useOrbitStore';
 import { DMChannel } from '../../types';
 import MessageBubble from './MessageBubble';
+import { formatLastSeen } from '../../lib/utils/time';
+import { groupMessagesByDate } from '../../lib/utils/messageGrouping';
+import { supabase } from '../../lib/supabase';
 
 export default function CommsPage() {
   const {
@@ -22,12 +25,36 @@ export default function CommsPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Force presence sync when page mounts
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, activeChannelId]);
+    // Get latest presence state from Supabase
+    const presenceChannel = supabase.channel('online_presence');
+    presenceChannel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        const state = presenceChannel.presenceState();
+        const userIds = Object.values(state).flat().map((p: any) => p.user_id);
+        console.log('🔄 Synced online users in CommsPage:', userIds.length);
+      }
+    });
+  }, []);
+
+  // Instant scroll when channel changes (before paint)
+  useLayoutEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'instant' });
+    }
+  }, [activeChannelId]);
+
+  // Smooth scroll when new messages arrive
+  useEffect(() => {
+    if (messagesEndRef.current && activeChannelId) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages]);
 
   const activeChannel = dmChannels.find(ch => ch.id === activeChannelId);
   const activeMessages = activeChannelId ? messages[activeChannelId] || [] : [];
+  const groupedMessages = groupMessagesByDate(activeMessages);
   const currentTypingUsers = activeChannelId ? typingUsers[activeChannelId] || [] : [];
 
   const handleSend = async (e: React.FormEvent) => {
@@ -158,7 +185,7 @@ export default function CommsPage() {
                       {otherUser?.username || 'Unknown'}
                     </p>
                     <p className="text-cyan-500/60 text-xs font-mono">
-                      {online ? 'ONLINE' : `LAST SEEN: ${otherUser?.last_active || 'UNKNOWN'}`}
+                      {online ? 'ONLINE' : `LAST SEEN: ${formatLastSeen(otherUser?.last_active)}`}
                     </p>
                   </div>
                 </div>
@@ -214,8 +241,22 @@ export default function CommsPage() {
                 </p>
               </div>
             ) : (
-              activeMessages.map(message => (
-                <MessageBubble key={message.id} message={message} />
+              groupedMessages.map((group, groupIndex) => (
+                <div key={groupIndex}>
+                  {/* Date separator */}
+                  <div className="flex items-center gap-3 my-6">
+                    <div className="flex-1 h-px bg-gradient-to-r from-transparent via-cyan-500/20 to-transparent"></div>
+                    <span className="text-xs text-cyan-400/60 font-mono uppercase tracking-wider px-3 py-1 bg-slate-900/50 rounded-full border border-cyan-500/20">
+                      {group.date}
+                    </span>
+                    <div className="flex-1 h-px bg-gradient-to-r from-transparent via-cyan-500/20 to-transparent"></div>
+                  </div>
+
+                  {/* Messages for this day */}
+                  {group.messages.map(message => (
+                    <MessageBubble key={message.id} message={message} />
+                  ))}
+                </div>
               ))
             )
           ) : (

@@ -65,6 +65,8 @@ export interface IntelDrop {
   author_id: string;
   author_username?: string;
   author_avatar?: string;
+  author_is_admin?: boolean;
+  author_ai_plus?: boolean;
   query: string;
   summary_bullets: string[];
   sources: IntelSource[];
@@ -104,6 +106,8 @@ export interface Message {
   // Computed properties
   senderUsername?: string;
   senderAvatar?: string;
+  senderIsAdmin?: boolean;
+  senderCanCustomizeAI?: boolean;
 }
 
 export interface MessageReaction {
