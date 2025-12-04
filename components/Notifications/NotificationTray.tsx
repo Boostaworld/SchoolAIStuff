@@ -48,7 +48,11 @@ export const NotificationTray: React.FC = () => {
                   <div className="flex-1">
                     <p className="text-sm text-slate-200">{n.content?.message || n.content || 'Update'}</p>
                     {n.link_url && (
-                      <a href={n.link_url} className="text-xs text-cyan-400 underline">
+                      <a
+                        href={n.link_url}
+                        className="text-xs text-cyan-400 underline"
+                        onClick={() => setOpen(false)}
+                      >
                         View
                       </a>
                     )}

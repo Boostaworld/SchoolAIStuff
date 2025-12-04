@@ -128,7 +128,22 @@ export const Dashboard: React.FC = () => {
     const shareableTabs: ViewState[] = ['comms', 'research', 'intel'];
 
     if (shareableTabs.includes(activeView)) {
-      window.location.hash = activeView;
+      if (activeView === 'comms') {
+        // Preserve channel ID if present
+        const currentHash = window.location.hash.slice(1);
+        const [_, param] = currentHash.split('/');
+        // If we have a param in the URL, keep it. 
+        // OR if we have an active channel in the store, use that.
+        // But we can't easily access store state here without adding it to dependency array, 
+        // which might cause loops.
+        // Safer approach: If the current hash starts with comms/ and we are in comms view, don't overwrite it with just 'comms'.
+        if (!currentHash.startsWith('comms/')) {
+          // Only set to 'comms' if it's not already a deep link
+          window.location.hash = activeView;
+        }
+      } else {
+        window.location.hash = activeView;
+      }
     } else {
       // Clear hash for local tabs
       if (window.location.hash) {
@@ -629,7 +644,7 @@ export const Dashboard: React.FC = () => {
       {/* Main Content Area */}
       <main className="flex-1 z-10 flex flex-col h-full overflow-hidden relative">
         {/* Heads Up Display */}
-        <header className="h-16 border-b border-slate-800 bg-slate-950/50 backdrop-blur-sm flex items-center gap-4 px-3 md:px-6 shrink-0 z-40">
+        <header className="min-h-16 border-b border-slate-800 bg-slate-950/50 backdrop-blur-sm flex flex-wrap items-center gap-2 md:gap-4 px-3 md:px-6 shrink-0 z-40 py-2">
           <div className="flex items-center gap-2 md:gap-6">
             {/* Hamburger Menu Button - Always visible for navigation */}
             <button
@@ -640,8 +655,8 @@ export const Dashboard: React.FC = () => {
             </button>
 
             <div>
-              <h1 className="text-base md:text-lg font-bold text-white tracking-widest">ORBIT OS</h1>
-              <p className="text-[10px] text-slate-500 font-mono uppercase hidden sm:block">
+              <h1 className="text-sm md:text-lg font-bold text-white tracking-widest">ORBIT OS</h1>
+              <p className="text-[10px] text-slate-500 font-mono uppercase hidden md:block">
                 USER: {currentUser?.username}
               </p>
             </div>
@@ -670,19 +685,19 @@ export const Dashboard: React.FC = () => {
         {/* View Switcher */}
         <div className="flex-1 overflow-hidden relative">
           {activeView === 'dashboard' && (
-            <div className="absolute inset-0 p-3 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-4 md:gap-6 overflow-y-auto lg:overflow-hidden animate-in fade-in duration-300">
+            <div className="absolute inset-0 p-3 md:p-6 grid grid-cols-1 xl:grid-cols-12 gap-4 md:gap-6 overflow-y-auto xl:overflow-hidden animate-in fade-in duration-300">
               {/* Left: Tasks (5 cols on desktop, full width on mobile) */}
-              <div className="lg:col-span-5 h-auto lg:h-full overflow-hidden">
+              <div className="xl:col-span-5 lg:col-span-6 col-span-12 h-auto xl:h-full overflow-hidden">
                 <TaskBoard />
               </div>
 
               {/* Middle: Horde (3 cols on desktop, full width on mobile) */}
-              <div className="lg:col-span-3 h-auto lg:h-full overflow-hidden lg:pt-12">
+              <div className="xl:col-span-3 lg:col-span-6 col-span-12 h-auto xl:h-full overflow-hidden xl:pt-12">
                 <HordeFeed />
               </div>
 
               {/* Right: Oracle (4 cols on desktop, full width on mobile) */}
-              <div className="lg:col-span-4 h-auto lg:h-full overflow-hidden space-y-4">
+              <div className="xl:col-span-4 lg:col-span-12 col-span-12 h-auto xl:h-full overflow-hidden space-y-4">
                 <OracleWidget />
               </div>
             </div>

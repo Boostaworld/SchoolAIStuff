@@ -3,6 +3,7 @@ import { Search, Users, TrendingUp, Target } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '../../lib/supabase';
 import { ProfileModal } from './ProfileModal';
+import { getUserBadgeStyle } from '../../lib/utils/badges';
 
 interface SearchResult {
   id: string;
@@ -170,9 +171,25 @@ export const OperativeSearchPanel: React.FC = () => {
 
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between mb-1">
-                            <h4 className="text-sm font-bold text-slate-200 group-hover:text-cyan-400 transition-colors duration-300 tracking-wide">
-                              {profile.username}
-                            </h4>
+                            {(() => {
+                              const badgeStyle = getUserBadgeStyle({
+                                is_admin: profile.is_admin,
+                                can_customize_ai: profile.can_customize_ai
+                              });
+                              return (
+                                <div className="flex items-center gap-2">
+                                  <h4 className={`text-sm font-bold tracking-wide transition-colors duration-300 ${badgeStyle.nameClasses || 'text-slate-200 group-hover:text-cyan-400'} ${badgeStyle.glowClasses}`}>
+                                    {profile.username}
+                                  </h4>
+                                  {badgeStyle.badgeLabel && (
+                                    <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider ${badgeStyle.badgeContainerClasses}`}>
+                                      {badgeStyle.badgeIcon}
+                                      <span className="hidden sm:inline">{badgeStyle.badgeLabel}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
                             <div className="flex items-center gap-2">
                               {(profile.orbit_points || 0) > 0 && (
                                 <span className="text-[10px] px-2 py-1 rounded bg-violet-500/10 text-violet-300 border border-violet-500/30 font-mono">

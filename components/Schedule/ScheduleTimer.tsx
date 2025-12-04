@@ -153,10 +153,10 @@ export function ScheduleTimer() {
                   <div
                     key={period.id}
                     className={`p-2 rounded-lg flex items-center justify-between border ${isCurrent
-                        ? 'bg-cyan-950/30 border-cyan-900/50'
-                        : isNext
-                          ? 'bg-slate-900/50 border-slate-800'
-                          : 'bg-transparent border-transparent opacity-60'
+                      ? 'bg-cyan-950/30 border-cyan-900/50'
+                      : isNext
+                        ? 'bg-slate-900/50 border-slate-800'
+                        : 'bg-transparent border-transparent opacity-60'
                       }`}
                   >
                     <div className="flex items-center gap-3">

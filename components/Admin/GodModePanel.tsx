@@ -134,6 +134,16 @@ export function GodModePanel() {
 
       const mockMessage = 'Hey! This is a test DM notification from the debug panel.';
 
+      // 0. Get/Create real channel ID
+      // We need a real channel for the deep link to work
+      let channelId = 'test-channel';
+      try {
+        const realChannelId = await useOrbitStore.getState().createOrGetChannel(mockSender.id);
+        if (realChannelId) channelId = realChannelId;
+      } catch (err) {
+        console.warn('Failed to get real channel for test, falling back to test-channel', err);
+      }
+
       // 1. Create database notification
       const { error: notifError } = await supabase.from('notifications').insert({
         recipient_id: currentUser?.id,
@@ -142,11 +152,11 @@ export function GodModePanel() {
         title: `New message from ${mockSender.username}`,
         content: {
           message: mockMessage,
-          channelId: 'test-channel',
+          channelId: channelId,
           senderUsername: mockSender.username,
           senderAvatar: mockSender.avatar_url
         },
-        link_url: '/comms',
+        link_url: `#comms/${channelId}`,
         is_read: false
       });
 
@@ -167,9 +177,9 @@ export function GodModePanel() {
             useOrbitStore.setState({ messageToast: null });
           },
           onClick: () => {
-            useOrbitStore.getState().setActiveChannel('test-channel');
+            useOrbitStore.getState().setActiveChannel(channelId);
             // Navigate to comms page using hash navigation
-            window.location.hash = 'comms';
+            window.location.hash = `comms/${channelId}`;
             useOrbitStore.setState({ messageToast: null });
           }
         }
@@ -196,7 +206,7 @@ export function GodModePanel() {
             senderAvatar: mockSender.avatar_url,
             messagePreview: mockMessage,
             timestamp: new Date().toISOString(),
-            channelId: 'test-channel'
+            channelId: channelId
           }
         ]
       });
@@ -330,33 +340,30 @@ export function GodModePanel() {
         <div className="mt-6 flex items-center gap-2">
           <button
             onClick={() => setActiveTab('users')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm uppercase tracking-wider transition-all ${
-              activeTab === 'users'
-                ? 'bg-red-500/20 text-red-400 border-2 border-red-500/50 shadow-lg shadow-red-900/30'
-                : 'bg-slate-800/50 text-slate-400 border-2 border-slate-700 hover:border-slate-600'
-            }`}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm uppercase tracking-wider transition-all ${activeTab === 'users'
+              ? 'bg-red-500/20 text-red-400 border-2 border-red-500/50 shadow-lg shadow-red-900/30'
+              : 'bg-slate-800/50 text-slate-400 border-2 border-slate-700 hover:border-slate-600'
+              }`}
           >
             <Users className="w-4 h-4" />
             User Management
           </button>
           <button
             onClick={() => setActiveTab('schedule')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm uppercase tracking-wider transition-all ${
-              activeTab === 'schedule'
-                ? 'bg-purple-500/20 text-purple-400 border-2 border-purple-500/50 shadow-lg shadow-purple-900/30'
-                : 'bg-slate-800/50 text-slate-400 border-2 border-slate-700 hover:border-slate-600'
-            }`}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm uppercase tracking-wider transition-all ${activeTab === 'schedule'
+              ? 'bg-purple-500/20 text-purple-400 border-2 border-purple-500/50 shadow-lg shadow-purple-900/30'
+              : 'bg-slate-800/50 text-slate-400 border-2 border-slate-700 hover:border-slate-600'
+              }`}
           >
             <Calendar className="w-4 h-4" />
             Schedule Editor
           </button>
           <button
             onClick={() => setActiveTab('debug')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm uppercase tracking-wider transition-all ${
-              activeTab === 'debug'
-                ? 'bg-cyan-500/20 text-cyan-400 border-2 border-cyan-500/50 shadow-lg shadow-cyan-900/30'
-                : 'bg-slate-800/50 text-slate-400 border-2 border-slate-700 hover:border-slate-600'
-            }`}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm uppercase tracking-wider transition-all ${activeTab === 'debug'
+              ? 'bg-cyan-500/20 text-cyan-400 border-2 border-cyan-500/50 shadow-lg shadow-cyan-900/30'
+              : 'bg-slate-800/50 text-slate-400 border-2 border-slate-700 hover:border-slate-600'
+              }`}
           >
             <FlaskConical className="w-4 h-4" />
             Debug/Testing
@@ -381,93 +388,93 @@ export function GodModePanel() {
       {/* Tab Content */}
       {activeTab === 'users' && (
         <div className="flex-1 overflow-y-auto p-6 relative z-10">
-        {loading ? (
-          <div className="flex items-center justify-center h-64">
-            <motion.div
-              animate={{ rotate: 360 }}
-              transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-            >
-              <Shield className="w-12 h-12 text-red-400" />
-            </motion.div>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {filteredUsers.map((user, idx) => (
+          {loading ? (
+            <div className="flex items-center justify-center h-64">
               <motion.div
-                key={user.id}
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: idx * 0.05 }}
-                className="group p-4 bg-slate-800/50 border border-red-500/20 hover:border-red-500/40 rounded-xl transition-all cursor-pointer"
-                onClick={() => {
-                  setSelectedUser(user);
-                  setSelectedUserOriginal(user);
-                }}
+                animate={{ rotate: 360 }}
+                transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
               >
-                <div className="flex items-center gap-4">
-                  {/* Avatar */}
-                  <div className="w-12 h-12 rounded-full bg-gradient-to-br from-red-500 to-orange-500 flex items-center justify-center text-white font-bold shadow-lg">
-                    {user.avatar_url ? (
-                      <img src={user.avatar_url} alt={user.username} className="w-full h-full rounded-full object-cover" />
-                    ) : (
-                      user.username[0].toUpperCase()
-                    )}
-                  </div>
-
-                  {/* Info */}
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-lg font-bold text-white">{user.username}</h3>
-                      {user.is_admin && (
-                        <span className="px-2 py-0.5 bg-red-500/20 text-red-400 rounded text-xs font-bold flex items-center gap-1">
-                          <Crown className="w-3 h-3" />
-                          ADMIN
-                        </span>
-                      )}
-                      {user.can_customize_ai && (
-                        <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs font-bold flex items-center gap-1">
-                          <Sparkles className="w-3 h-3" />
-                          AI+
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-4 mt-1 text-xs text-slate-500 font-mono">
-                      <span>💰 {user.orbit_points} PTS</span>
-                      <span>⚡ {user.max_wpm} WPM</span>
-                      <span>✅ {user.tasks_completed} tasks</span>
-                      <span>❌ {user.tasks_forfeited} forfeited</span>
-                    </div>
-                  </div>
-
-                  {/* Quick Actions */}
-                  <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedUser(user);
-                        setSelectedUserOriginal(user);
-                      }}
-                      className="p-2 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/30 rounded-lg text-blue-400 transition-all"
-                      title="Edit"
-                    >
-                      <Edit className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        deleteUser(user.id);
-                      }}
-                      className="p-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 rounded-lg text-red-400 transition-all"
-                      title="Delete"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
+                <Shield className="w-12 h-12 text-red-400" />
               </motion.div>
-            ))}
-          </div>
-        )}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {filteredUsers.map((user, idx) => (
+                <motion.div
+                  key={user.id}
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: idx * 0.05 }}
+                  className="group p-4 bg-slate-800/50 border border-red-500/20 hover:border-red-500/40 rounded-xl transition-all cursor-pointer"
+                  onClick={() => {
+                    setSelectedUser(user);
+                    setSelectedUserOriginal(user);
+                  }}
+                >
+                  <div className="flex items-center gap-4">
+                    {/* Avatar */}
+                    <div className="w-12 h-12 rounded-full bg-gradient-to-br from-red-500 to-orange-500 flex items-center justify-center text-white font-bold shadow-lg">
+                      {user.avatar_url ? (
+                        <img src={user.avatar_url} alt={user.username} className="w-full h-full rounded-full object-cover" />
+                      ) : (
+                        user.username[0].toUpperCase()
+                      )}
+                    </div>
+
+                    {/* Info */}
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-lg font-bold text-white">{user.username}</h3>
+                        {user.is_admin && (
+                          <span className="px-2 py-0.5 bg-red-500/20 text-red-400 rounded text-xs font-bold flex items-center gap-1">
+                            <Crown className="w-3 h-3" />
+                            ADMIN
+                          </span>
+                        )}
+                        {user.can_customize_ai && (
+                          <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs font-bold flex items-center gap-1">
+                            <Sparkles className="w-3 h-3" />
+                            AI+
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-4 mt-1 text-xs text-slate-500 font-mono">
+                        <span>💰 {user.orbit_points} PTS</span>
+                        <span>⚡ {user.max_wpm} WPM</span>
+                        <span>✅ {user.tasks_completed} tasks</span>
+                        <span>❌ {user.tasks_forfeited} forfeited</span>
+                      </div>
+                    </div>
+
+                    {/* Quick Actions */}
+                    <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedUser(user);
+                          setSelectedUserOriginal(user);
+                        }}
+                        className="p-2 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/30 rounded-lg text-blue-400 transition-all"
+                        title="Edit"
+                      >
+                        <Edit className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteUser(user.id);
+                        }}
+                        className="p-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 rounded-lg text-red-400 transition-all"
+                        title="Delete"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
