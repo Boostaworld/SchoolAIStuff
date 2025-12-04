@@ -3,8 +3,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useOrbitStore } from '@/store/useOrbitStore';
 import { supabase } from '@/lib/supabase';
 import { toast } from '@/lib/toast';
-import { Shield, Users, Edit, Trash2, Ban, Crown, Sparkles, Search, CheckCircle2, XCircle, Calendar } from 'lucide-react';
+import { Shield, Users, Edit, Trash2, Ban, Crown, Sparkles, Search, CheckCircle2, XCircle, Calendar, FlaskConical, Bell } from 'lucide-react';
 import { ScheduleEditor } from '../Schedule/ScheduleEditor';
+import { updateFaviconBadge, requestNotificationPermission } from '@/lib/utils/notifications';
 
 interface UserProfile {
   id: string;
@@ -23,7 +24,7 @@ interface UserProfile {
 export function GodModePanel() {
   const { currentUser } = useOrbitStore();
   const isAdminUser = currentUser?.is_admin;
-  const [activeTab, setActiveTab] = useState<'users' | 'schedule'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'schedule' | 'debug'>('users');
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
@@ -112,6 +113,48 @@ export function GodModePanel() {
       console.error('Update user error:', error);
       toast.error(error.message || 'Failed to update user');
     }
+  };
+
+  const testDMNotification = async () => {
+    console.log('🧪 Testing DM notification system...');
+
+    // Request notification permission first
+    const hasPermission = await requestNotificationPermission();
+    console.log('Notification permission:', hasPermission ? 'Granted' : 'Denied');
+
+    // Mock DM data
+    const mockSender = {
+      username: 'TestUser',
+      avatar_url: currentUser?.avatar_url || 'https://api.dicebear.com/7.x/avataaars/svg?seed=test'
+    };
+    const mockMessage = 'Hey! This is a test DM notification from the debug panel.';
+
+    // 1. Show toast notification
+    toast.info(`📨 New DM from ${mockSender.username}`);
+    console.log('✅ Toast notification sent');
+
+    // 2. Update favicon badge (simulate 1 unread DM)
+    updateFaviconBadge(1);
+    console.log('✅ Favicon badge updated to 1');
+
+    // 3. Show browser notification if permission granted
+    if (hasPermission && 'Notification' in window) {
+      const notification = new Notification(`New message from ${mockSender.username}`, {
+        body: mockMessage,
+        icon: mockSender.avatar_url,
+        badge: '/favicon.ico',
+        tag: 'test-dm-notification',
+        requireInteraction: false
+      });
+
+      // Auto-close after 5 seconds
+      setTimeout(() => notification.close(), 5000);
+      console.log('✅ Browser notification sent');
+    } else {
+      console.warn('⚠️ Browser notifications not available or permission denied');
+    }
+
+    toast.success('Test notification sequence complete! Check console for details.');
   };
 
   const deleteUser = async (userId: string) => {
@@ -234,6 +277,17 @@ export function GodModePanel() {
             <Calendar className="w-4 h-4" />
             Schedule Editor
           </button>
+          <button
+            onClick={() => setActiveTab('debug')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm uppercase tracking-wider transition-all ${
+              activeTab === 'debug'
+                ? 'bg-cyan-500/20 text-cyan-400 border-2 border-cyan-500/50 shadow-lg shadow-cyan-900/30'
+                : 'bg-slate-800/50 text-slate-400 border-2 border-slate-700 hover:border-slate-600'
+            }`}
+          >
+            <FlaskConical className="w-4 h-4" />
+            Debug/Testing
+          </button>
         </div>
 
         {/* Search Bar (Users tab only) */}
@@ -348,6 +402,80 @@ export function GodModePanel() {
       {activeTab === 'schedule' && (
         <div className="flex-1 overflow-y-auto relative z-10">
           <ScheduleEditor />
+        </div>
+      )}
+
+      {/* Debug/Testing Tab */}
+      {activeTab === 'debug' && (
+        <div className="flex-1 overflow-y-auto p-6 relative z-10">
+          <div className="max-w-4xl mx-auto space-y-6">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-cyan-500/10 to-blue-500/10 border border-cyan-500/30 rounded-xl p-6">
+              <div className="flex items-center gap-3 mb-2">
+                <FlaskConical className="w-6 h-6 text-cyan-400" />
+                <h3 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-400" style={{ fontFamily: 'Orbitron, monospace' }}>
+                  DEBUG & TESTING SUITE
+                </h3>
+              </div>
+              <p className="text-sm text-slate-400 font-mono">
+                Test system features and debug functionality without affecting production data
+              </p>
+            </div>
+
+            {/* Notification Tests */}
+            <div className="bg-slate-800/50 border border-cyan-500/20 rounded-xl p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <Bell className="w-5 h-5 text-cyan-400" />
+                <h4 className="text-lg font-bold text-cyan-400 uppercase tracking-wider">Notification Tests</h4>
+              </div>
+
+              <div className="space-y-3">
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={testDMNotification}
+                  className="w-full flex items-center justify-between gap-3 px-4 py-3 bg-gradient-to-r from-cyan-600/20 to-blue-600/20 hover:from-cyan-600/30 hover:to-blue-600/30 border border-cyan-500/30 hover:border-cyan-500/50 rounded-lg transition-all group"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-cyan-500/20 flex items-center justify-center border border-cyan-500/30 group-hover:bg-cyan-500/30 transition-colors">
+                      <Bell className="w-5 h-5 text-cyan-400" />
+                    </div>
+                    <div className="text-left">
+                      <div className="text-sm font-bold text-cyan-400 uppercase tracking-wider">DM Notification Test</div>
+                      <div className="text-xs text-slate-400 font-mono">Simulates receiving a direct message</div>
+                    </div>
+                  </div>
+                  <div className="text-xs text-cyan-500 font-mono uppercase tracking-wider">Run Test →</div>
+                </motion.button>
+
+                <div className="bg-slate-900/50 border border-cyan-500/10 rounded-lg p-4">
+                  <div className="text-xs text-slate-500 font-mono uppercase tracking-wider mb-2">Test Features:</div>
+                  <ul className="space-y-1 text-xs text-slate-400">
+                    <li className="flex items-center gap-2">
+                      <span className="text-cyan-500">•</span> Toast notification
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <span className="text-cyan-500">•</span> Favicon badge update
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <span className="text-cyan-500">•</span> Browser notification (if permission granted)
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <span className="text-cyan-500">•</span> Console logging for debugging
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            {/* Future Tests Placeholder */}
+            <div className="bg-slate-800/30 border border-slate-700/50 rounded-xl p-6 opacity-50">
+              <div className="text-center py-8">
+                <FlaskConical className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+                <p className="text-sm text-slate-600 font-mono uppercase tracking-wider">More tests coming soon...</p>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

@@ -8,7 +8,7 @@ import { IntelPanel } from '../Intel/IntelPanel';
 import { OperativeSearchPanel } from '../Operative/OperativeSearchPanel';
 import { EditIdentityModal } from '../Registry/EditIdentityModal';
 import { CreateActionModal } from './CreateActionModal';
-import { LayoutGrid, Database, Users, Bell, LogOut, Edit3, Plus, MessageSquare, Map, Zap, Flag, Coins, Shield, Menu, X, Sparkles, Microscope, Briefcase } from 'lucide-react';
+import { LayoutGrid, Database, Users, Bell, LogOut, Edit3, Plus, MessageSquare, Map, Zap, Flag, Coins, Shield, Menu, X, Sparkles, Microscope, Briefcase, Clock } from 'lucide-react';
 import clsx from 'clsx';
 import { useOrbitStore } from '../../store/useOrbitStore';
 import { AnimatePresence, motion } from 'framer-motion';
