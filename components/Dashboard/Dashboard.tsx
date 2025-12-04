@@ -97,10 +97,24 @@ export const Dashboard: React.FC = () => {
     if (typeof window === 'undefined') return;
     const syncFromHash = () => {
       const hash = window.location.hash.slice(1); // Remove #
+      const [view, param] = hash.split('/');
       const shareableTabs: ViewState[] = ['comms', 'research', 'intel'];
 
-      if (hash && shareableTabs.includes(hash as ViewState)) {
-        setActiveView(hash as ViewState);
+      if (view && shareableTabs.includes(view as ViewState)) {
+        setActiveView(view as ViewState);
+
+        // Handle deep linking for comms
+        if (view === 'comms' && param) {
+          // We need to import setActiveChannel from store, but we have it in the hook above
+          // However, we can't use the hook value inside this closure if it's stale, 
+          // but since this effect runs once, we should use the store directly or ensure we have access.
+          // The useOrbitStore hook provides setActiveChannel.
+          // Let's use the one from the hook, but we need to make sure it's available.
+          // Actually, better to use the store's getState() if we were outside a component, 
+          // but here we are inside. Let's just use the function from the hook.
+          // Wait, `setActiveChannel` is stable from zustand.
+          useOrbitStore.getState().setActiveChannel(param);
+        }
       }
     };
     syncFromHash();

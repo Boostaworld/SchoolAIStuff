@@ -440,7 +440,7 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
                         senderUsername: sender.username,
                         senderAvatar: sender.avatar
                       },
-                      link_url: `/comms?channel=${newMessage.channel_id}`,
+                      link_url: `#comms/${newMessage.channel_id}`,
                       is_read: false
                     });
 
@@ -465,7 +465,7 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
                         get().setActiveChannel(newMessage.channel_id);
                         // Navigate to comms page using hash navigation
                         if (typeof window !== 'undefined') {
-                          window.location.hash = 'comms';
+                          window.location.hash = `comms/${newMessage.channel_id}`;
                         }
                         set({ messageToast: null });
                       }
@@ -504,7 +504,10 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
                       channelId: newMessage.channel_id,
                       onClick: () => {
                         get().setActiveChannel(newMessage.channel_id);
-                        get().toggleCommsPanel();
+                        if (typeof window !== 'undefined') {
+                          window.location.hash = `comms/${newMessage.channel_id}`;
+                        }
+                        // get().toggleCommsPanel(); // No longer needed if we go to full page
                       }
                     });
 
@@ -921,6 +924,87 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       console.error('❌ Failed to submit answer:', error);
       set(state => ({
         tasks: state.tasks.map(t => t.id === taskId ? { ...t, answer: task.answer } : t)
+      }));
+    }
+  },
+
+  askOracle: async (query: string) => {
+    const { oracleHistory, currentUser } = get();
+
+    // 1. Add User Message
+    const userMsg: ChatMessage = {
+      id: Date.now().toString(),
+      role: 'user',
+      text: query,
+      timestamp: new Date()
+    };
+
+    set({
+      oracleHistory: [...oracleHistory, userMsg],
+      isOracleThinking: true
+    });
+
+    // Persist user message
+    if (currentUser) {
+      supabase.from('oracle_chat_history').insert({
+        user_id: currentUser.id,
+        role: 'user',
+        content: query,
+        timestamp: userMsg.timestamp.toISOString()
+      }).then(({ error }) => {
+        if (error) console.warn('Oracle user msg persist failed:', error);
+      });
+    }
+
+    try {
+      // 2. Get AI Response
+      // Pass the updated history including the new user message
+      const updatedHistory = [...oracleHistory, userMsg];
+      const responseText = await generateOracleRoast(
+        updatedHistory,
+        currentUser?.stats?.tasksCompleted || 0,
+        currentUser?.stats?.tasksForfeited || 0
+      );
+
+      // 3. Add AI Message
+      const aiMsg: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        role: 'model',
+        text: responseText,
+        timestamp: new Date()
+      };
+
+      set(state => ({
+        oracleHistory: [...state.oracleHistory, aiMsg],
+        isOracleThinking: false
+      }));
+
+      // Persist AI message
+      if (currentUser) {
+        supabase.from('oracle_chat_history').insert({
+          user_id: currentUser.id,
+          role: 'model',
+          content: responseText,
+          timestamp: aiMsg.timestamp.toISOString()
+        }).then(({ error }) => {
+          if (error) console.warn('Oracle AI msg persist failed:', error);
+        });
+      }
+
+    } catch (error) {
+      console.error('Oracle Error:', error);
+      set({ isOracleThinking: false });
+
+      // Add error message
+      const errorMsg: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        role: 'model',
+        text: "[ERROR] CONNECTION INTERRUPTED. RETRY.",
+        timestamp: new Date()
+      };
+
+      set(state => ({
+        oracleHistory: [...state.oracleHistory, errorMsg]
       }));
     }
   },

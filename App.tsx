@@ -34,11 +34,11 @@ function App() {
   }, [initialize]);
 
   if (isAuthLoading) {
-      return (
-          <div className="w-full h-screen bg-slate-950 flex items-center justify-center text-slate-600 font-mono text-xs">
-              INITIALIZING ORBIT PROTOCOLS...
-          </div>
-      )
+    return (
+      <div className="w-full h-screen bg-slate-950 flex items-center justify-center text-slate-600 font-mono text-xs">
+        INITIALIZING ORBIT PROTOCOLS...
+      </div>
+    )
   }
 
   // Spectator mode (no auth required)
@@ -81,7 +81,7 @@ function App() {
           setActiveChannel(channelId);
 
           // Navigate to comms page using hash navigation
-          window.location.hash = 'comms';
+          window.location.hash = `comms/${channelId}`;
 
           // Dismiss the banner after clicking
           const banner = persistentBanners.find(b => b.channelId === channelId);
