@@ -26,6 +26,8 @@ import { TheVault } from '../Economy/TheVault';
 import { GodModePanel } from '../Admin/GodModePanel';
 import { ResearchLab } from '../Research/ResearchLab';
 import CommsPage from '../Social/CommsPage';
+import { ScheduleTimer } from '../Schedule/ScheduleTimer';
+import { ScheduleView } from '../Schedule/ScheduleView';
 
 import RacingTerminal from '../Training/RacingTerminal';
 import { TypingChallenge } from '../../types';
@@ -33,7 +35,7 @@ import { useToast } from '../Shared/ToastManager';
 import { CoinAnimation } from '../Shared/CoinAnimation';
 import { WRITING_FALLBACK_CHALLENGES } from '../Training/writingFallbacks';
 
-type ViewState = 'dashboard' | 'intel' | 'registry' | 'notifications' | 'comms' | 'constellation' | 'training' | 'race' | 'economy' | 'research' | 'admin' | 'marketplace';
+type ViewState = 'dashboard' | 'intel' | 'registry' | 'notifications' | 'comms' | 'constellation' | 'training' | 'race' | 'economy' | 'research' | 'admin' | 'marketplace' | 'schedule';
 
 const defaultRaceChallenge: TypingChallenge = {
   id: 'race-demo',
@@ -397,6 +399,23 @@ export const Dashboard: React.FC = () => {
 
             <button
               onClick={() => {
+                setActiveView('schedule');
+                setIsSidebarOpen(false);
+              }}
+              className={clsx(
+                "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 flex items-center gap-3 lg:justify-center",
+                activeView === 'schedule'
+                  ? "bg-slate-800 text-purple-400 border-slate-700 shadow-lg shadow-purple-900/20"
+                  : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
+              )}
+              title="Schedule"
+            >
+              <Clock className="w-5 h-5 flex-shrink-0" />
+              <span className="lg:hidden text-sm font-mono">Schedule</span>
+            </button>
+
+            <button
+              onClick={() => {
                 setActiveView('intel');
                 setIsSidebarOpen(false);
               }}
@@ -563,10 +582,13 @@ export const Dashboard: React.FC = () => {
         </aside>
       </>
 
+      {/* Schedule Timer (Fixed at top, z-50) */}
+      <ScheduleTimer />
+
       {/* Main Content Area */}
       <main className="flex-1 z-10 flex flex-col h-full overflow-hidden relative">
         {/* Heads Up Display */}
-        <header className="h-16 border-b border-slate-800 bg-slate-950/50 backdrop-blur-sm flex items-center justify-between px-3 md:px-6 shrink-0 z-50">
+        <header className="h-16 border-b border-slate-800 bg-slate-950/50 backdrop-blur-sm flex items-center justify-between px-3 md:px-6 shrink-0 z-40">
           <div className="flex items-center gap-2 md:gap-6">
             {/* Hamburger Menu Button - Always visible for navigation */}
             <button
@@ -596,12 +618,6 @@ export const Dashboard: React.FC = () => {
             </motion.button>
           </div>
 
-          {/* Bell Schedule Widget */}
-          <div className="hidden md:flex items-center gap-4 bg-slate-900/80 px-4 py-2 rounded-full border border-slate-800">
-            <span className="text-xs text-slate-400 font-medium">PERIOD 4</span>
-            <div className="h-4 w-[1px] bg-slate-700" />
-            <span className="text-xs text-violet-400 font-mono font-bold">14:00 REMAINING</span>
-          </div>
           <NotificationTray />
         </header>
 
@@ -807,6 +823,12 @@ export const Dashboard: React.FC = () => {
           {activeView === 'admin' && isAdminUser && (
             <div className="absolute inset-0 p-3 md:p-6 overflow-y-auto animate-in fade-in duration-300">
               <GodModePanel />
+            </div>
+          )}
+
+          {activeView === 'schedule' && (
+            <div className="absolute inset-0 p-3 md:p-6 overflow-y-auto animate-in fade-in duration-300">
+              <ScheduleView />
             </div>
           )}
 

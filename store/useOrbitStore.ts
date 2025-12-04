@@ -1,6 +1,6 @@
 
 import { create } from 'zustand';
-import { Task, ChatMessage, UserProfile, IntelDrop, DMChannel, Message, MessageReaction, TypingChallenge, TypingSession, KeyStat } from '../types';
+import { Task, ChatMessage, UserProfile, IntelDrop, DMChannel, Message, MessageReaction, TypingChallenge, TypingSession, KeyStat, Period } from '../types';
 import { generateOracleRoast, assessTaskDifficulty } from '../lib/ai/gemini';
 import { IntelResult } from '../lib/ai/intel';
 import { fetchIntelHistory, IntelChatMessage, sendIntelQueryWithPersistence } from '../lib/ai/IntelService';
@@ -45,6 +45,11 @@ interface OrbitState {
   activeChallenge: TypingChallenge | null;
   typingHeatmap: Record<string, KeyStat>;
   recentSessions: TypingSession[];
+
+  // Phase 6: Schedule State
+  schedule: Period[];
+  currentPeriod: Period | null;
+  nextPeriod: Period | null;
 
   // Initialization
   initialize: () => Promise<void>;
@@ -100,6 +105,12 @@ interface OrbitState {
   syncTypingStats: (keyStats: Record<string, { errors: number; presses: number }>) => Promise<void>;
   fetchTypingHeatmap: () => Promise<void>;
   fetchRecentSessions: () => Promise<void>;
+
+  // Phase 6: Schedule Actions
+  fetchSchedule: () => Promise<void>;
+  updatePeriod: (period: Period) => Promise<void>;
+  deletePeriod: (periodId: string) => Promise<void>;
+  addPeriod: (period: Omit<Period, 'id' | 'created_at'>) => Promise<void>;
 
   // Economy
   orbitPoints: number;
@@ -171,6 +182,11 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
   activeChallenge: null,
   typingHeatmap: {},
   recentSessions: [],
+
+  // Phase 6: Schedule State
+  schedule: [],
+  currentPeriod: null,
+  nextPeriod: null,
 
   // --- INITIALIZATION & REALTIME ---
   initialize: async () => {
@@ -254,6 +270,9 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
         await get().fetchChallenges();
         await get().fetchTypingHeatmap();
         await get().fetchRecentSessions();
+
+        // Phase 6: Fetch Schedule
+        await get().fetchSchedule();
         await get().loadInventory();
 
         // Request browser notification permission
@@ -1016,12 +1035,10 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       sources: drop.sources,
       related_concepts: drop.related_concepts,
       essay: drop.essay,
-      attachment_url: drop.attachment_url ?? drop.attachmentUrl ?? undefined,
-      attachment_type: drop.attachment_type ?? drop.attachmentType ?? undefined,
-      is_private: drop.is_private,
-      created_at: drop.created_at,
       attachment_url: drop.attachment_url,
-      attachment_type: drop.attachment_type
+      attachment_type: drop.attachment_type,
+      is_private: drop.is_private,
+      created_at: drop.created_at
     }));
 
     set({ intelDrops: mappedDrops });
@@ -1907,5 +1924,87 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       notifications: state.notifications.map((n: any) => ({ ...n, is_read: true })),
       unreadCount: 0
     }));
+  },
+
+  // ============================================
+  // PHASE 6: SCHEDULE ACTIONS
+  // ============================================
+  fetchSchedule: async () => {
+    try {
+      const { data, error } = await supabase
+        .from('school_schedule')
+        .select('*')
+        .eq('is_enabled', true)
+        .order('period_number', { ascending: true });
+
+      if (error) {
+        if (missingTable(error, 'public.school_schedule')) {
+          console.warn('⚠️ Schedule table missing - run sql/create_school_schedule.sql');
+          return;
+        }
+        console.error('❌ Fetch schedule error:', error);
+        return;
+      }
+
+      set({ schedule: data || [] });
+      console.log('✅ Schedule loaded:', data?.length || 0, 'periods');
+    } catch (err) {
+      console.error('❌ Fetch schedule exception:', err);
+    }
+  },
+
+  updatePeriod: async (period: Period) => {
+    try {
+      const { error } = await supabase
+        .from('school_schedule')
+        .upsert(period, { onConflict: 'id' });
+
+      if (error) {
+        console.error('❌ Update period error:', error);
+        return;
+      }
+
+      await get().fetchSchedule();
+      console.log('✅ Period updated:', period.period_label);
+    } catch (err) {
+      console.error('❌ Update period exception:', err);
+    }
+  },
+
+  deletePeriod: async (periodId: string) => {
+    try {
+      const { error } = await supabase
+        .from('school_schedule')
+        .delete()
+        .eq('id', periodId);
+
+      if (error) {
+        console.error('❌ Delete period error:', error);
+        return;
+      }
+
+      await get().fetchSchedule();
+      console.log('✅ Period deleted');
+    } catch (err) {
+      console.error('❌ Delete period exception:', err);
+    }
+  },
+
+  addPeriod: async (period: Omit<Period, 'id' | 'created_at'>) => {
+    try {
+      const { error } = await supabase
+        .from('school_schedule')
+        .insert(period);
+
+      if (error) {
+        console.error('❌ Add period error:', error);
+        return;
+      }
+
+      await get().fetchSchedule();
+      console.log('✅ Period added:', period.period_label);
+    } catch (err) {
+      console.error('❌ Add period exception:', err);
+    }
   }
 }));

@@ -3,7 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useOrbitStore } from '@/store/useOrbitStore';
 import { supabase } from '@/lib/supabase';
 import { toast } from '@/lib/toast';
-import { Shield, Users, Edit, Trash2, Ban, Crown, Sparkles, Search, CheckCircle2, XCircle } from 'lucide-react';
+import { Shield, Users, Edit, Trash2, Ban, Crown, Sparkles, Search, CheckCircle2, XCircle, Calendar } from 'lucide-react';
+import { ScheduleEditor } from '../Schedule/ScheduleEditor';
 
 interface UserProfile {
   id: string;
@@ -22,6 +23,7 @@ interface UserProfile {
 export function GodModePanel() {
   const { currentUser } = useOrbitStore();
   const isAdminUser = currentUser?.is_admin;
+  const [activeTab, setActiveTab] = useState<'users' | 'schedule'>('users');
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
@@ -199,28 +201,59 @@ export function GodModePanel() {
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="px-4 py-2 bg-red-500/10 border border-red-500/30 rounded-lg text-center">
-              <div className="text-2xl font-black text-red-400 font-mono">{filteredUsers.length}</div>
-              <div className="text-[10px] text-slate-500 font-mono uppercase">Users</div>
-            </div>
+            {activeTab === 'users' && (
+              <div className="px-4 py-2 bg-red-500/10 border border-red-500/30 rounded-lg text-center">
+                <div className="text-2xl font-black text-red-400 font-mono">{filteredUsers.length}</div>
+                <div className="text-[10px] text-slate-500 font-mono uppercase">Users</div>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Search Bar */}
-        <div className="mt-4 relative">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search users by username..."
-            className="w-full pl-12 pr-4 py-3 bg-slate-950/50 border border-red-500/30 rounded-xl text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-red-500/50 font-mono"
-          />
+        {/* Tabs */}
+        <div className="mt-6 flex items-center gap-2">
+          <button
+            onClick={() => setActiveTab('users')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm uppercase tracking-wider transition-all ${
+              activeTab === 'users'
+                ? 'bg-red-500/20 text-red-400 border-2 border-red-500/50 shadow-lg shadow-red-900/30'
+                : 'bg-slate-800/50 text-slate-400 border-2 border-slate-700 hover:border-slate-600'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            User Management
+          </button>
+          <button
+            onClick={() => setActiveTab('schedule')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm uppercase tracking-wider transition-all ${
+              activeTab === 'schedule'
+                ? 'bg-purple-500/20 text-purple-400 border-2 border-purple-500/50 shadow-lg shadow-purple-900/30'
+                : 'bg-slate-800/50 text-slate-400 border-2 border-slate-700 hover:border-slate-600'
+            }`}
+          >
+            <Calendar className="w-4 h-4" />
+            Schedule Editor
+          </button>
         </div>
+
+        {/* Search Bar (Users tab only) */}
+        {activeTab === 'users' && (
+          <div className="mt-4 relative">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search users by username..."
+              className="w-full pl-12 pr-4 py-3 bg-slate-950/50 border border-red-500/30 rounded-xl text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-red-500/50 font-mono"
+            />
+          </div>
+        )}
       </div>
 
-      {/* User Table */}
-      <div className="flex-1 overflow-y-auto p-6 relative z-10">
+      {/* Tab Content */}
+      {activeTab === 'users' && (
+        <div className="flex-1 overflow-y-auto p-6 relative z-10">
         {loading ? (
           <div className="flex items-center justify-center h-64">
             <motion.div
@@ -308,7 +341,15 @@ export function GodModePanel() {
             ))}
           </div>
         )}
-      </div>
+        </div>
+      )}
+
+      {/* Schedule Editor Tab */}
+      {activeTab === 'schedule' && (
+        <div className="flex-1 overflow-y-auto relative z-10">
+          <ScheduleEditor />
+        </div>
+      )}
 
       {/* Edit Modal */}
       <AnimatePresence>

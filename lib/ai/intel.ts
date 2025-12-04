@@ -139,8 +139,8 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
       const response = await ai.models.generateContent({
         model: modelMap[model] || modelMap.flash,
         systemInstruction: thinkingEnabled
-          ? 'You are a highly intelligent AI assistant with advanced reasoning capabilities. Provide clear, well-thought-out answers. Think through the problem step by step before responding.'
-          : 'You are a helpful AI assistant. Provide clear, concise answers based on the conversation context.',
+          ? 'You are a highly intelligent AI assistant with advanced reasoning capabilities. Provide clear, well-thought-out answers using proper markdown formatting. Use **bold** for emphasis, *italic* for secondary emphasis, $$LaTeX$$ for math equations, and ```code blocks``` for code. Think through the problem step by step before responding. IMPORTANT: Use clean markdown syntax without escaping special characters like * _ $ # unless they need to be literal text.'
+          : 'You are a helpful AI assistant. Provide clear, concise answers using proper markdown formatting. Use **bold** for emphasis, *italic* for secondary emphasis, $$LaTeX$$ for math equations, and ```code blocks``` for code. IMPORTANT: Use clean markdown syntax without escaping special characters.',
         contents,
         config
       });
@@ -151,11 +151,19 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
         throw new Error("No response from AI");
       }
 
-      console.log("Conversation response:", text);
+      console.log("Conversation response (raw):", text);
+
+      // Unescape markdown: Gemini sometimes returns over-escaped markdown like \*\* instead of **
+      const unescapedText = text
+        .replace(/\\([*_`~#\[\](){}|\\])/g, '$1')  // Unescape common markdown chars
+        .replace(/\\\$/g, '$')                      // Unescape LaTeX dollar signs
+        .trim();
+
+      console.log("Conversation response (unescaped):", unescapedText);
 
       // Return as simple summary with no sources/concepts for conversation mode
       return {
-        summary_bullets: [text], // Put the whole response in a single bullet
+        summary_bullets: [unescapedText], // Put the whole response in a single bullet
         sources: [],
         related_concepts: [],
         essay: undefined

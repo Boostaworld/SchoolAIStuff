@@ -48,6 +48,18 @@ export interface BellSchedule {
   type: 'Class' | 'Break' | 'Lunch';
 }
 
+// Phase 6: Interactive Schedule System
+export interface Period {
+  id?: string;
+  period_number: number;
+  period_label: string;
+  period_type: 'Class' | 'Break' | 'Lunch';
+  start_time: string; // HH:MM format (e.g., "08:00")
+  end_time: string;   // HH:MM format (e.g., "08:50")
+  is_enabled: boolean;
+  created_at?: string;
+}
+
 export enum TrailState {
   BLAZING = 'Blazing', // < 15m
   WARM = 'Warm',       // < 2h

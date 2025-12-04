@@ -90,7 +90,9 @@ export const IntelDropModal: React.FC<IntelDropModalProps> = ({ drop, onClose })
                             summary_bullets: drop.summary_bullets,
                             sources: drop.sources,
                             related_concepts: drop.related_concepts,
-                            essay: drop.essay
+                            essay: drop.essay,
+                            attachment_url: drop.attachment_url,
+                            attachment_type: drop.attachment_type
                         }}
                         query={drop.query}
                         onSave={() => { }} // No-op
