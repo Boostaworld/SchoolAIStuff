@@ -59,7 +59,7 @@ export const Dashboard: React.FC = () => {
   const [raceResults, setRaceResults] = useState<{ position: number; wpm: number; accuracy: number; time: number } | null>(null);
   const [botRanges, setBotRanges] = useState<number[]>([35, 55, 75]);
   const [raceStats, setRaceStats] = useState({ avgWPM: 0, avgAccuracy: 0, maxWPM: 0, raceCount: 0 });
-  const [periodCountdown, setPeriodCountdown] = useState<{ label: string; remaining: string } | null>(null);
+
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [raceCategory, setRaceCategory] = useState<'code' | 'prose'>('prose');
   const [trainingCategory, setTrainingCategory] = useState<'code' | 'prose'>('prose');
@@ -306,41 +306,7 @@ export const Dashboard: React.FC = () => {
     loadRaceStats();
   }, [loadRaceStats]);
 
-  // Period countdown for header pill
-  React.useEffect(() => {
-    if (!schedule || schedule.length === 0) {
-      setPeriodCountdown(null);
-      return;
-    }
 
-    const updateCountdown = () => {
-      const now = new Date();
-      const current = schedule.find(p => isWithinPeriod(now, p));
-
-      if (!current) {
-        setPeriodCountdown(null);
-        return;
-      }
-
-      const [endHour, endMin] = current.end_time.split(':').map(Number);
-      const end = new Date();
-      end.setHours(endHour, endMin, 0, 0);
-
-      const remainingMs = Math.max(0, end.getTime() - now.getTime());
-      const minutes = Math.floor(remainingMs / 60000);
-      const seconds = Math.floor((remainingMs % 60000) / 1000);
-      const remaining = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-
-      setPeriodCountdown({
-        label: `Period ${current.period_number}`,
-        remaining
-      });
-    };
-
-    updateCountdown();
-    const interval = setInterval(updateCountdown, 1000);
-    return () => clearInterval(interval);
-  }, [schedule]);
 
   // Fetch challenges on mount
   React.useEffect(() => {
@@ -644,7 +610,7 @@ export const Dashboard: React.FC = () => {
       </>
 
       {/* Schedule Timer (Fixed at top, z-50) */}
-      <ScheduleTimer />
+
 
       {/* Main Content Area */}
       <main className="flex-1 z-10 flex flex-col h-full overflow-hidden relative">
@@ -662,7 +628,7 @@ export const Dashboard: React.FC = () => {
             <div>
               <h1 className="text-base md:text-lg font-bold text-white tracking-widest">ORBIT OS</h1>
               <p className="text-[10px] text-slate-500 font-mono uppercase hidden sm:block">
-                OPERATIVE: {currentUser?.username}
+                USER: {currentUser?.username}
               </p>
             </div>
             <motion.button
@@ -677,18 +643,12 @@ export const Dashboard: React.FC = () => {
               <span className="text-base md:text-lg font-bold text-violet-300 font-mono">{orbitPoints}</span>
               <Coins className="w-3 h-3 md:w-4 md:h-4 text-yellow-500" />
             </motion.button>
+
+            {/* Schedule Timer */}
+            <ScheduleTimer />
           </div>
 
-          <div className="flex-1 flex justify-center">
-            {periodCountdown && (
-              <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/40 text-cyan-100 font-mono text-xs shadow-[0_0_12px_rgba(34,211,238,0.25)]">
-                <Clock className="w-4 h-4 text-cyan-300" />
-                <span className="text-slate-200">{periodCountdown.label}:</span>
-                <span className="text-white font-bold tracking-wide">{periodCountdown.remaining}</span>
-                <span className="text-slate-500 text-[10px] uppercase">remaining</span>
-              </div>
-            )}
-          </div>
+          <div className="flex-1" />
 
           <NotificationTray />
         </header>

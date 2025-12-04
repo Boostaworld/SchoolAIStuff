@@ -2633,3 +2633,8 @@ Recommend: Next.js App Router approach
 [03:54] Operative search now filters by username only (removed bio matches).
 [03:55] User asks about schedule top countdown: confirm per-second real-time ticking and adjust if needed.
 [03:57] Countdown shows mm:ss but only updates per minute; need per-second ticking. Will adjust interval to 1s and compute remaining via Date.now difference.
+[03:59] ScheduleTimer rewritten to use per-second countdown (mm:ss) based on exact start/end timestamps; progress now updates every second.
+[04:01] Added smooth expand/collapse animation to ScheduleTimer dropdown (slide/fade with staggered cards). Countdown already per-second.
+[04:04] Adjusted ScheduleTimer sizing/position: reduced footprint (max-w-5xl/6xl), rounded bottom, top offset 1-2px, smaller padding to avoid blocking UI while keeping pointer-events for controls.
+[04:05] User reports countdown blinking each second; need smooth digit update without full re-animating container.
+[04:07] Reduced countdown blinking: removed key-based re-mount animations on timer/progress in ScheduleTimer; digits now update smoothly each second.

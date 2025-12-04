@@ -79,7 +79,7 @@ export const HordeFeed: React.FC = () => {
       <div className="bg-slate-900/30 backdrop-blur-sm border border-slate-800 rounded-xl p-4 flex flex-col h-full">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-bold text-slate-200 flex items-center gap-2">
-            <span className="text-cyan-500">#</span> HORDE FEED
+            <span className="text-cyan-500">#</span> NETWORK FEED
           </h3>
           <div className="flex items-center gap-2">
             {currentUser?.isAdmin && (

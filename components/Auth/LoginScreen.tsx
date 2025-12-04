@@ -9,12 +9,12 @@ import clsx from 'clsx';
 export const LoginScreen: React.FC = () => {
   const { login, register } = useOrbitStore();
   const [mode, setMode] = useState<'login' | 'register'>('login');
-  
+
   // Form State
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState(''); // Only for register
-  
+
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -44,8 +44,8 @@ export const LoginScreen: React.FC = () => {
   return (
     <div className="relative w-full h-screen flex items-center justify-center overflow-hidden bg-slate-950">
       <Nebula />
-      
-      <motion.div 
+
+      <motion.div
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.5, ease: "easeOut" }}
@@ -63,10 +63,10 @@ export const LoginScreen: React.FC = () => {
 
           {/* Form */}
           <form onSubmit={handleSubmit} className="space-y-4 relative z-10">
-            
+
             {/* Email */}
             <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Email Frequency</label>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Email Address</label>
               <div className="relative">
                 <input
                   type="email"
@@ -82,19 +82,19 @@ export const LoginScreen: React.FC = () => {
 
             {/* Username (Register Only) */}
             {mode === 'register' && (
-              <motion.div 
+              <motion.div
                 initial={{ height: 0, opacity: 0 }}
                 animate={{ height: 'auto', opacity: 1 }}
                 className="space-y-1"
               >
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Callsign</label>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Username</label>
                 <div className="relative">
                   <input
                     type="text"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 pl-10 text-slate-200 focus:outline-none focus:border-violet-500 transition-colors placeholder:text-slate-800 font-mono text-sm"
-                    placeholder="CALLSIGN"
+                    placeholder="USERNAME"
                     required
                   />
                   <UserPlus className="absolute left-3 top-3.5 w-4 h-4 text-slate-600" />
@@ -104,7 +104,7 @@ export const LoginScreen: React.FC = () => {
 
             {/* Password */}
             <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Passkey</label>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Password</label>
               <div className="relative">
                 <input
                   type="password"
@@ -119,7 +119,7 @@ export const LoginScreen: React.FC = () => {
             </div>
 
             {error && (
-              <motion.div 
+              <motion.div
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: 'auto' }}
                 className="bg-red-950/30 border border-red-900/50 rounded-lg p-3 text-center"
@@ -133,8 +133,8 @@ export const LoginScreen: React.FC = () => {
               disabled={isLoading}
               className={clsx(
                 "w-full py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg mt-4",
-                mode === 'login' 
-                  ? "bg-white text-slate-950 hover:bg-slate-200" 
+                mode === 'login'
+                  ? "bg-white text-slate-950 hover:bg-slate-200"
                   : "bg-violet-600 text-white hover:bg-violet-500"
               )}
             >
@@ -151,24 +151,24 @@ export const LoginScreen: React.FC = () => {
 
           {/* Toggle Mode */}
           <div className="mt-8 text-center relative z-10">
-             <button 
-               type="button"
-               onClick={() => {
-                 setMode(mode === 'login' ? 'register' : 'login');
-                 setError('');
-               }}
-               className="text-xs text-slate-500 hover:text-white transition-colors underline decoration-slate-700 underline-offset-4"
-             >
-               {mode === 'login' ? "NO CREDENTIALS? REGISTER IDENTITY" : "HAVE CREDENTIALS? LOGIN"}
-             </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMode(mode === 'login' ? 'register' : 'login');
+                setError('');
+              }}
+              className="text-xs text-slate-500 hover:text-white transition-colors underline decoration-slate-700 underline-offset-4"
+            >
+              {mode === 'login' ? "NO CREDENTIALS? REGISTER IDENTITY" : "HAVE CREDENTIALS? LOGIN"}
+            </button>
           </div>
         </div>
-        
+
         {/* Node Status Footer */}
         <div className="mt-6 flex items-center justify-center gap-2 text-[10px] text-slate-600 font-mono">
-            <HardDrive className="w-3 h-3 text-violet-500" />
-            <span>CONNECTED: SUPABASE INSTANCE</span>
-            <span className="w-1 h-1 bg-violet-500 rounded-full animate-pulse" />
+          <HardDrive className="w-3 h-3 text-violet-500" />
+          <span>CONNECTED: SUPABASE INSTANCE</span>
+          <span className="w-1 h-1 bg-violet-500 rounded-full animate-pulse" />
         </div>
       </motion.div>
     </div>

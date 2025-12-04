@@ -195,7 +195,7 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
   currentUser: null,
   tasks: [],
   oracleHistory: [
-    { id: 'init', role: 'model', text: "Orbit Link established. Database connected. Waiting for input.", timestamp: new Date() }
+    { id: 'init', role: 'model', text: "System Link established. Database connected. Waiting for input.", timestamp: new Date() }
   ],
   isOracleThinking: false,
   intelDrops: [],
