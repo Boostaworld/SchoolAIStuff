@@ -1,27 +1,36 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Target, Radio, Loader2, Send, Globe, Lock, Rocket, Calendar, Tag, Image as ImageIcon, X } from 'lucide-react';
+import { Target, Radio, Loader2, Send, Globe, Lock, Rocket, Calendar, Tag, Image as ImageIcon, X, Link as LinkIcon, Plus, Trash2, FileText, Clock } from 'lucide-react';
 import { useOrbitStore } from '../../store/useOrbitStore';
+import { Task, IntelDrop } from '../../types';
 import clsx from 'clsx';
 
 interface CreateActionModalProps {
     onClose: () => void;
+    editTask?: Task;
+    editDrop?: IntelDrop;
 }
 
-type Tab = 'directive' | 'transmission';
+type Tab = 'directive' | 'transmission' | 'visual';
 type Difficulty = 'Easy' | 'Medium' | 'Hard'; // Corresponds to Quick | Grind | Cooked
 
-export const CreateActionModal: React.FC<CreateActionModalProps> = ({ onClose }) => {
+export const CreateActionModal: React.FC<CreateActionModalProps> = ({ onClose, editTask, editDrop }) => {
     const [activeTab, setActiveTab] = useState<Tab>('directive');
     const [isSubmitting, setIsSubmitting] = useState(false);
-    const { addTask, publishManualDrop } = useOrbitStore();
+    const { addTask, updateTask, publishManualDrop, updateIntelDrop } = useOrbitStore();
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     // Task State
     const [taskTitle, setTaskTitle] = useState('');
-    const [taskCourse, setTaskCourse] = useState('');
+    const [taskCourse, setTaskCourse] = useState(''); // Mapped to category if custom? Currently unused in logic but kept for UI
     const [taskDifficulty, setTaskDifficulty] = useState<Difficulty>('Medium');
     const [taskPrivate, setTaskPrivate] = useState(true);
+
+    // New Task Fields
+    const [taskDueDate, setTaskDueDate] = useState('');
+    const [taskDueTime, setTaskDueTime] = useState('');
+    const [resourceLinks, setResourceLinks] = useState<{ title: string; url: string }[]>([]);
+    const [taskAnswer, setTaskAnswer] = useState('');
 
     // Post State
     const [postSubject, setPostSubject] = useState('');
@@ -29,6 +38,48 @@ export const CreateActionModal: React.FC<CreateActionModalProps> = ({ onClose })
     const [postTag, setPostTag] = useState('');
     const [postPrivate, setPostPrivate] = useState(false);
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
+    const [existingAttachmentUrl, setExistingAttachmentUrl] = useState<string | null>(null);
+
+    // Initialize for Edit Mode
+    useEffect(() => {
+        if (editTask) {
+            setActiveTab('directive');
+            setTaskTitle(editTask.title);
+            setTaskDifficulty(editTask.difficulty as Difficulty || 'Medium');
+            setTaskPrivate(!editTask.is_public);
+            setTaskCourse(editTask.category); // Pre-fill category
+
+            if (editTask.due_date) {
+                const date = new Date(editTask.due_date);
+                setTaskDueDate(date.toISOString().split('T')[0]);
+                setTaskDueTime(date.toTimeString().slice(0, 5));
+            }
+
+            if (editTask.resource_links) {
+                setResourceLinks(editTask.resource_links);
+            }
+
+            if (editTask.answer) {
+                setTaskAnswer(editTask.answer);
+            }
+        } else if (editDrop) {
+            // Determine if it's a visual drop or text drop
+            const isVisual = editDrop.attachment_type?.startsWith('image/');
+            setActiveTab(isVisual ? 'visual' : 'transmission');
+
+            // Common fields
+            setPostPrivate(editDrop.is_private);
+
+            if (isVisual) {
+                setTaskTitle(editDrop.query); // Visual drops use query as title
+                setExistingAttachmentUrl(editDrop.attachment_url || null);
+            } else {
+                setPostSubject(editDrop.query);
+                setPostContent(editDrop.summary_bullets.join('\n')); // Join bullets back to text
+                setPostTag(editDrop.related_concepts.filter(c => c !== 'Manual Broadcast')[0] || '');
+            }
+        }
+    }, [editTask, editDrop]);
 
     const handleDirectiveSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -41,12 +92,29 @@ export const CreateActionModal: React.FC<CreateActionModalProps> = ({ onClose })
                 'Medium': 'Grind',
                 'Hard': 'Cooked'
             };
-            await addTask({
+
+            // Construct Due Date
+            let finalDueDate = null;
+            if (taskDueDate) {
+                const dateTimeString = taskDueTime ? `${taskDueDate}T${taskDueTime}:00` : `${taskDueDate}T23:59:59`;
+                finalDueDate = new Date(dateTimeString).toISOString();
+            }
+
+            const taskData = {
                 title: taskTitle,
                 category: categoryMap[taskDifficulty], // Use difficulty-based category
                 difficulty: taskDifficulty,
-                is_public: !taskPrivate // Invert because UI says "private" but DB stores "public"
-            });
+                is_public: !taskPrivate,
+                due_date: finalDueDate,
+                resource_links: resourceLinks.filter(l => l.url.trim() !== ''), // Filter empty links
+                answer: taskAnswer.trim() || null
+            };
+
+            if (editTask) {
+                await updateTask(editTask.id, taskData);
+            } else {
+                await addTask(taskData);
+            }
             onClose();
         } catch (err) {
             console.error(err);
@@ -62,12 +130,48 @@ export const CreateActionModal: React.FC<CreateActionModalProps> = ({ onClose })
         try {
             // Tag handling
             const tags = postTag ? [postTag] : [];
-            await publishManualDrop(postSubject, postContent, tags, selectedFile || undefined, postPrivate);
+
+            if (editDrop) {
+                await updateIntelDrop(editDrop.id, {
+                    query: postSubject,
+                    summary_bullets: postContent.trim() ? [postContent] : [],
+                    related_concepts: ['Manual Broadcast', ...tags],
+                    is_private: postPrivate
+                });
+            } else {
+                await publishManualDrop(postSubject, postContent, tags, selectedFile || undefined, postPrivate);
+            }
             onClose();
         } catch (err) {
             console.error(err);
             const { toast } = await import('@/lib/toast');
             toast.error(err instanceof Error ? err.message : 'Failed to create transmission.');
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    const handleVisualSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        // If editing, file is optional (can keep existing). If new, file is required.
+        if (!selectedFile && !existingAttachmentUrl) return;
+
+        setIsSubmitting(true);
+        try {
+            if (editDrop) {
+                // Visual drops: Title is optional (passed as query)
+                await updateIntelDrop(editDrop.id, {
+                    query: taskTitle,
+                    is_private: postPrivate
+                });
+            } else {
+                await publishManualDrop(taskTitle, '', [], selectedFile!, postPrivate);
+            }
+            onClose();
+        } catch (err) {
+            console.error(err);
+            const { toast } = await import('@/lib/toast');
+            toast.error(err instanceof Error ? err.message : 'Failed to upload visual intel.');
         } finally {
             setIsSubmitting(false);
         }
@@ -92,6 +196,20 @@ export const CreateActionModal: React.FC<CreateActionModalProps> = ({ onClose })
         }
     };
 
+    const addResourceLink = () => {
+        setResourceLinks([...resourceLinks, { title: '', url: '' }]);
+    };
+
+    const updateResourceLink = (index: number, field: 'title' | 'url', value: string) => {
+        const newLinks = [...resourceLinks];
+        newLinks[index] = { ...newLinks[index], [field]: value };
+        setResourceLinks(newLinks);
+    };
+
+    const removeResourceLink = (index: number) => {
+        setResourceLinks(resourceLinks.filter((_, i) => i !== index));
+    };
+
     return (
         <motion.div
             initial={{ opacity: 0 }}
@@ -105,58 +223,79 @@ export const CreateActionModal: React.FC<CreateActionModalProps> = ({ onClose })
                 animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 0.95, opacity: 0 }}
                 onClick={(e) => e.stopPropagation()}
-                className="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden flex flex-col relative"
+                className="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden flex flex-col relative max-h-[90vh]"
             >
                 {/* Header - System HUD Style */}
-                <div className="bg-slate-950 p-4 border-b border-slate-800 flex justify-between items-center relative overflow-hidden">
+                <div className="bg-slate-950 p-4 border-b border-slate-800 flex justify-between items-center relative overflow-hidden shrink-0">
                     <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10" />
                     <div className="flex items-center gap-2 z-10">
-                        <div className="w-2 h-6 bg-cyan-500 rounded-sm" />
-                        <h2 className="text-lg font-bold text-white tracking-widest">MISSION INITIALIZATION</h2>
+                        <div className={clsx("w-2 h-6 rounded-sm", editTask ? "bg-amber-500" : "bg-cyan-500")} />
+                        <h2 className="text-lg font-bold text-white tracking-widest">
+                            {editTask ? 'MODIFY DIRECTIVE' : editDrop ? 'MODIFY TRANSMISSION' : 'MISSION INITIALIZATION'}
+                        </h2>
                     </div>
                     <button onClick={onClose} className="text-slate-500 hover:text-white z-10 font-mono text-xs">[ ABORT ]</button>
                 </div>
 
-                {/* Tab Switcher */}
-                <div className="flex bg-slate-950/50">
-                    <button
-                        onClick={() => setActiveTab('directive')}
-                        className={clsx(
-                            "flex-1 py-4 text-xs font-mono font-bold uppercase tracking-widest transition-all relative overflow-hidden",
-                            activeTab === 'directive'
-                                ? "text-violet-400 bg-slate-900"
-                                : "text-slate-600 hover:text-slate-300 hover:bg-slate-900/50"
-                        )}
-                    >
-                        {activeTab === 'directive' && (
-                            <motion.div layoutId="activeTab" className="absolute top-0 inset-x-0 h-0.5 bg-violet-500 shadow-[0_0_10px_rgba(139,92,246,0.5)]" />
-                        )}
-                        <div className="flex items-center justify-center gap-2 relative z-10">
-                            <Target className="w-4 h-4" />
-                            TASK / DIRECTIVE
-                        </div>
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('transmission')}
-                        className={clsx(
-                            "flex-1 py-4 text-xs font-mono font-bold uppercase tracking-widest transition-all relative overflow-hidden",
-                            activeTab === 'transmission'
-                                ? "text-cyan-400 bg-slate-900"
-                                : "text-slate-600 hover:text-slate-300 hover:bg-slate-900/50"
-                        )}
-                    >
-                        {activeTab === 'transmission' && (
-                            <motion.div layoutId="activeTab" className="absolute top-0 inset-x-0 h-0.5 bg-cyan-500 shadow-[0_0_10px_rgba(6,182,212,0.5)]" />
-                        )}
-                        <div className="flex items-center justify-center gap-2 relative z-10">
-                            <Radio className="w-4 h-4" />
-                            TRANSMISSION
-                        </div>
-                    </button>
-                </div>
+                {/* Tab Switcher (Hidden in Edit Mode) */}
+                {!editTask && !editDrop && (
+                    <div className="flex bg-slate-950/50 shrink-0">
+                        <button
+                            onClick={() => setActiveTab('directive')}
+                            className={clsx(
+                                "flex-1 py-4 text-xs font-mono font-bold uppercase tracking-widest transition-all relative overflow-hidden",
+                                activeTab === 'directive'
+                                    ? "text-violet-400 bg-slate-900"
+                                    : "text-slate-600 hover:text-slate-300 hover:bg-slate-900/50"
+                            )}
+                        >
+                            {activeTab === 'directive' && (
+                                <motion.div layoutId="activeTab" className="absolute top-0 inset-x-0 h-0.5 bg-violet-500 shadow-[0_0_10px_rgba(139,92,246,0.5)]" />
+                            )}
+                            <div className="flex items-center justify-center gap-2 relative z-10">
+                                <Target className="w-4 h-4" />
+                                DIRECTIVE
+                            </div>
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('transmission')}
+                            className={clsx(
+                                "flex-1 py-4 text-xs font-mono font-bold uppercase tracking-widest transition-all relative overflow-hidden",
+                                activeTab === 'transmission'
+                                    ? "text-cyan-400 bg-slate-900"
+                                    : "text-slate-600 hover:text-slate-300 hover:bg-slate-900/50"
+                            )}
+                        >
+                            {activeTab === 'transmission' && (
+                                <motion.div layoutId="activeTab" className="absolute top-0 inset-x-0 h-0.5 bg-cyan-500 shadow-[0_0_10px_rgba(6,182,212,0.5)]" />
+                            )}
+                            <div className="flex items-center justify-center gap-2 relative z-10">
+                                <Radio className="w-4 h-4" />
+                                TRANSMISSION
+                            </div>
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('visual')}
+                            className={clsx(
+                                "flex-1 py-4 text-xs font-mono font-bold uppercase tracking-widest transition-all relative overflow-hidden",
+                                activeTab === 'visual'
+                                    ? "text-emerald-400 bg-slate-900"
+                                    : "text-slate-600 hover:text-slate-300 hover:bg-slate-900/50"
+                            )}
+                        >
+                            {activeTab === 'visual' && (
+                                <motion.div layoutId="activeTab" className="absolute top-0 inset-x-0 h-0.5 bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]" />
+                            )}
+                            <div className="flex items-center justify-center gap-2 relative z-10">
+                                <ImageIcon className="w-4 h-4" />
+                                VISUAL
+                            </div>
+                        </button>
+                    </div>
+                )}
 
                 {/* Content Area */}
-                <div className="p-6 bg-slate-900">
+                <div className="p-6 bg-slate-900 overflow-y-auto custom-scrollbar flex-1">
                     <AnimatePresence mode='wait'>
 
                         {/* --- DIRECTIVE MODE --- */}
@@ -199,16 +338,82 @@ export const CreateActionModal: React.FC<CreateActionModalProps> = ({ onClose })
                                         />
                                     </div>
 
-                                    {/* Due Date (Mock) */}
+                                    {/* Due Date */}
                                     <div>
                                         <label className="flex items-center gap-2 text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-2">
                                             <Calendar className="w-3 h-3" /> Deadline
                                         </label>
-                                        <input
-                                            type="date"
-                                            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-3 text-slate-400 focus:outline-none focus:border-violet-500 transition-colors font-mono text-sm"
-                                        />
+                                        <div className="flex gap-2">
+                                            <input
+                                                type="date"
+                                                value={taskDueDate}
+                                                onChange={(e) => setTaskDueDate(e.target.value)}
+                                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-3 text-slate-400 focus:outline-none focus:border-violet-500 transition-colors font-mono text-sm"
+                                            />
+                                            <input
+                                                type="time"
+                                                value={taskDueTime}
+                                                onChange={(e) => setTaskDueTime(e.target.value)}
+                                                className="w-24 bg-slate-950 border border-slate-800 rounded-lg px-2 py-3 text-slate-400 focus:outline-none focus:border-violet-500 transition-colors font-mono text-sm"
+                                            />
+                                        </div>
                                     </div>
+                                </div>
+
+                                {/* Resource Links */}
+                                <div>
+                                    <label className="flex items-center justify-between text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-2">
+                                        <span className="flex items-center gap-2"><LinkIcon className="w-3 h-3" /> Intel Resources</span>
+                                        <button type="button" onClick={addResourceLink} className="text-violet-400 hover:text-violet-300 flex items-center gap-1">
+                                            <Plus className="w-3 h-3" /> ADD LINK
+                                        </button>
+                                    </label>
+                                    <div className="space-y-2">
+                                        {resourceLinks.map((link, index) => (
+                                            <div key={index} className="flex gap-2">
+                                                <input
+                                                    type="text"
+                                                    value={link.title}
+                                                    onChange={(e) => updateResourceLink(index, 'title', e.target.value)}
+                                                    placeholder="Title"
+                                                    className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-violet-500 text-sm"
+                                                />
+                                                <input
+                                                    type="text"
+                                                    value={link.url}
+                                                    onChange={(e) => updateResourceLink(index, 'url', e.target.value)}
+                                                    placeholder="URL"
+                                                    className="flex-[2] bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-violet-500 text-sm font-mono"
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => removeResourceLink(index)}
+                                                    className="p-2 text-slate-600 hover:text-red-400 hover:bg-red-900/20 rounded-lg transition-colors"
+                                                >
+                                                    <Trash2 className="w-4 h-4" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                        {resourceLinks.length === 0 && (
+                                            <div className="text-center py-4 border border-dashed border-slate-800 rounded-lg text-slate-600 text-xs font-mono">
+                                                NO RESOURCES ATTACHED
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* Answer Key (Optional) */}
+                                <div>
+                                    <label className="flex items-center gap-2 text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-2">
+                                        <FileText className="w-3 h-3" /> Answer Key / Notes
+                                    </label>
+                                    <textarea
+                                        value={taskAnswer}
+                                        onChange={(e) => setTaskAnswer(e.target.value)}
+                                        placeholder="Enter answer key or notes (Markdown supported)..."
+                                        rows={3}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-3 text-slate-200 focus:outline-none focus:border-violet-500 transition-colors placeholder:text-slate-700 font-mono text-sm resize-y"
+                                    />
                                 </div>
 
                                 {/* Difficulty Radio */}
@@ -270,13 +475,13 @@ export const CreateActionModal: React.FC<CreateActionModalProps> = ({ onClose })
                                 >
                                     {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : (
                                         <>
-                                            INITIALIZE
+                                            {editTask ? 'UPDATE DIRECTIVE' : 'INITIALIZE'}
                                             <Rocket className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
                                         </>
                                     )}
                                 </button>
                             </motion.form>
-                        ) : (
+                        ) : activeTab === 'transmission' ? (
 
                             /* --- TRANSMISSION MODE --- */
                             <motion.form
@@ -329,44 +534,6 @@ export const CreateActionModal: React.FC<CreateActionModalProps> = ({ onClose })
                                             className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-3 text-slate-200 focus:outline-none focus:border-cyan-500 transition-colors placeholder:text-slate-700 font-mono text-sm"
                                         />
                                     </div>
-
-                                    {/* Attachment */}
-                                    <div>
-                                        <label className="flex items-center gap-2 text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-2">
-                                            <ImageIcon className="w-3 h-3" /> Attachment
-                                        </label>
-                                        <input
-                                            ref={fileInputRef}
-                                            type="file"
-                                            accept="image/*"
-                                            onChange={handleFileSelect}
-                                            className="hidden"
-                                        />
-                                        {selectedFile ? (
-                                            <div className="w-full bg-slate-950 border border-cyan-500/50 rounded-lg px-4 py-3 text-cyan-400 font-mono text-xs flex items-center justify-between gap-2">
-                                                <div className="flex items-center gap-2 truncate">
-                                                    <ImageIcon className="w-4 h-4 flex-shrink-0" />
-                                                    <span className="truncate">{selectedFile.name}</span>
-                                                </div>
-                                                <button
-                                                    type="button"
-                                                    onClick={handleRemoveFile}
-                                                    className="flex-shrink-0 text-slate-500 hover:text-red-400 transition-colors"
-                                                >
-                                                    <X className="w-4 h-4" />
-                                                </button>
-                                            </div>
-                                        ) : (
-                                            <button
-                                                type="button"
-                                                onClick={() => fileInputRef.current?.click()}
-                                                className="w-full bg-slate-950 border border-slate-800 border-dashed hover:border-cyan-500/50 rounded-lg px-4 py-3 text-slate-500 hover:text-cyan-400 transition-colors font-mono text-xs flex items-center justify-center gap-2"
-                                            >
-                                                <ImageIcon className="w-4 h-4" />
-                                                UPLOAD_IMG
-                                            </button>
-                                        )}
-                                    </div>
                                 </div>
 
                                 {/* Privacy Toggle (Public Default) */}
@@ -401,7 +568,133 @@ export const CreateActionModal: React.FC<CreateActionModalProps> = ({ onClose })
                                 >
                                     {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : (
                                         <>
-                                            BROADCAST
+                                            {editDrop ? 'UPDATE TRANSMISSION' : 'BROADCAST'}
+                                            <Send className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                                        </>
+                                    )}
+                                </button>
+                            </motion.form>
+                        ) : (
+                            /* --- VISUAL MODE --- */
+                            <motion.form
+                                key="visual-form"
+                                initial={{ opacity: 0, x: 10 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                exit={{ opacity: 0, x: -10 }}
+                                onSubmit={handleVisualSubmit}
+                                className="space-y-5"
+                            >
+                                {/* Title (Optional) */}
+                                <div>
+                                    <label className="flex items-center gap-2 text-[10px] font-mono text-emerald-400 uppercase tracking-widest mb-2">
+                                        <Tag className="w-3 h-3" /> Title (Optional)
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={taskTitle}
+                                        onChange={(e) => setTaskTitle(e.target.value)}
+                                        placeholder="e.g. Sector 7 Surveillance"
+                                        autoFocus
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-3 text-slate-200 focus:outline-none focus:border-emerald-500 transition-colors placeholder:text-slate-700 font-mono text-sm"
+                                    />
+                                </div>
+
+                                {/* Image Upload (Required) */}
+                                <div>
+                                    <label className="flex items-center gap-2 text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-2">
+                                        <ImageIcon className="w-3 h-3" /> Visual Data
+                                    </label>
+                                    <input
+                                        ref={fileInputRef}
+                                        type="file"
+                                        accept="image/*"
+                                        onChange={handleFileSelect}
+                                        className="hidden"
+                                    />
+                                    {selectedFile ? (
+                                        <div className="w-full h-48 bg-slate-950 border border-emerald-500/50 rounded-xl relative group overflow-hidden flex items-center justify-center">
+                                            <img
+                                                src={URL.createObjectURL(selectedFile)}
+                                                alt="Preview"
+                                                className="absolute inset-0 w-full h-full object-cover opacity-50 group-hover:opacity-70 transition-opacity"
+                                            />
+                                            <div className="relative z-10 flex flex-col items-center gap-2">
+                                                <div className="bg-slate-900/80 backdrop-blur px-3 py-1 rounded-full text-emerald-400 font-mono text-xs border border-emerald-500/30">
+                                                    {selectedFile.name}
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={handleRemoveFile}
+                                                    className="bg-red-500/20 hover:bg-red-500/40 text-red-400 p-2 rounded-full transition-colors"
+                                                >
+                                                    <X className="w-4 h-4" />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ) : existingAttachmentUrl ? (
+                                        <div className="w-full h-48 bg-slate-950 border border-emerald-500/50 rounded-xl relative group overflow-hidden flex items-center justify-center">
+                                            <img
+                                                src={existingAttachmentUrl}
+                                                alt="Preview"
+                                                className="absolute inset-0 w-full h-full object-cover opacity-50 group-hover:opacity-70 transition-opacity"
+                                            />
+                                            <div className="relative z-10 flex flex-col items-center gap-2">
+                                                <div className="bg-slate-900/80 backdrop-blur px-3 py-1 rounded-full text-emerald-400 font-mono text-xs border border-emerald-500/30">
+                                                    Existing Image
+                                                </div>
+                                                {/* No remove button for existing image yet, as we don't support clearing it in this simple edit flow */}
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            onClick={() => fileInputRef.current?.click()}
+                                            className="w-full h-48 bg-slate-950 border-2 border-slate-800 border-dashed hover:border-emerald-500/50 rounded-xl flex flex-col items-center justify-center gap-3 text-slate-500 hover:text-emerald-400 transition-all group"
+                                        >
+                                            <div className="w-12 h-12 rounded-full bg-slate-900 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                                <ImageIcon className="w-6 h-6" />
+                                            </div>
+                                            <div className="text-center">
+                                                <p className="font-mono text-xs font-bold uppercase tracking-wider">Upload Visual Intel</p>
+                                                <p className="text-[10px] opacity-60 mt-1">PNG, JPG, GIF up to 10MB</p>
+                                            </div>
+                                        </button>
+                                    )}
+                                </div>
+
+                                {/* Privacy Toggle */}
+                                <div className="flex items-center justify-between bg-slate-950/50 p-3 rounded-lg border border-slate-800">
+                                    <div className="flex items-center gap-3">
+                                        <div className={clsx("w-8 h-8 rounded flex items-center justify-center transition-colors", postPrivate ? "bg-violet-500/20 text-violet-400" : "bg-emerald-500/20 text-emerald-400")}>
+                                            {postPrivate ? <Lock className="w-4 h-4" /> : <Globe className="w-4 h-4" />}
+                                        </div>
+                                        <div className="text-left">
+                                            <p className="text-xs font-bold text-slate-300">{postPrivate ? "ENCRYPTED" : "PUBLIC FEED"}</p>
+                                            <p className="text-[10px] text-slate-500 font-mono">
+                                                {postPrivate ? "Private notes" : "Broadcast to Horde"}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setPostPrivate(!postPrivate)}
+                                        className={clsx("w-12 h-6 rounded-full p-1 transition-colors relative", postPrivate ? "bg-violet-900" : "bg-emerald-700")}
+                                    >
+                                        <motion.div
+                                            animate={{ x: postPrivate ? 24 : 0 }}
+                                            className="w-4 h-4 bg-white rounded-full shadow-sm"
+                                        />
+                                    </button>
+                                </div>
+
+                                <button
+                                    type="submit"
+                                    disabled={(!selectedFile && !existingAttachmentUrl) || isSubmitting}
+                                    className="w-full py-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg shadow-emerald-900/30 disabled:opacity-50 group"
+                                >
+                                    {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : (
+                                        <>
+                                            {editDrop ? 'UPDATE VISUAL INTEL' : 'UPLOAD INTEL'}
                                             <Send className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
                                         </>
                                     )}

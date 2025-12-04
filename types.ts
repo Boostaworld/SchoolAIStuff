@@ -8,6 +8,10 @@ export interface Task {
   is_public?: boolean; // Whether task is visible to all users
   isCopied?: boolean;
   isAnalyzing?: boolean; // For AI loading state
+  due_date?: string; // ISO 8601 datetime
+  resource_links?: Array<{ title: string; url: string }>; // Google Classroom, rubrics, etc.
+  answer?: string; // markdown content
+  original_task_id?: string; // UUID of source task if claimed
   profiles?: { // Author info (populated from join)
     username: string;
     avatar_url: string;
@@ -20,6 +24,7 @@ export interface UserProfile {
   avatar: string; // URL
   joinedAt: string;
   isAdmin?: boolean;
+  is_admin?: boolean; // snake_case alias for compatibility
   points?: number; // alias for orbit_points in legacy code paths
   can_customize_ai?: boolean;
   unlocked_models?: string[];

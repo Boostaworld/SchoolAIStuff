@@ -1,12 +1,14 @@
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useOrbitStore } from '../../store/useOrbitStore';
-import { Search, Loader2, Database, BrainCircuit, Sparkles, Settings, X, Lock } from 'lucide-react';
+import { Search, Loader2, Database, BrainCircuit, Sparkles, Settings, X, Lock, Share2, Globe2, MessageCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { IntelResults } from './IntelResults';
 import { SaveDropModal } from './SaveDropModal';
 import { toast } from '@/lib/toast';
 import clsx from 'clsx';
+import { FriendPickerModal } from '../Shared/FriendPickerModal';
+import { Streamdown } from 'streamdown';
 
 export const IntelPanel: React.FC = () => {
   const [query, setQuery] = useState('');
@@ -21,8 +23,22 @@ export const IntelPanel: React.FC = () => {
   const [mode, setMode] = useState<'chat' | 'image' | 'generation'>('chat');
   const [thinkingLevel, setThinkingLevel] = useState<'low' | 'medium' | 'high'>('medium');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
+  const [shareTarget, setShareTarget] = useState<'dm' | null>(null);
+  const [shareSubject, setShareSubject] = useState('');
+  const [isSharing, setIsSharing] = useState(false);
 
-  const { sendIntelQuery, isIntelLoading, currentIntelResult, currentUser, intelMessages, clearIntelHistory } = useOrbitStore();
+  const {
+    sendIntelQuery,
+    isIntelLoading,
+    currentIntelResult,
+    currentUser,
+    intelMessages,
+    clearIntelHistory,
+    shareAIChatToFeed,
+    shareAIChatToDM
+  } = useOrbitStore();
   const canCustomize = !!currentUser?.can_customize_ai;
   const unlockedModels = useMemo(() => currentUser?.unlocked_models || ['flash'], [currentUser?.unlocked_models]);
   const conversationLength = intelMessages.length;
@@ -40,6 +56,99 @@ export const IntelPanel: React.FC = () => {
 
   // Check if current model supports thinking level (not just budget)
   const supportsThinkingLevel = ['gemini-3-pro', 'gemini-3-image'].includes(selectedModel);
+
+  const selectedMessages = intelMessages.filter((msg) => selectedMessageIds.includes(msg.id));
+  const latestUserPrompt = useMemo(() => {
+    const reversed = [...intelMessages].reverse();
+    const found = reversed.find((msg) => msg.role === 'user');
+    return found?.content || '';
+  }, [intelMessages]);
+  const latestModelUsed = useMemo(() => {
+    const reversed = [...intelMessages].reverse();
+    const found = reversed.find((msg) => msg.role === 'model' && msg.meta?.model_used);
+    return found?.meta?.model_used || selectedModel;
+  }, [intelMessages, selectedModel]);
+  const modelLabelMap: Record<string, string> = {
+    flash: 'Gemini 2.5 Flash',
+    pro: 'Gemini 2.5 Pro',
+    'orbit-x': 'Orbit-X (2.5 Pro)',
+    'gemini-3-pro': 'Gemini 3.0 Pro',
+    'gemini-3-image': 'Gemini 3.0 Image'
+  };
+
+  useEffect(() => {
+    if (!selectionMode) {
+      setSelectedMessageIds([]);
+      setShareTarget(null);
+    }
+  }, [selectionMode]);
+
+  useEffect(() => {
+    setSelectedMessageIds((prev) => prev.filter((id) => intelMessages.some((msg) => msg.id === id)));
+  }, [intelMessages]);
+
+  useEffect(() => {
+    if (selectionMode && !shareSubject && (currentQuery || latestUserPrompt)) {
+      setShareSubject(currentQuery || latestUserPrompt);
+    }
+  }, [selectionMode, shareSubject, currentQuery, latestUserPrompt]);
+
+  const getMessageText = (message: (typeof intelMessages)[number]) => {
+    if (message.role === 'user') return message.content;
+    if (message.result) {
+      const bulletText = Array.isArray(message.result.summary_bullets) && message.result.summary_bullets.length
+        ? message.result.summary_bullets.join('\n')
+        : '';
+      const essayText = message.result.essay || '';
+      return [bulletText, essayText].filter(Boolean).join('\n\n') || message.content || 'AI response';
+    }
+    return message.content || '';
+  };
+
+  const toggleMessageSelection = (id: string) => {
+    setSelectedMessageIds((prev) =>
+      prev.includes(id) ? prev.filter((msgId) => msgId !== id) : [...prev, id]
+    );
+  };
+
+  const handleShareToFeed = async () => {
+    if (selectedMessages.length === 0) {
+      toast.error('Select messages to share first.');
+      return;
+    }
+
+    setIsSharing(true);
+    try {
+      const subject = (shareSubject || currentQuery || latestUserPrompt || 'AI Chat').trim();
+      await shareAIChatToFeed(selectedMessages, subject);
+      setSelectionMode(false);
+      setSelectedMessageIds([]);
+      setShareTarget(null);
+    } catch (error) {
+      // Error toast handled in store
+    } finally {
+      setIsSharing(false);
+    }
+  };
+
+  const handleShareToDM = async (userId: string) => {
+    if (selectedMessages.length === 0) {
+      toast.error('Select messages to share first.');
+      return;
+    }
+    setIsSharing(true);
+    try {
+      const subject = (shareSubject || currentQuery || latestUserPrompt || 'AI Chat').trim();
+      await shareAIChatToDM(selectedMessages, subject, userId);
+      setSelectionMode(false);
+      setSelectedMessageIds([]);
+      setShareTarget(null);
+    } catch (error) {
+      // Error toast handled in store
+    } finally {
+      setIsSharing(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -192,6 +301,21 @@ export const IntelPanel: React.FC = () => {
                 </button>
               </div>
             )}
+            {intelMessages.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setSelectionMode(!selectionMode)}
+                className={clsx(
+                  "px-2 py-0.5 rounded border text-[9px] uppercase tracking-wider flex items-center gap-1 transition-colors",
+                  selectionMode
+                    ? "border-violet-500/70 text-violet-200 bg-violet-500/10"
+                    : "border-cyan-500/50 text-cyan-200 hover:border-cyan-300 hover:text-cyan-100"
+                )}
+              >
+                <Share2 className="w-3.5 h-3.5" />
+                {selectionMode ? 'Cancel Share' : 'Share Chat'}
+              </button>
+            )}
             <span className="text-slate-600">STATUS:</span>
             <span className="text-cyan-400 flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
@@ -313,7 +437,7 @@ export const IntelPanel: React.FC = () => {
       {/* Results Area */}
       <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
         <AnimatePresence mode="wait">
-          {isIntelLoading && (
+          {isIntelLoading ? (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -352,37 +476,182 @@ export const IntelPanel: React.FC = () => {
                 )}
               </div>
             </motion.div>
-          )}
-
-          {!isIntelLoading && currentIntelResult && (
-            <IntelResults
-              result={currentIntelResult}
-              query={currentQuery}
-              onSave={handleSave}
-              onFollowUp={handleFollowUp}
-              isLoading={isIntelLoading}
-            />
-          )}
-
-          {!isIntelLoading && !currentIntelResult && (
+          ) : (
             <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="flex flex-col items-center justify-center h-full text-center gap-4"
+              key="intel-content"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="space-y-4"
             >
-              <div className="w-20 h-20 rounded-full bg-slate-800/50 flex items-center justify-center border border-slate-700">
-                <Database className="w-10 h-10 text-slate-600" />
-              </div>
-              <div>
-                <p className="text-slate-400 font-mono text-sm uppercase tracking-widest mb-1">No Active Query</p>
-                <p className="text-slate-600 text-xs max-w-xs">
-                  Execute a research query to generate structured intelligence dossiers
-                </p>
-              </div>
+              {intelMessages.length > 0 && (
+                <div className="border border-slate-800 bg-slate-900/60 rounded-xl p-4 shadow-lg shadow-cyan-900/10">
+                  <div className="flex items-center justify-between gap-3 mb-3">
+                    <div>
+                      <p className="text-[10px] font-mono text-cyan-400 uppercase tracking-widest">AI Chat Transcript</p>
+                      <p className="text-xs text-slate-500">
+                        {selectionMode ? `Select messages to share (${selectedMessageIds.length} chosen)` : `Captured ${intelMessages.length} turns`}
+                      </p>
+                    </div>
+                    {selectionMode && (
+                      <span className="px-2 py-1 rounded-full border border-violet-500/50 text-[10px] font-mono text-violet-200 bg-violet-500/10">
+                        Selection Mode
+                      </span>
+                    )}
+                  </div>
+                  <div className="space-y-3">
+                    {intelMessages.map((message) => {
+                      const isSelected = selectedMessageIds.includes(message.id);
+                      const text = getMessageText(message);
+                      const preview = text.length > 260 ? `${text.slice(0, 260)}...` : text;
+                      const timestamp = message.created_at
+                        ? new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        : '';
+
+                      return (
+                        <div
+                          key={message.id}
+                          onClick={() => selectionMode && toggleMessageSelection(message.id)}
+                          className={clsx(
+                            "relative p-3 rounded-lg border transition-all",
+                            message.role === 'user'
+                              ? "border-cyan-500/30 bg-cyan-500/5"
+                              : "border-violet-500/30 bg-violet-500/5",
+                            selectionMode && "cursor-pointer hover:border-cyan-400/60",
+                            isSelected && "ring-2 ring-cyan-400/60"
+                          )}
+                        >
+                          {selectionMode && (
+                            <div
+                              className={clsx(
+                                "absolute top-3 right-3 w-5 h-5 rounded-md border flex items-center justify-center text-[11px] font-mono",
+                                isSelected
+                                  ? "bg-cyan-500 text-slate-900 border-cyan-400"
+                                  : "border-slate-600 text-slate-500 bg-slate-900/80"
+                              )}
+                            >
+                              {isSelected ? 'X' : ''}
+                            </div>
+                          )}
+
+                          <div className="flex items-center justify-between gap-2 mb-2">
+                            <div className="flex items-center gap-2">
+                              <span className={clsx(
+                                "text-[11px] font-mono px-2 py-1 rounded-full border",
+                                message.role === 'user'
+                                  ? "border-cyan-500/50 text-cyan-200"
+                                  : "border-violet-500/50 text-violet-200"
+                              )}>
+                                {message.role === 'user' ? (currentUser?.username || 'You') : 'AI Response'}
+                              </span>
+                              {message.meta?.model_used && (
+                                <span className="text-[10px] text-slate-500 font-mono uppercase">
+                                  {message.meta.model_used}
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[10px] text-slate-500 font-mono">{timestamp}</span>
+                          </div>
+
+                          <div className="text-sm text-slate-200 leading-relaxed prose prose-invert prose-sm max-w-none prose-p:my-1 prose-headings:text-slate-200 prose-headings:text-sm prose-strong:text-slate-100 prose-code:text-cyan-400 prose-pre:bg-slate-950/80">
+                            <Streamdown>{preview || 'No content'}</Streamdown>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {currentIntelResult ? (
+                <IntelResults
+                  result={currentIntelResult}
+                  query={currentQuery}
+                  onSave={handleSave}
+                  onFollowUp={handleFollowUp}
+                  isLoading={isIntelLoading}
+                  modelUsed={modelLabelMap[latestModelUsed] || latestModelUsed}
+                />
+              ) : (
+                <motion.div
+                  key="intel-empty"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="flex flex-col items-center justify-center h-full text-center gap-4"
+                >
+                  <div className="w-20 h-20 rounded-full bg-slate-800/50 flex items-center justify-center border border-slate-700">
+                    <Database className="w-10 h-10 text-slate-600" />
+                  </div>
+                  <div>
+                    <p className="text-slate-400 font-mono text-sm uppercase tracking-widest mb-1">No Active Query</p>
+                    <p className="text-slate-600 text-xs max-w-xs">
+                      Execute a research query to generate structured intelligence dossiers
+                    </p>
+                  </div>
+                </motion.div>
+              )}
             </motion.div>
           )}
         </AnimatePresence>
       </div>
+
+      {selectionMode && intelMessages.length > 0 && (
+        <div className="fixed bottom-6 left-4 right-4 lg:left-auto lg:right-6 z-40">
+          <div className="bg-slate-950/90 border border-cyan-500/40 rounded-2xl shadow-2xl p-4 flex flex-col lg:flex-row lg:items-center gap-3">
+            <div className="flex-1">
+              <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1">Share Subject</p>
+              <input
+                value={shareSubject}
+                onChange={(e) => setShareSubject(e.target.value)}
+                placeholder={latestUserPrompt || 'AI Chat topic'}
+                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-cyan-500/60 font-mono"
+              />
+              <p className="text-[11px] text-slate-500 font-mono mt-1">
+                Selected {selectedMessageIds.length} message{selectedMessageIds.length === 1 ? '' : 's'} to share
+              </p>
+            </div>
+            <div className="flex gap-2 flex-wrap justify-end">
+              <button
+                type="button"
+                disabled={isSharing || selectedMessageIds.length === 0}
+                onClick={handleShareToFeed}
+                className={clsx(
+                  "flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-mono uppercase tracking-wider transition-all border",
+                  isSharing || selectedMessageIds.length === 0
+                    ? "border-slate-700 text-slate-500 cursor-not-allowed"
+                    : "border-emerald-500/60 text-emerald-200 hover:bg-emerald-500/10"
+                )}
+              >
+                <Globe2 className="w-4 h-4" />
+                Share to Feed
+              </button>
+              <button
+                type="button"
+                disabled={isSharing || selectedMessageIds.length === 0}
+                onClick={() => setShareTarget('dm')}
+                className={clsx(
+                  "flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-mono uppercase tracking-wider transition-all border",
+                  isSharing || selectedMessageIds.length === 0
+                    ? "border-slate-700 text-slate-500 cursor-not-allowed"
+                    : "border-cyan-500/60 text-cyan-200 hover:bg-cyan-500/10"
+                )}
+              >
+                <MessageCircle className="w-4 h-4" />
+                Send to Friend
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <FriendPickerModal
+        open={shareTarget === 'dm'}
+        onClose={() => setShareTarget(null)}
+        onSelect={async (userId) => {
+          await handleShareToDM(userId);
+          setShareTarget(null);
+        }}
+      />
 
       {/* Save Modal */}
       <AnimatePresence>

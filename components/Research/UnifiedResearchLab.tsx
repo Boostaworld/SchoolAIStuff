@@ -9,6 +9,7 @@ import { IntelResults } from '../Intel/IntelResults';
 import { SaveDropModal } from '../Intel/SaveDropModal';
 import { toast } from '@/lib/toast';
 import clsx from 'clsx';
+import { MarkdownRenderer } from '../Social/MarkdownRenderer';
 
 type Tab = 'intel' | 'vision';
 
@@ -593,9 +594,9 @@ export const UnifiedResearchLab: React.FC = () => {
                         </div>
                       )}
 
-                      <p className="text-slate-300 text-sm font-mono leading-relaxed whitespace-pre-wrap">
-                        {message.text}
-                      </p>
+                      <div className="text-slate-300 text-sm font-mono leading-relaxed">
+                        <MarkdownRenderer content={message.text} />
+                      </div>
                     </div>
                   </motion.div>
                 ))}
@@ -665,22 +666,20 @@ export const UnifiedResearchLab: React.FC = () => {
                       <div className="flex gap-2">
                         <button
                           onClick={() => setIsFormMode(false)}
-                          className={`px-3 py-1 text-xs font-mono font-bold border-2 transition-all ${
-                            !isFormMode
-                              ? 'bg-orange-500/20 border-orange-500 text-orange-300'
-                              : 'bg-transparent border-slate-700 text-slate-500 hover:border-orange-500/50'
-                          }`}
+                          className={`px-3 py-1 text-xs font-mono font-bold border-2 transition-all ${!isFormMode
+                            ? 'bg-orange-500/20 border-orange-500 text-orange-300'
+                            : 'bg-transparent border-slate-700 text-slate-500 hover:border-orange-500/50'
+                            }`}
                         >
                           <ImageIcon className="w-3 h-3 inline mr-1" />
                           GENERAL
                         </button>
                         <button
                           onClick={() => setIsFormMode(true)}
-                          className={`px-3 py-1 text-xs font-mono font-bold border-2 transition-all ${
-                            isFormMode
-                              ? 'bg-amber-500/20 border-amber-500 text-amber-300'
-                              : 'bg-transparent border-slate-700 text-slate-500 hover:border-amber-500/50'
-                          }`}
+                          className={`px-3 py-1 text-xs font-mono font-bold border-2 transition-all ${isFormMode
+                            ? 'bg-amber-500/20 border-amber-500 text-amber-300'
+                            : 'bg-transparent border-slate-700 text-slate-500 hover:border-amber-500/50'
+                            }`}
                         >
                           <FileText className="w-3 h-3 inline mr-1" />
                           GOOGLE FORM
@@ -798,13 +797,12 @@ export const UnifiedResearchLab: React.FC = () => {
                           }
                           setSelectedIntelModel(model.id);
                         }}
-                        className={`relative p-4 rounded-xl border-2 transition-all ${
-                          selectedIntelModel === model.id
-                            ? `bg-gradient-to-br ${model.color} border-transparent text-white shadow-[0_0_20px_rgba(59,130,246,0.5)]`
-                            : model.locked
+                        className={`relative p-4 rounded-xl border-2 transition-all ${selectedIntelModel === model.id
+                          ? `bg-gradient-to-br ${model.color} border-transparent text-white shadow-[0_0_20px_rgba(59,130,246,0.5)]`
+                          : model.locked
                             ? 'bg-slate-800/30 border-slate-700 text-slate-600 cursor-not-allowed'
                             : 'bg-slate-800/50 border-blue-500/30 text-slate-300 hover:border-blue-500/50'
-                        }`}
+                          }`}
                       >
                         {model.locked && (
                           <div className="absolute top-2 right-2">
@@ -830,11 +828,10 @@ export const UnifiedResearchLab: React.FC = () => {
                         <button
                           key={level}
                           onClick={() => setThinkingLevel(level as typeof thinkingLevel)}
-                          className={`px-4 py-2 rounded-lg border-2 transition-all text-sm font-mono uppercase ${
-                            thinkingLevel === level
-                              ? 'bg-emerald-500 border-emerald-400 text-white'
-                              : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-500'
-                          }`}
+                          className={`px-4 py-2 rounded-lg border-2 transition-all text-sm font-mono uppercase ${thinkingLevel === level
+                            ? 'bg-emerald-500 border-emerald-400 text-white'
+                            : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-500'
+                            }`}
                         >
                           {level}
                         </button>

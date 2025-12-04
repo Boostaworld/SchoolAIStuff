@@ -21,6 +21,7 @@
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
+    "streamdown": "^1.6.10",
     "zustand": "4.5.2"
   },
   "devDependencies": {

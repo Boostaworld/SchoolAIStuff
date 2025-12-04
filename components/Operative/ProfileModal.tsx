@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { X, Target, TrendingUp, Calendar, Activity, Signal, Zap } from 'lucide-react';
+import { X, Target, TrendingUp, Calendar, Activity, Signal, Zap, Sparkles, Crown, Brain } from 'lucide-react';
 import { useOrbitStore } from '../../store/useOrbitStore';
+import { getUserBadgeStyle } from '../../lib/utils/badges';
 
 interface ProfileModalProps {
   profile: {
@@ -14,6 +15,8 @@ interface ProfileModalProps {
     status: string;
     max_wpm?: number;
     orbit_points?: number;
+    is_admin?: boolean;
+    can_customize_ai?: boolean;
   };
   onClose: () => void;
 }
@@ -42,6 +45,18 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ profile, onClose }) 
       console.error('Failed to initialize uplink:', error);
     }
   };
+
+  // Badge style for the viewed profile
+  const profileBadgeStyle = getUserBadgeStyle({
+    is_admin: profile.is_admin,
+    can_customize_ai: profile.can_customize_ai
+  });
+
+  // Badge style for the current user (preview)
+  const currentUserBadgeStyle = getUserBadgeStyle({
+    is_admin: currentUser?.isAdmin,
+    can_customize_ai: currentUser?.can_customize_ai
+  });
 
   return (
     <>
@@ -77,10 +92,9 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ profile, onClose }) 
                     alt={profile.username}
                     className="w-20 h-20 rounded-xl border-2 border-slate-700"
                   />
-                  <div className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full border-2 border-slate-900 flex items-center justify-center ${
-                    profile.status === 'Online' ? 'bg-green-500' :
+                  <div className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full border-2 border-slate-900 flex items-center justify-center ${profile.status === 'Online' ? 'bg-green-500' :
                     profile.status === 'Focus Mode' ? 'bg-violet-500' : 'bg-slate-600'
-                  }`}>
+                    }`}>
                     {profile.status === 'Focus Mode' && (
                       <Activity className="w-3 h-3 text-white" />
                     )}
@@ -88,14 +102,21 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ profile, onClose }) 
                 </div>
 
                 <div className="flex-1">
-                  <h3 className="font-bold text-xl text-slate-100 tracking-wider mb-1">
-                    {profile.username}
-                  </h3>
+                  <div className="flex items-center gap-2 mb-1">
+                    <h3 className={`font-bold text-xl tracking-wider ${profileBadgeStyle.nameClasses || 'text-slate-100'} ${profileBadgeStyle.glowClasses}`}>
+                      {profile.username}
+                    </h3>
+                    {profileBadgeStyle.badgeLabel && (
+                      <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wider ${profileBadgeStyle.badgeContainerClasses}`}>
+                        {profileBadgeStyle.badgeIcon}
+                        <span>{profileBadgeStyle.badgeLabel}</span>
+                      </div>
+                    )}
+                  </div>
                   <div className="flex items-center gap-2 mb-3">
-                    <span className={`text-xs font-mono uppercase tracking-wider ${
-                      profile.status === 'Online' ? 'text-green-400' :
+                    <span className={`text-xs font-mono uppercase tracking-wider ${profile.status === 'Online' ? 'text-green-400' :
                       profile.status === 'Focus Mode' ? 'text-violet-400' : 'text-slate-500'
-                    }`}>
+                      }`}>
                       {profile.status}
                     </span>
                   </div>
@@ -166,6 +187,32 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ profile, onClose }) 
                 </p>
               </div>
             )}
+
+            {/* Badges Card */}
+            <div className="col-span-2 bg-slate-950/40 border border-slate-800 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-8 h-8 rounded-lg bg-slate-800 flex items-center justify-center">
+                  <Sparkles className="w-4 h-4 text-slate-400" />
+                </div>
+                <span className="text-xs font-mono text-slate-400 uppercase tracking-widest">Badges</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {profile.is_admin && (
+                  <span className="px-3 py-1 rounded-full bg-amber-500/20 text-amber-200 text-xs font-bold border border-amber-400/30 flex items-center gap-1">
+                    <Crown className="w-3 h-3" /> Owner
+                  </span>
+                )}
+                <span className="px-3 py-1 rounded-full bg-purple-500/20 text-purple-200 text-xs font-bold border border-purple-400/30">OG</span>
+                {profile.can_customize_ai && (
+                  <span className="px-3 py-1 rounded-full bg-cyan-500/20 text-cyan-200 text-xs font-bold border border-cyan-400/30 flex items-center gap-1">
+                    <Brain className="w-3 h-3" /> AI+
+                  </span>
+                )}
+                {!profile.can_customize_ai && !profile.is_admin && (
+                  <span className="px-3 py-1 rounded-full bg-slate-700/60 text-slate-300 text-xs font-bold border border-slate-600">Standard</span>
+                )}
+              </div>
+            </div>
           </div>
 
           {/* Reliability Score */}
@@ -175,10 +222,9 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ profile, onClose }) 
                 <span className="text-xs font-mono text-slate-400 uppercase tracking-widest">
                   Reliability Index
                 </span>
-                <span className={`text-2xl font-bold font-mono ${
-                  reliability >= 80 ? 'text-green-400' :
+                <span className={`text-2xl font-bold font-mono ${reliability >= 80 ? 'text-green-400' :
                   reliability >= 50 ? 'text-amber-400' : 'text-red-400'
-                }`}>
+                  }`}>
                   {reliability}%
                 </span>
               </div>
@@ -187,11 +233,10 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ profile, onClose }) 
                   initial={{ width: 0 }}
                   animate={{ width: `${reliability}%` }}
                   transition={{ duration: 1, ease: 'easeOut' }}
-                  className={`h-full rounded-full ${
-                    reliability >= 80 ? 'bg-gradient-to-r from-green-500 to-emerald-500' :
+                  className={`h-full rounded-full ${reliability >= 80 ? 'bg-gradient-to-r from-green-500 to-emerald-500' :
                     reliability >= 50 ? 'bg-gradient-to-r from-amber-500 to-yellow-500' :
-                    'bg-gradient-to-r from-red-500 to-orange-500'
-                  }`}
+                      'bg-gradient-to-r from-red-500 to-orange-500'
+                    }`}
                 />
               </div>
             </div>
@@ -281,12 +326,11 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ profile, onClose }) 
                       className="w-24 h-24 rounded-2xl border-4 border-cyan-500/40 shadow-[0_0_24px_rgba(34,211,238,0.25)] object-cover"
                     />
                     <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 flex gap-2">
-                      {currentUser?.is_admin && (
-                        <span className="px-2 py-1 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-bold border border-amber-400/40">Owner</span>
-                      )}
-                      <span className="px-2 py-1 rounded-full bg-purple-500/20 text-purple-200 text-[10px] font-bold border border-purple-400/40">OG</span>
-                      {currentUser?.can_customize_ai && (
-                        <span className="px-2 py-1 rounded-full bg-cyan-500/20 text-cyan-200 text-[10px] font-bold border border-cyan-400/40">AI+</span>
+                      {currentUserBadgeStyle.badgeLabel && (
+                        <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider ${currentUserBadgeStyle.badgeContainerClasses}`}>
+                          {currentUserBadgeStyle.badgeIcon}
+                          <span>{currentUserBadgeStyle.badgeLabel}</span>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -318,16 +362,15 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ profile, onClose }) 
                   <div className="p-3 bg-slate-800/60 border border-slate-700 rounded-lg">
                     <p className="text-[11px] text-slate-500 font-mono uppercase mb-1">Badges</p>
                     <div className="flex flex-wrap gap-2">
-                      {currentUser?.is_admin && (
-                        <span className="px-3 py-1 rounded-full bg-amber-500/20 text-amber-200 text-xs font-bold border border-amber-400/30">Owner</span>
-                      )}
-                      <span className="px-3 py-1 rounded-full bg-purple-500/20 text-purple-200 text-xs font-bold border border-purple-400/30">OG</span>
-                      {currentUser?.can_customize_ai && (
-                        <span className="px-3 py-1 rounded-full bg-cyan-500/20 text-cyan-200 text-xs font-bold border border-cyan-400/30">AI+</span>
-                      )}
-                      {!currentUser?.can_customize_ai && (
+                      {currentUserBadgeStyle.badgeLabel ? (
+                        <div className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-bold tracking-wider ${currentUserBadgeStyle.badgeContainerClasses}`}>
+                          {currentUserBadgeStyle.badgeIcon}
+                          <span>{currentUserBadgeStyle.badgeLabel}</span>
+                        </div>
+                      ) : (
                         <span className="px-3 py-1 rounded-full bg-slate-700/60 text-slate-300 text-xs font-bold border border-slate-600">Standard</span>
                       )}
+                      <span className="px-3 py-1 rounded-full bg-purple-500/20 text-purple-200 text-xs font-bold border border-purple-400/30">OG</span>
                     </div>
                   </div>
                 </div>

@@ -1,6 +1,7 @@
 
 import { create } from 'zustand';
 import { Task, ChatMessage, UserProfile, IntelDrop, DMChannel, Message, MessageReaction, TypingChallenge, TypingSession, KeyStat, Period } from '../types';
+import { PokerGame, PokerGamePlayer, PokerAction, PokerLobbyGame, AIDifficulty, PokerActionType } from '../lib/poker/types';
 import { generateOracleRoast, assessTaskDifficulty } from '../lib/ai/gemini';
 import { IntelResult } from '../lib/ai/intel';
 import { fetchIntelHistory, IntelChatMessage, sendIntelQueryWithPersistence } from '../lib/ai/IntelService';
@@ -14,7 +15,7 @@ interface OrbitState {
   isAuthenticated: boolean;
   isAuthLoading: boolean;
   currentUser: UserProfile | null;
-  inventoryItems: any[];
+
   applyEquippedCursor?: (items?: any[]) => void;
 
   // App State
@@ -40,6 +41,24 @@ interface OrbitState {
   commsPanelOpen: boolean;
   heartbeatInterval: NodeJS.Timeout | null;
 
+  // Message notification state
+  messageToast: {
+    isVisible: boolean;
+    senderUsername: string;
+    senderAvatar?: string;
+    messagePreview: string;
+    onDismiss: () => void;
+    onClick: () => void;
+  } | null;
+  persistentBanners: Array<{
+    id: string;
+    senderUsername: string;
+    senderAvatar?: string;
+    messagePreview: string;
+    timestamp: string;
+    channelId: string;
+  }>;
+
   // Phase 3: Training State
   typingChallenges: TypingChallenge[];
   activeChallenge: TypingChallenge | null;
@@ -50,6 +69,15 @@ interface OrbitState {
   schedule: Period[];
   currentPeriod: Period | null;
   nextPeriod: Period | null;
+
+  // Phase 7: Games State (Poker)
+  pokerLobbyGames: PokerLobbyGame[];
+  activePokerGame: {
+    game: PokerGame;
+    players: PokerGamePlayer[];
+    actions: PokerAction[];
+  } | null;
+  isPokerLoading: boolean;
 
   // Initialization
   initialize: () => Promise<void>;
@@ -62,10 +90,12 @@ interface OrbitState {
 
   // Data Actions
   addTask: (task: Partial<Task>) => Promise<void>;
+  updateTask: (id: string, updates: Partial<Task>) => Promise<void>;
   toggleTask: (id: string, currentStatus: boolean) => Promise<void>;
   forfeitTask: (id: string) => Promise<void>;
   deleteTask: (id: string) => Promise<void>; // Admin-only deletion
   claimTask: (taskId: string) => Promise<void>; // Claim a public task as your own
+  submitAnswer: (taskId: string, answer: string) => Promise<void>;
   askOracle: (query: string) => Promise<void>;
   triggerSOS: () => void;
 
@@ -83,6 +113,8 @@ interface OrbitState {
   clearIntelHistory: () => void;
   setIntelInstructions: (instructions: string) => void;
   saveIntelDrop: (query: string, isPrivate: boolean) => Promise<void>;
+  shareAIChatToFeed: (messages: IntelChatMessage[], subject: string) => Promise<void>;
+  shareAIChatToDM: (messages: IntelChatMessage[], subject: string, recipientId: string) => Promise<void>;
   publishManualDrop: (title: string, content: string, tags?: string[], attachmentFile?: File, isPrivate?: boolean) => Promise<void>;
   deleteIntelDrop: (id: string) => Promise<void>; // Admin-only deletion
   fetchIntelDrops: () => Promise<void>;
@@ -97,6 +129,8 @@ interface OrbitState {
   setTyping: (channelId: string, isTyping: boolean) => void;
   setActiveChannel: (channelId: string | null) => void;
   toggleCommsPanel: () => void;
+  dismissMessageToast: () => void;
+  dismissPersistentBanner: (bannerId: string) => void;
 
   // Phase 3: Training Actions
   fetchChallenges: () => Promise<void>;
@@ -111,6 +145,15 @@ interface OrbitState {
   updatePeriod: (period: Period) => Promise<void>;
   deletePeriod: (periodId: string) => Promise<void>;
   addPeriod: (period: Omit<Period, 'id' | 'created_at'>) => Promise<void>;
+
+  // Phase 7: Games Actions (Poker)
+  fetchPokerLobbyGames: () => Promise<void>;
+  createPokerGame: (buyIn: number, maxPlayers: number, gameType?: 'practice' | 'multiplayer', aiDifficulty?: AIDifficulty) => Promise<string | null>;
+  joinPokerGame: (gameId: string) => Promise<boolean>;
+  leavePokerGame: (gameId: string) => Promise<void>;
+  performPokerAction: (gameId: string, action: PokerActionType, amount?: number) => Promise<boolean>;
+  subscribeToPokerGame: (gameId: string) => void;
+  unsubscribeFromPokerGame: (gameId: string) => void;
 
   // Economy
   orbitPoints: number;
@@ -177,6 +220,10 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
   commsPanelOpen: false,
   heartbeatInterval: null,
 
+  // Message notification state
+  messageToast: null,
+  persistentBanners: [],
+
   // Phase 3: Training State
   typingChallenges: [],
   activeChallenge: null,
@@ -187,6 +234,11 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
   schedule: [],
   currentPeriod: null,
   nextPeriod: null,
+
+  // Phase 7: Games State (Poker)
+  pokerLobbyGames: [],
+  activePokerGame: null,
+  isPokerLoading: false,
 
   // --- INITIALIZATION & REALTIME ---
   initialize: async () => {
@@ -370,13 +422,81 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
               // Refresh channel list to update unread counts
               await get().fetchDMChannels();
 
-              // Show browser notification if not currently viewing this channel
+              // Show notifications if not currently viewing this channel
               const activeChannelId = get().activeChannelId;
               if (activeChannelId !== newMessage.channel_id) {
-                // Import notification utilities
-                import('../lib/utils/notifications').then(({ showDMNotification, updateFaviconBadge, getTotalUnreadCount }) => {
-                  const sender = relevantChannel.otherUser;
-                  if (sender) {
+                const sender = relevantChannel.otherUser;
+                if (sender) {
+                  // 1. Create database notification
+                  try {
+                    await supabase.from('notifications').insert({
+                      recipient_id: currentUser?.id,
+                      sender_id: newMessage.sender_id,
+                      type: 'dm',
+                      title: `New message from ${sender.username}`,
+                      content: {
+                        message: newMessage.content.substring(0, 100),
+                        channelId: newMessage.channel_id,
+                        senderUsername: sender.username,
+                        senderAvatar: sender.avatar
+                      },
+                      link_url: `/comms?channel=${newMessage.channel_id}`,
+                      is_read: false
+                    });
+
+                    // Refresh notifications in state
+                    await get().fetchNotifications();
+                  } catch (err) {
+                    console.error('Failed to create notification:', err);
+                  }
+
+                  // 2. Show toast notification
+                  const bannerId = `banner-${Date.now()}`;
+                  set({
+                    messageToast: {
+                      isVisible: true,
+                      senderUsername: sender.username,
+                      senderAvatar: sender.avatar,
+                      messagePreview: newMessage.content.substring(0, 100),
+                      onDismiss: () => {
+                        set({ messageToast: null });
+                      },
+                      onClick: () => {
+                        get().setActiveChannel(newMessage.channel_id);
+                        // Navigate to comms page using hash navigation
+                        if (typeof window !== 'undefined') {
+                          window.location.hash = 'comms';
+                        }
+                        set({ messageToast: null });
+                      }
+                    }
+                  });
+
+                  // Auto-dismiss toast after 5 seconds
+                  setTimeout(() => {
+                    const currentToast = get().messageToast;
+                    if (currentToast?.senderUsername === sender.username) {
+                      set({ messageToast: null });
+                    }
+                  }, 5000);
+
+                  // 3. Add persistent banner
+                  set(state => ({
+                    persistentBanners: [
+                      ...state.persistentBanners,
+                      {
+                        id: bannerId,
+                        senderUsername: sender.username,
+                        senderAvatar: sender.avatar,
+                        messagePreview: newMessage.content.substring(0, 100),
+                        timestamp: newMessage.created_at,
+                        channelId: newMessage.channel_id
+                      }
+                    ]
+                  }));
+
+                  // 4. Browser notification (legacy)
+                  import('../lib/utils/notifications').then(({ showDMNotification, updateFaviconBadge, getTotalUnreadCount }) => {
                     showDMNotification({
                       senderUsername: sender.username,
                       senderAvatar: sender.avatar,
@@ -387,13 +507,13 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
                         get().toggleCommsPanel();
                       }
                     });
-                  }
 
-                  // Update favicon badge
-                  const channels = get().dmChannels;
-                  const totalUnread = getTotalUnreadCount(channels);
-                  updateFaviconBadge(totalUnread);
-                });
+                    // Update favicon badge
+                    const channels = get().dmChannels;
+                    const totalUnread = getTotalUnreadCount(channels);
+                    updateFaviconBadge(totalUnread);
+                  });
+                }
               }
             }
           })
@@ -571,7 +691,9 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       difficulty: task.difficulty || 'Medium',
       completed: false,
       is_public: task.is_public || false,
-      isAnalyzing: !task.difficulty // Only show analyzing if we need AI
+      isAnalyzing: !task.difficulty, // Only show analyzing if we need AI
+      due_date: task.due_date,
+      resource_links: task.resource_links || []
     };
     set((state) => ({ tasks: [...state.tasks, optimisticTask] }));
 
@@ -590,7 +712,9 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
         category: optimisticTask.category,
         difficulty: difficulty,
         completed: false,
-        is_public: task.is_public || false
+        is_public: task.is_public || false,
+        due_date: optimisticTask.due_date,
+        resource_links: optimisticTask.resource_links
       }).select(`
         *,
         profiles!tasks_user_id_fkey(username, avatar_url)
@@ -721,7 +845,7 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     const publicTask = tasks.find(t => t.id === taskId);
     if (!publicTask || !publicTask.is_public) return;
 
-    // ✅ FIX: Check if user already has this exact task
+    // Check if user already has this exact task
     const alreadyHas = tasks.some(t =>
       t.user_id === currentUser.id &&
       t.title === publicTask.title &&
@@ -740,7 +864,11 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       category: publicTask.category,
       difficulty: publicTask.difficulty,
       completed: false,
-      is_public: false // Claimed tasks are private
+      is_public: false, // Claimed tasks are private
+      original_task_id: publicTask.id, // Link to original
+      due_date: publicTask.due_date, // Copy current due date
+      resource_links: publicTask.resource_links, // Copy resources
+      answer: publicTask.answer // Copy answer if exists
     }).select(`
       *,
       profiles!tasks_user_id_fkey(username, avatar_url)
@@ -751,60 +879,49 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       throw error;
     }
 
-    // ✅ FIX: Don't manually add to state - let realtime handle it
-    // This prevents duplication when realtime INSERT event fires
     console.log('✅ Task claimed successfully, waiting for realtime sync');
   },
 
-  askOracle: async (query) => {
-    const { tasks, oracleHistory, currentUser } = get();
-    if (!currentUser) return;
+  updateTask: async (id, updates) => {
+    set(state => ({
+      tasks: state.tasks.map(t => t.id === id ? { ...t, ...updates } : t)
+    }));
 
-    const userMsg: ChatMessage = { id: Date.now().toString(), role: 'user', text: query, timestamp: new Date() };
-    const updatedHistory = [...oracleHistory, userMsg];
+    const { error } = await supabase.from('tasks').update(updates).eq('id', id);
 
-    set({ oracleHistory: updatedHistory, isOracleThinking: true });
-
-    // Persist user message
-    try {
-      await supabase.from('oracle_chat_history').insert({
-        user_id: currentUser.id,
-        role: 'user',
-        content: query,
-        is_sos: false,
-        timestamp: new Date().toISOString()
-      });
-    } catch (error: any) {
-      if (!missingTable(error, 'public.oracle_chat_history')) {
-        console.warn('Oracle history insert failed (user):', error);
+    if (error) {
+      console.error('❌ Failed to update task:', error);
+      const { data } = await supabase.from('tasks').select('*').eq('id', id).single();
+      if (data) {
+        set(state => ({
+          tasks: state.tasks.map(t => t.id === id ? data as Task : t)
+        }));
       }
     }
+  },
 
-    const completedCount = tasks.filter(t => t.completed).length;
+  submitAnswer: async (taskId, answer) => {
+    const { currentUser, tasks } = get();
+    const task = tasks.find(t => t.id === taskId);
 
-    const aiResponseText = await generateOracleRoast(
-      updatedHistory,
-      completedCount,
-      currentUser.stats.tasksForfeited
-    );
+    if (!task || !currentUser) return;
 
-    const aiMsg: ChatMessage = { id: (Date.now() + 1).toString(), role: 'model', text: aiResponseText, timestamp: new Date() };
-    const finalHistory = [...updatedHistory, aiMsg];
-    set({ oracleHistory: finalHistory, isOracleThinking: false });
+    if (task.user_id !== currentUser.id && !currentUser.isAdmin) {
+      console.error('⛔ Permission denied: Cannot submit answer for this task');
+      return;
+    }
 
-    // Persist AI message
-    try {
-      await supabase.from('oracle_chat_history').insert({
-        user_id: currentUser.id,
-        role: 'model',
-        content: aiResponseText,
-        is_sos: false,
-        timestamp: new Date().toISOString()
-      });
-    } catch (error: any) {
-      if (!missingTable(error, 'public.oracle_chat_history')) {
-        console.warn('Oracle history insert failed (model):', error);
-      }
+    set(state => ({
+      tasks: state.tasks.map(t => t.id === taskId ? { ...t, answer } : t)
+    }));
+
+    const { error } = await supabase.from('tasks').update({ answer }).eq('id', taskId);
+
+    if (error) {
+      console.error('❌ Failed to submit answer:', error);
+      set(state => ({
+        tasks: state.tasks.map(t => t.id === taskId ? { ...t, answer: task.answer } : t)
+      }));
     }
   },
 
@@ -827,10 +944,8 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
         content: sosMsg.text,
         is_sos: true,
         timestamp: sosMsg.timestamp.toISOString()
-      }).catch((error: any) => {
-        if (!missingTable(error, 'public.oracle_chat_history')) {
-          console.warn('Oracle SOS persist failed:', error);
-        }
+      }).then(({ error }) => {
+        if (error) console.warn('Oracle SOS persist failed:', error);
       });
     }
   },
@@ -998,6 +1113,109 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     set({ currentIntelResult: null });
   },
 
+  shareAIChatToFeed: async (messages: IntelChatMessage[], subject: string) => {
+    const { currentUser } = get();
+    if (!currentUser) return;
+
+    const { toast } = await import('../lib/toast');
+    const trimmedSubject = (subject || '').trim() || 'AI Chat';
+    if (!messages || messages.length === 0) {
+      toast.error('Select at least one message to share.');
+      return;
+    }
+
+    const formatModelContent = (msg: IntelChatMessage) => {
+      if (msg.result) {
+        const bulletText = Array.isArray(msg.result.summary_bullets) && msg.result.summary_bullets.length
+          ? msg.result.summary_bullets.map((b: string) => `- ${b}`).join('\n')
+          : '';
+        const essayText = (msg.result.essay || '').trim();
+        return [bulletText, essayText].filter(Boolean).join('\n\n') || msg.content || 'AI response';
+      }
+      return msg.content || 'AI response';
+    };
+
+    const formattedChat = messages
+      .map((msg) => {
+        const sender = msg.role === 'user' ? (currentUser.username || 'User') : 'AI Assistant';
+        const body = msg.role === 'user' ? msg.content : formatModelContent(msg);
+        return `**${sender}:** ${body}`;
+      })
+      .join('\n\n');
+
+    const { error } = await supabase
+      .from('intel_drops')
+      .insert({
+        author_id: currentUser.id,
+        query: `AI Chat about ${trimmedSubject}`,
+        summary_bullets: [
+          'Conversation with AI Assistant',
+          `${messages.length} messages shared`,
+          `Topic: ${trimmedSubject}`
+        ],
+        sources: [],
+        related_concepts: trimmedSubject ? [trimmedSubject] : [],
+        essay: formattedChat,
+        is_private: false,
+        attachment_type: 'ai_chat'
+      });
+
+    if (error) {
+      console.error('Failed to share chat to feed:', error);
+      toast.error('Failed to share chat to feed.');
+      throw error;
+    }
+
+    toast.success('AI chat shared to feed!');
+    await get().fetchIntelDrops();
+  },
+
+  shareAIChatToDM: async (messages: IntelChatMessage[], subject: string, recipientId: string) => {
+    const { currentUser, createOrGetChannel, sendMessage } = get();
+    if (!currentUser) return;
+
+    const { toast } = await import('../lib/toast');
+    const trimmedSubject = (subject || '').trim() || 'AI Chat';
+    if (!recipientId) {
+      toast.error('Select a friend to send the chat to.');
+      return;
+    }
+
+    if (!messages || messages.length === 0) {
+      toast.error('Select at least one message to share.');
+      return;
+    }
+
+    const formatModelContent = (msg: IntelChatMessage) => {
+      if (msg.result) {
+        const bulletText = Array.isArray(msg.result.summary_bullets) && msg.result.summary_bullets.length
+          ? msg.result.summary_bullets.map((b: string) => `- ${b}`).join('\n')
+          : '';
+        const essayText = (msg.result.essay || '').trim();
+        return [bulletText, essayText].filter(Boolean).join('\n\n') || msg.content || 'AI response';
+      }
+      return msg.content || 'AI response';
+    };
+
+    const formattedChat = messages
+      .map((msg) => {
+        const sender = msg.role === 'user' ? 'You' : 'AI Assistant';
+        const body = msg.role === 'user' ? msg.content : formatModelContent(msg);
+        return `**${sender}:** ${body}`;
+      })
+      .join('\n\n');
+
+    try {
+      const channelId = await createOrGetChannel(recipientId);
+      await sendMessage(channelId, `📊 AI Chat about ${trimmedSubject}\n\n${formattedChat}`);
+      toast.success('Chat sent to friend!');
+    } catch (error: any) {
+      console.error('Failed to share chat to DM:', error);
+      toast.error('Failed to send chat to friend.');
+      throw error;
+    }
+  },
+
   fetchIntelDrops: async () => {
     const { currentUser } = get();
     if (!currentUser) return;
@@ -1073,7 +1291,8 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     const basePayload = {
       author_id: currentUser.id,
       query: title,
-      summary_bullets: [content], // Treat the main content as a single bullet point or summary
+      // If content is empty but we have an attachment, allow empty bullets (Visual Drop)
+      summary_bullets: content.trim() ? [content] : [],
       sources: [],
       related_concepts: ['Manual Broadcast', ...tags],
       is_private: isPrivate
@@ -1128,6 +1347,41 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       console.error("Failed to delete drop:", error);
       // Revert on error
       set({ intelDrops: currentDrops });
+    }
+  },
+
+  updateIntelDrop: async (id: string, updates: Partial<IntelDrop>) => {
+    const { intelDrops } = get();
+
+    // Optimistic Update
+    set({
+      intelDrops: intelDrops.map(d => d.id === id ? { ...d, ...updates } : d)
+    });
+
+    // Prepare payload for DB (map frontend types to DB columns if needed)
+    // IntelDrop type matches DB mostly, but we need to be careful with readonly fields
+    const dbUpdates: any = {};
+    if (updates.query !== undefined) dbUpdates.query = updates.query;
+    if (updates.summary_bullets !== undefined) dbUpdates.summary_bullets = updates.summary_bullets;
+    if (updates.related_concepts !== undefined) dbUpdates.related_concepts = updates.related_concepts;
+    if (updates.is_private !== undefined) dbUpdates.is_private = updates.is_private;
+    if (updates.attachment_url !== undefined) dbUpdates.attachment_url = updates.attachment_url;
+
+    const { error } = await supabase
+      .from('intel_drops')
+      .update(dbUpdates)
+      .eq('id', id);
+
+    if (error) {
+      console.error('Failed to update drop:', error);
+      // Revert
+      const { data } = await supabase.from('intel_drops').select('*').eq('id', id).single();
+      if (data) {
+        // We need to re-map the data to match IntelDrop type if we revert, 
+        // but for now just fetching fresh drops might be safer or just reverting to old state
+        // Simpler: Just refresh everything
+        get().fetchIntelDrops();
+      }
     }
   },
 
@@ -1587,6 +1841,16 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     set(state => ({ commsPanelOpen: !state.commsPanelOpen }));
   },
 
+  dismissMessageToast: () => {
+    set({ messageToast: null });
+  },
+
+  dismissPersistentBanner: (bannerId: string) => {
+    set(state => ({
+      persistentBanners: state.persistentBanners.filter(b => b.id !== bannerId)
+    }));
+  },
+
   // ============================================
   // PHASE 3: TRAINING ACTIONS
   // ============================================
@@ -2006,5 +2270,405 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     } catch (err) {
       console.error('❌ Add period exception:', err);
     }
+  },
+
+  // ============================================
+  // PHASE 7: GAMES ACTIONS (POKER)
+  // ============================================
+
+  fetchPokerLobbyGames: async () => {
+    set({ isPokerLoading: true });
+    try {
+      const { data, error } = await supabase
+        .from('poker_games')
+        .select(`
+          id,
+          host_user_id,
+          game_type,
+          ai_difficulty,
+          buy_in,
+          max_players,
+          current_players,
+          status,
+          created_at,
+          profiles:host_user_id (username, avatar_url)
+        `)
+        .in('status', ['waiting', 'in_progress'])
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        if (missingTable(error, 'public.poker_games')) {
+          console.warn('Poker tables missing - run sql/poker_schema.sql');
+          return;
+        }
+        throw error;
+      }
+
+      const games: PokerLobbyGame[] = (data || []).map((g: any) => ({
+        id: g.id,
+        host_username: g.profiles?.username || 'Unknown',
+        host_avatar: g.profiles?.avatar_url,
+        game_type: g.game_type,
+        ai_difficulty: g.ai_difficulty,
+        buy_in: g.buy_in,
+        max_players: g.max_players,
+        current_players: g.current_players,
+        status: g.status,
+        created_at: g.created_at
+      }));
+
+      set({ pokerLobbyGames: games });
+    } catch (err) {
+      console.error('❌ Fetch poker games error:', err);
+    } finally {
+      set({ isPokerLoading: false });
+    }
+  },
+
+  createPokerGame: async (buyIn, maxPlayers, gameType = 'practice', aiDifficulty) => {
+    const { currentUser, orbitPoints } = get();
+    if (!currentUser) return null;
+
+    // Check funds
+    if (orbitPoints < buyIn) {
+      console.error('Insufficient funds');
+      return null;
+    }
+
+    try {
+      // Create game
+      const { data: game, error: gameError } = await supabase
+        .from('poker_games')
+        .insert({
+          host_user_id: currentUser.id,
+          game_type: gameType,
+          ai_difficulty: aiDifficulty,
+          buy_in: buyIn,
+          max_players: maxPlayers,
+          current_players: 1,
+          status: 'waiting',
+          pot_amount: 0,
+          dealer_position: 0,
+          small_blind: 5,
+          big_blind: 10
+        })
+        .select()
+        .single();
+
+      if (gameError) throw gameError;
+
+      // Join as player (host)
+      const { error: playerError } = await supabase
+        .from('poker_game_players')
+        .insert({
+          game_id: game.id,
+          user_id: currentUser.id,
+          position: 0,
+          chips: buyIn,
+          is_ai: false
+        });
+
+      if (playerError) throw playerError;
+
+      // Deduct buy-in
+      const { error: fundError } = await supabase
+        .from('profiles')
+        .update({ orbit_points: orbitPoints - buyIn })
+        .eq('id', currentUser.id);
+
+      if (fundError) {
+        console.error('Failed to deduct funds:', fundError);
+        // Should rollback game creation here ideally
+      } else {
+        get().updateOrbitPoints(orbitPoints - buyIn);
+      }
+
+      // If practice mode, add AI players immediately
+      if (gameType === 'practice' && aiDifficulty) {
+        // Add 3 AI players for a 4-player game
+        const aiPlayers = [
+          { name: 'Bot 1', pos: 1 },
+          { name: 'Bot 2', pos: 2 },
+          { name: 'Bot 3', pos: 3 }
+        ];
+
+        for (const ai of aiPlayers) {
+          await supabase.from('poker_game_players').insert({
+            game_id: game.id,
+            is_ai: true,
+            ai_name: ai.name,
+            position: ai.pos,
+            chips: buyIn
+          });
+        }
+
+        // Update player count
+        await supabase
+          .from('poker_games')
+          .update({ current_players: 4 })
+          .eq('id', game.id);
+      }
+
+      await get().fetchPokerLobbyGames();
+      return game.id;
+    } catch (err) {
+      console.error('❌ Create poker game error:', err);
+      return null;
+    }
+  },
+
+  joinPokerGame: async (gameId) => {
+    const { currentUser, orbitPoints } = get();
+    if (!currentUser) return false;
+
+    try {
+      // Get game details
+      const { data: game, error: gameError } = await supabase
+        .from('poker_games')
+        .select('*')
+        .eq('id', gameId)
+        .single();
+
+      if (gameError || !game) throw gameError || new Error('Game not found');
+
+      // Check funds
+      if (orbitPoints < game.buy_in) {
+        console.error('Insufficient funds');
+        return false;
+      }
+
+      // Check if already joined
+      const { data: existingPlayer } = await supabase
+        .from('poker_game_players')
+        .select('id')
+        .eq('game_id', gameId)
+        .eq('user_id', currentUser.id)
+        .single();
+
+      if (existingPlayer) return true; // Already joined
+
+      // Find open position
+      const { data: players } = await supabase
+        .from('poker_game_players')
+        .select('position')
+        .eq('game_id', gameId);
+
+      const takenPositions = (players || []).map((p: any) => p.position);
+      let openPosition = -1;
+      for (let i = 0; i < game.max_players; i++) {
+        if (!takenPositions.includes(i)) {
+          openPosition = i;
+          break;
+        }
+      }
+
+      if (openPosition === -1) return false; // Full
+
+      // Join game
+      const { error: joinError } = await supabase
+        .from('poker_game_players')
+        .insert({
+          game_id: gameId,
+          user_id: currentUser.id,
+          position: openPosition,
+          chips: game.buy_in,
+          is_ai: false
+        });
+
+      if (joinError) throw joinError;
+
+      // Deduct buy-in
+      await supabase
+        .from('profiles')
+        .update({ orbit_points: orbitPoints - game.buy_in })
+        .eq('id', currentUser.id);
+
+      get().updateOrbitPoints(orbitPoints - game.buy_in);
+
+      // Update player count
+      await supabase.rpc('increment_poker_players', { game_id: gameId });
+
+      return true;
+    } catch (err) {
+      console.error('❌ Join poker game error:', err);
+      return false;
+    }
+  },
+
+  leavePokerGame: async (gameId) => {
+    const { currentUser } = get();
+    if (!currentUser) return;
+
+    try {
+      // Get player stats to refund chips if game not started or cash out if leaving
+      // For simplicity in MVP: Forfeit if in progress, refund if waiting
+      // Real implementation needs complex cashout logic
+
+      await supabase
+        .from('poker_game_players')
+        .delete()
+        .eq('game_id', gameId)
+        .eq('user_id', currentUser.id);
+
+      // Update player count
+      await supabase.rpc('decrement_poker_players', { game_id: gameId });
+
+      set({ activePokerGame: null });
+      get().unsubscribeFromPokerGame(gameId);
+    } catch (err) {
+      console.error('❌ Leave poker game error:', err);
+    }
+  },
+
+  performPokerAction: async (gameId, action, amount) => {
+    const { currentUser, activePokerGame } = get();
+    if (!currentUser || !activePokerGame) return false;
+
+    try {
+      const player = activePokerGame.players.find(p => p.user_id === currentUser.id);
+      if (!player) return false;
+
+      // Insert action
+      const { error } = await supabase
+        .from('poker_actions')
+        .insert({
+          game_id: gameId,
+          player_id: player.id,
+          action_type: action,
+          amount: amount || 0,
+          round: activePokerGame.game.current_round || 'pre_flop'
+        });
+
+      if (error) throw error;
+
+      // Note: The actual game state update (chips, pot, turn) should be handled 
+      // by a database trigger or server function in a real app.
+      // For this MVP, we'll rely on the Realtime subscription to get the updated state
+      // after the server processes the action.
+
+      return true;
+    } catch (err) {
+      console.error('❌ Perform poker action error:', err);
+      return false;
+    }
+  },
+
+  subscribeToPokerGame: (gameId) => {
+    const { currentUser } = get();
+
+    // Unsubscribe from any existing game first
+    const existingChannels = supabase.getChannels();
+    existingChannels.forEach(ch => {
+      if (ch.topic.includes('poker:')) supabase.removeChannel(ch);
+    });
+
+    // 1. Game State Channel
+    const gameChannel = supabase.channel(`poker:game:${gameId}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'poker_games',
+        filter: `id=eq.${gameId}`
+      }, (payload: any) => {
+        const current = get().activePokerGame;
+        if (current && payload.new) {
+          set({
+            activePokerGame: {
+              ...current,
+              game: payload.new as PokerGame
+            }
+          });
+        }
+      })
+      .subscribe();
+
+    // 2. Players Channel
+    const playersChannel = supabase.channel(`poker:players:${gameId}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'poker_game_players',
+        filter: `game_id=eq.${gameId}`
+      }, async () => {
+        // Refetch all players to ensure consistency
+        const { data } = await supabase
+          .from('poker_game_players')
+          .select(`
+            *,
+            profiles:user_id (username, avatar_url)
+          `)
+          .eq('game_id', gameId);
+
+        if (data) {
+          const mappedPlayers: PokerGamePlayer[] = data.map((p: any) => ({
+            ...p,
+            username: p.profiles?.username || p.ai_name || 'Unknown',
+            avatar: p.profiles?.avatar_url
+          }));
+
+          const current = get().activePokerGame;
+          if (current) {
+            set({
+              activePokerGame: {
+                ...current,
+                players: mappedPlayers
+              }
+            });
+          }
+        }
+      })
+      .subscribe();
+
+    // 3. Actions Channel
+    const actionsChannel = supabase.channel(`poker:actions:${gameId}`)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'poker_actions',
+        filter: `game_id=eq.${gameId}`
+      }, (payload: any) => {
+        const current = get().activePokerGame;
+        if (current) {
+          set({
+            activePokerGame: {
+              ...current,
+              actions: [...current.actions, payload.new as PokerAction]
+            }
+          });
+        }
+      })
+      .subscribe();
+
+    // Initial fetch
+    (async () => {
+      const [gameRes, playersRes, actionsRes] = await Promise.all([
+        supabase.from('poker_games').select('*').eq('id', gameId).single(),
+        supabase.from('poker_game_players').select('*, profiles:user_id(username, avatar_url)').eq('game_id', gameId),
+        supabase.from('poker_actions').select('*').eq('game_id', gameId).order('created_at', { ascending: true })
+      ]);
+
+      if (gameRes.data && playersRes.data) {
+        const mappedPlayers: PokerGamePlayer[] = playersRes.data.map((p: any) => ({
+          ...p,
+          username: p.profiles?.username || p.ai_name || 'Unknown',
+          avatar: p.profiles?.avatar_url
+        }));
+
+        set({
+          activePokerGame: {
+            game: gameRes.data as PokerGame,
+            players: mappedPlayers,
+            actions: (actionsRes.data || []) as PokerAction[]
+          }
+        });
+      }
+    })();
+  },
+
+  unsubscribeFromPokerGame: (gameId) => {
+    supabase.removeChannel(supabase.channel(`poker:game:${gameId}`));
+    supabase.removeChannel(supabase.channel(`poker:players:${gameId}`));
+    supabase.removeChannel(supabase.channel(`poker:actions:${gameId}`));
+    set({ activePokerGame: null });
   }
 }));

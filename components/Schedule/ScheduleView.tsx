@@ -56,6 +56,18 @@ export function ScheduleView() {
 
   return (
     <div className="space-y-6">
+      {/* Future Enhancement Note (moved to top for visibility) */}
+      <motion.div
+        initial={{ opacity: 0, y: -6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.05 }}
+        className="p-4 bg-purple-500/10 border border-purple-500/20 rounded-lg text-center"
+      >
+        <p className="text-xs text-purple-300/70 font-mono">
+          <span className="font-bold text-purple-400">Coming Soon:</span> Customize what class you have each period. For now, you see the master schedule times set by the admin.
+        </p>
+      </motion.div>
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -190,16 +202,6 @@ export function ScheduleView() {
       </div>
 
       {/* Future Enhancement Note */}
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 0.5 }}
-        className="p-4 bg-purple-500/10 border border-purple-500/20 rounded-lg"
-      >
-        <p className="text-xs text-purple-300/70 font-mono">
-          <span className="font-bold text-purple-400">Coming Soon:</span> Customize what class you have each period. For now, you see the master schedule times set by the admin.
-        </p>
-      </motion.div>
     </div>
   );
 }

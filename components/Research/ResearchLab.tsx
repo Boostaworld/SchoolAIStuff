@@ -6,6 +6,7 @@ import { LockedResearchLab } from './LockedResearchLab';
 import { useToast } from '../Shared/ToastManager';
 import { analyzeImageWithVision, analyzeGoogleForm, VisionMessage, sendChatMessage, ChatRequest } from '../../lib/ai/gemini';
 import clsx from 'clsx';
+import { MarkdownRenderer } from '../Social/MarkdownRenderer';
 
 type Tab = 'chat' | 'vision';
 
@@ -71,6 +72,23 @@ export const ResearchLab: React.FC = () => {
   const currentChatModel = CHAT_MODELS.find(m => m.id === selectedChatModel);
   const supportsThinking = currentChatModel?.supportsThinking || false;
 
+  const logChatConfig = (reason: string, extra?: Record<string, any>) => {
+    console.log('[ResearchLab Chat]', reason, {
+      model: selectedChatModel,
+      thinkingSupported: supportsThinking,
+      thinkingLevel: supportsThinking ? thinkingLevel : 'n/a',
+      temperature,
+      hasSystemInstructions: Boolean(systemInstructions.trim()),
+      systemInstructionsPreview: systemInstructions.slice(0, 200),
+      chatHistoryLength: chatMessages.length,
+      ...extra
+    });
+  };
+
+  useEffect(() => {
+    logChatConfig('Settings changed');
+  }, [selectedChatModel, thinkingLevel, temperature, systemInstructions]);
+
   // If no access, show locked screen
   if (!hasAccess) {
     return <LockedResearchLab />;
@@ -106,6 +124,11 @@ export const ResearchLab: React.FC = () => {
     setChatInput('');
     setIsChatLoading(true);
 
+    logChatConfig('Dispatch request', {
+      promptPreview: chatInput.slice(0, 200),
+      conversationHistoryLength: chatMessages.length
+    });
+
     try {
       const request: ChatRequest = {
         message: chatInput,
@@ -133,6 +156,10 @@ export const ResearchLab: React.FC = () => {
       toastManager.success('Response received', {
         description: response.thinkingUsed ? 'Used thinking mode' : undefined,
         duration: 2000
+      });
+      logChatConfig('Response received', {
+        thinkingUsed: response.thinkingUsed,
+        responsePreview: response.text.slice(0, 200)
       });
 
     } catch (error: any) {
@@ -426,9 +453,9 @@ export const ResearchLab: React.FC = () => {
                         </details>
                       )}
 
-                      <p className="text-slate-300 text-sm font-mono leading-relaxed whitespace-pre-wrap">
-                        {message.text}
-                      </p>
+                      <div className="text-slate-300 text-sm font-mono leading-relaxed">
+                        <MarkdownRenderer content={message.text} />
+                      </div>
                     </div>
                   </motion.div>
                 ))}
@@ -657,9 +684,9 @@ export const ResearchLab: React.FC = () => {
                         </div>
                       )}
 
-                      <p className="text-slate-300 text-sm font-mono leading-relaxed whitespace-pre-wrap">
-                        {message.text}
-                      </p>
+                      <div className="text-slate-300 text-sm font-mono leading-relaxed">
+                        <MarkdownRenderer content={message.text} />
+                      </div>
                     </div>
                   </motion.div>
                 ))}

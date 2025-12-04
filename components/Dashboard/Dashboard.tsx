@@ -8,7 +8,7 @@ import { IntelPanel } from '../Intel/IntelPanel';
 import { OperativeSearchPanel } from '../Operative/OperativeSearchPanel';
 import { EditIdentityModal } from '../Registry/EditIdentityModal';
 import { CreateActionModal } from './CreateActionModal';
-import { LayoutGrid, Database, Users, Bell, LogOut, Edit3, Plus, MessageSquare, Map, Zap, Flag, Coins, Shield, Menu, X, Sparkles, Microscope, Briefcase, Clock } from 'lucide-react';
+import { LayoutGrid, Database, Users, Bell, LogOut, Edit3, Plus, MessageSquare, Map, Zap, Flag, Coins, Shield, Menu, X, Sparkles, Microscope, Briefcase, Clock, Gamepad2 } from 'lucide-react';
 import clsx from 'clsx';
 import { useOrbitStore } from '../../store/useOrbitStore';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -28,6 +28,8 @@ import { ResearchLab } from '../Research/ResearchLab';
 import CommsPage from '../Social/CommsPage';
 import { ScheduleTimer } from '../Schedule/ScheduleTimer';
 import { ScheduleView } from '../Schedule/ScheduleView';
+import { GamesHub } from '../Games/GamesHub';
+import { isWithinPeriod } from '../../lib/utils/schedule';
 
 import RacingTerminal from '../Training/RacingTerminal';
 import { TypingChallenge } from '../../types';
@@ -35,7 +37,7 @@ import { useToast } from '../Shared/ToastManager';
 import { CoinAnimation } from '../Shared/CoinAnimation';
 import { WRITING_FALLBACK_CHALLENGES } from '../Training/writingFallbacks';
 
-type ViewState = 'dashboard' | 'intel' | 'registry' | 'notifications' | 'comms' | 'constellation' | 'training' | 'race' | 'economy' | 'research' | 'admin' | 'marketplace' | 'schedule';
+type ViewState = 'dashboard' | 'intel' | 'registry' | 'notifications' | 'comms' | 'constellation' | 'training' | 'race' | 'economy' | 'research' | 'admin' | 'marketplace' | 'schedule' | 'games';
 
 const defaultRaceChallenge: TypingChallenge = {
   id: 'race-demo',
@@ -57,6 +59,7 @@ export const Dashboard: React.FC = () => {
   const [raceResults, setRaceResults] = useState<{ position: number; wpm: number; accuracy: number; time: number } | null>(null);
   const [botRanges, setBotRanges] = useState<number[]>([35, 55, 75]);
   const [raceStats, setRaceStats] = useState({ avgWPM: 0, avgAccuracy: 0, maxWPM: 0, raceCount: 0 });
+  const [periodCountdown, setPeriodCountdown] = useState<{ label: string; remaining: string } | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [raceCategory, setRaceCategory] = useState<'code' | 'prose'>('prose');
   const [trainingCategory, setTrainingCategory] = useState<'code' | 'prose'>('prose');
@@ -84,9 +87,10 @@ export const Dashboard: React.FC = () => {
     markNotificationRead,
     markAllNotificationsRead,
     updateOrbitPoints,
-    fetchNotifications
+    fetchNotifications,
+    schedule
   } = useOrbitStore();
-  const isAdminUser = currentUser?.is_admin;
+  const isAdminUser = currentUser?.isAdmin;
 
   // Hash-based navigation for shareable tabs (comms, research, intel)
   useEffect(() => {
@@ -250,7 +254,9 @@ export const Dashboard: React.FC = () => {
               tasksCompleted: p.tasks_completed || 0,
               tasksForfeited: p.tasks_forfeited || 0,
               streakDays: 0
-            }
+            },
+            isAdmin: p.is_admin,
+            can_customize_ai: p.can_customize_ai
           })));
         }
       } catch (err) {
@@ -299,6 +305,42 @@ export const Dashboard: React.FC = () => {
   React.useEffect(() => {
     loadRaceStats();
   }, [loadRaceStats]);
+
+  // Period countdown for header pill
+  React.useEffect(() => {
+    if (!schedule || schedule.length === 0) {
+      setPeriodCountdown(null);
+      return;
+    }
+
+    const updateCountdown = () => {
+      const now = new Date();
+      const current = schedule.find(p => isWithinPeriod(now, p));
+
+      if (!current) {
+        setPeriodCountdown(null);
+        return;
+      }
+
+      const [endHour, endMin] = current.end_time.split(':').map(Number);
+      const end = new Date();
+      end.setHours(endHour, endMin, 0, 0);
+
+      const remainingMs = Math.max(0, end.getTime() - now.getTime());
+      const minutes = Math.floor(remainingMs / 60000);
+      const seconds = Math.floor((remainingMs % 60000) / 1000);
+      const remaining = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+
+      setPeriodCountdown({
+        label: `Period ${current.period_number}`,
+        remaining
+      });
+    };
+
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 1000);
+    return () => clearInterval(interval);
+  }, [schedule]);
 
   // Fetch challenges on mount
   React.useEffect(() => {
@@ -517,6 +559,23 @@ export const Dashboard: React.FC = () => {
               <span className="lg:hidden text-sm font-mono">Research Lab</span>
             </button>
 
+            <button
+              onClick={() => {
+                setActiveView('games');
+                setIsSidebarOpen(false);
+              }}
+              className={clsx(
+                "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 flex items-center gap-3 lg:justify-center",
+                activeView === 'games'
+                  ? "bg-slate-800 text-pink-400 border-slate-700 shadow-lg shadow-pink-900/20"
+                  : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
+              )}
+              title="Games Hub"
+            >
+              <Gamepad2 className="w-5 h-5 flex-shrink-0" />
+              <span className="lg:hidden text-sm font-mono">Games</span>
+            </button>
+
             {isAdminUser && (
               <button
                 onClick={() => {
@@ -551,7 +610,9 @@ export const Dashboard: React.FC = () => {
             >
               <Bell className="w-5 h-5 flex-shrink-0" />
               <span className="lg:hidden text-sm font-mono">Notifications</span>
-              <span className="absolute top-2 right-2 lg:top-2 lg:right-2 w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+              {unreadCount > 0 && (
+                <span className="absolute top-2 right-2 lg:top-2 lg:right-2 w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+              )}
             </button>
           </nav>
 
@@ -588,7 +649,7 @@ export const Dashboard: React.FC = () => {
       {/* Main Content Area */}
       <main className="flex-1 z-10 flex flex-col h-full overflow-hidden relative">
         {/* Heads Up Display */}
-        <header className="h-16 border-b border-slate-800 bg-slate-950/50 backdrop-blur-sm flex items-center justify-between px-3 md:px-6 shrink-0 z-40">
+        <header className="h-16 border-b border-slate-800 bg-slate-950/50 backdrop-blur-sm flex items-center gap-4 px-3 md:px-6 shrink-0 z-40">
           <div className="flex items-center gap-2 md:gap-6">
             {/* Hamburger Menu Button - Always visible for navigation */}
             <button
@@ -616,6 +677,17 @@ export const Dashboard: React.FC = () => {
               <span className="text-base md:text-lg font-bold text-violet-300 font-mono">{orbitPoints}</span>
               <Coins className="w-3 h-3 md:w-4 md:h-4 text-yellow-500" />
             </motion.button>
+          </div>
+
+          <div className="flex-1 flex justify-center">
+            {periodCountdown && (
+              <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/40 text-cyan-100 font-mono text-xs shadow-[0_0_12px_rgba(34,211,238,0.25)]">
+                <Clock className="w-4 h-4 text-cyan-300" />
+                <span className="text-slate-200">{periodCountdown.label}:</span>
+                <span className="text-white font-bold tracking-wide">{periodCountdown.remaining}</span>
+                <span className="text-slate-500 text-[10px] uppercase">remaining</span>
+              </div>
+            )}
           </div>
 
           <NotificationTray />
@@ -829,6 +901,12 @@ export const Dashboard: React.FC = () => {
           {activeView === 'schedule' && (
             <div className="absolute inset-0 p-3 md:p-6 overflow-y-auto animate-in fade-in duration-300">
               <ScheduleView />
+            </div>
+          )}
+
+          {activeView === 'games' && (
+            <div className="absolute inset-0 overflow-hidden animate-in fade-in duration-300">
+              <GamesHub />
             </div>
           )}
 

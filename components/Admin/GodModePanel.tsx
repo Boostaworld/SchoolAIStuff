@@ -122,39 +122,112 @@ export function GodModePanel() {
     const hasPermission = await requestNotificationPermission();
     console.log('Notification permission:', hasPermission ? 'Granted' : 'Denied');
 
-    // Mock DM data
-    const mockSender = {
-      username: 'TestUser',
-      avatar_url: currentUser?.avatar_url || 'https://api.dicebear.com/7.x/avataaars/svg?seed=test'
-    };
-    const mockMessage = 'Hey! This is a test DM notification from the debug panel.';
+    try {
+      // Create a test notification in the database
+      const mockSenderId = currentUser?.id === users[0]?.id ? users[1]?.id : users[0]?.id;
+      const mockSender = users.find(u => u.id === mockSenderId) || users[0];
 
-    // 1. Show toast notification
-    toast.info(`📨 New DM from ${mockSender.username}`);
-    console.log('✅ Toast notification sent');
+      if (!mockSender) {
+        toast.error('No other users available for test. Create another user first.');
+        return;
+      }
 
-    // 2. Update favicon badge (simulate 1 unread DM)
-    updateFaviconBadge(1);
-    console.log('✅ Favicon badge updated to 1');
+      const mockMessage = 'Hey! This is a test DM notification from the debug panel.';
 
-    // 3. Show browser notification if permission granted
-    if (hasPermission && 'Notification' in window) {
-      const notification = new Notification(`New message from ${mockSender.username}`, {
-        body: mockMessage,
-        icon: mockSender.avatar_url,
-        badge: '/favicon.ico',
-        tag: 'test-dm-notification',
-        requireInteraction: false
+      // 1. Create database notification
+      const { error: notifError } = await supabase.from('notifications').insert({
+        recipient_id: currentUser?.id,
+        sender_id: mockSender.id,
+        type: 'dm',
+        title: `New message from ${mockSender.username}`,
+        content: {
+          message: mockMessage,
+          channelId: 'test-channel',
+          senderUsername: mockSender.username,
+          senderAvatar: mockSender.avatar_url
+        },
+        link_url: '/comms',
+        is_read: false
       });
 
-      // Auto-close after 5 seconds
-      setTimeout(() => notification.close(), 5000);
-      console.log('✅ Browser notification sent');
-    } else {
-      console.warn('⚠️ Browser notifications not available or permission denied');
-    }
+      if (notifError) throw notifError;
 
-    toast.success('Test notification sequence complete! Check console for details.');
+      console.log('✅ Database notification created');
+
+      // 2. Trigger in-app toast and banner using the store
+      const bannerId = `test-banner-${Date.now()}`;
+
+      useOrbitStore.setState({
+        messageToast: {
+          isVisible: true,
+          senderUsername: mockSender.username,
+          senderAvatar: mockSender.avatar_url,
+          messagePreview: mockMessage,
+          onDismiss: () => {
+            useOrbitStore.setState({ messageToast: null });
+          },
+          onClick: () => {
+            useOrbitStore.getState().setActiveChannel('test-channel');
+            // Navigate to comms page using hash navigation
+            window.location.hash = 'comms';
+            useOrbitStore.setState({ messageToast: null });
+          }
+        }
+      });
+
+      console.log('✅ Toast notification displayed');
+
+      // Auto-dismiss toast after 5 seconds
+      setTimeout(() => {
+        const currentToast = useOrbitStore.getState().messageToast;
+        if (currentToast?.senderUsername === mockSender.username) {
+          useOrbitStore.setState({ messageToast: null });
+        }
+      }, 5000);
+
+      // 3. Add persistent banner
+      const currentBanners = useOrbitStore.getState().persistentBanners;
+      useOrbitStore.setState({
+        persistentBanners: [
+          ...currentBanners,
+          {
+            id: bannerId,
+            senderUsername: mockSender.username,
+            senderAvatar: mockSender.avatar_url,
+            messagePreview: mockMessage,
+            timestamp: new Date().toISOString(),
+            channelId: 'test-channel'
+          }
+        ]
+      });
+
+      console.log('✅ Persistent banner added');
+
+      // 4. Update favicon badge
+      updateFaviconBadge(1);
+      console.log('✅ Favicon badge updated');
+
+      // 5. Browser notification
+      if (hasPermission && 'Notification' in window) {
+        const notification = new Notification(`New message from ${mockSender.username}`, {
+          body: mockMessage,
+          icon: mockSender.avatar_url,
+          badge: '/favicon.ico',
+          tag: 'test-dm-notification',
+          requireInteraction: false
+        });
+
+        setTimeout(() => notification.close(), 5000);
+        console.log('✅ Browser notification sent');
+      } else {
+        console.warn('⚠️ Browser notifications not available or permission denied');
+      }
+
+      toast.success('Test notification complete! Check: 1) Toast (top-right), 2) Banner (top), 3) Notification dropdown');
+    } catch (error: any) {
+      console.error('Test notification error:', error);
+      toast.error(`Test failed: ${error.message}`);
+    }
   };
 
   const deleteUser = async (userId: string) => {

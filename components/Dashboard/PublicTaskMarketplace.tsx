@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { UserPlus, Clock, Target, AlertCircle, Zap, User, Package, Trash2 } from 'lucide-react';
+import { UserPlus, Clock, Target, AlertCircle, Zap, User, Package, Trash2, Link as LinkIcon } from 'lucide-react';
 import { useOrbitStore } from '../../store/useOrbitStore';
 import { Task } from '../../types';
 import clsx from 'clsx';
@@ -13,12 +13,12 @@ export const PublicTaskMarketplace: React.FC = () => {
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
   const isAdmin = currentUser?.is_admin;
 
-  // Filter to show ONLY public tasks from OTHER users
+  // Filter to show ALL public tasks (including own, so users can verify)
   const publicTasks = useMemo(() => {
     return tasks.filter(
-      (task) => task.is_public && task.user_id !== currentUser?.id
+      (task) => task.is_public
     );
-  }, [tasks, currentUser?.id]);
+  }, [tasks]);
 
   const getCategoryStyle = (category: Task['category']) => {
     switch (category) {
@@ -253,8 +253,8 @@ export const PublicTaskMarketplace: React.FC = () => {
                                     (task.difficulty === 'Hard'
                                       ? 3
                                       : task.difficulty === 'Medium'
-                                      ? 2
-                                      : 1)
+                                        ? 2
+                                        : 1)
                                     ? getDifficultyColor(task.difficulty)
                                     : 'bg-slate-700/50'
                                 )}
@@ -271,7 +271,7 @@ export const PublicTaskMarketplace: React.FC = () => {
 
                       {/* Author Info */}
                       {task.profiles && (
-                        <div className="flex items-center gap-2 mb-4 pb-3 border-b border-slate-700/50">
+                        <div className="flex items-center gap-2 mb-3 pb-3 border-b border-slate-700/50">
                           <img
                             src={task.profiles.avatar_url}
                             alt={task.profiles.username}
@@ -283,6 +283,24 @@ export const PublicTaskMarketplace: React.FC = () => {
                               {task.profiles.username}
                             </span>
                           </div>
+                        </div>
+                      )}
+
+                      {/* Meta Info: Due Date & Resources */}
+                      {(task.due_date || (task.resource_links && task.resource_links.length > 0)) && (
+                        <div className="flex items-center gap-3 mb-4 text-xs font-mono text-slate-400">
+                          {task.due_date && (
+                            <div className="flex items-center gap-1.5" title="Due Date">
+                              <Clock className="w-3.5 h-3.5 text-amber-500/60" />
+                              <span>{new Date(task.due_date).toLocaleDateString()}</span>
+                            </div>
+                          )}
+                          {task.resource_links && task.resource_links.length > 0 && (
+                            <div className="flex items-center gap-1.5" title="Attached Resources">
+                              <LinkIcon className="w-3.5 h-3.5 text-indigo-400/60" />
+                              <span>{task.resource_links.length} Resources</span>
+                            </div>
+                          )}
                         </div>
                       )}
 

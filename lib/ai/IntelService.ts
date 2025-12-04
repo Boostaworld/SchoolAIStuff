@@ -176,6 +176,21 @@ export const sendIntelQueryWithPersistence = async (options: IntelQueryOptions) 
         options.profileInstructions
       );
 
+  console.log('[IntelService] Prepared request', {
+    modelUsed,
+    depthLevel,
+    researchMode,
+    conversationMode,
+    thinkingEnabled,
+    thinkingLevel: options.thinkingLevel || 'medium',
+    mode,
+    hasImage: Boolean(image),
+    conversationHistoryLength: options.conversationHistory?.length || 0,
+    promptPreview: options.prompt.slice(0, 200),
+    instructionPreview: instruction.slice(0, 200),
+    unlockedModels: unlockedModels?.join(',') || ''
+  });
+
   const result = await runIntelQuery({
     prompt: options.prompt,
     instructions: instruction,

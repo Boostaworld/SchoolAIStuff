@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Users } from 'lucide-react';
 import { useOrbitStore } from '../../store/useOrbitStore';
@@ -11,14 +11,15 @@ const hashString = (str: string): number => {
   for (let i = 0; i < str.length; i++) {
     const char = str.charCodeAt(i);
     hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32bit integer
+    hash = hash & hash;
   }
   return Math.abs(hash);
 };
 
-// Generate deterministic position from user ID
+// Generate deterministic position from user ID relative to container
 const getStarPosition = (userId: string, containerWidth: number, containerHeight: number) => {
   const hash = hashString(userId);
+  // Ensure we have some padding from the edges (50px)
   const x = (hash % (containerWidth - 100)) + 50;
   const y = ((hash >> 8) % (containerHeight - 100)) + 50;
   return { x, y };
@@ -32,8 +33,8 @@ export default function ConstellationMap({ users }: ConstellationMapProps) {
   const { onlineUsers } = useOrbitStore();
   const [hoveredUser, setHoveredUser] = useState<UserProfile | null>(null);
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
-  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const [containerDimensions, setContainerDimensions] = useState({ width: 1000, height: 700 });
+  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Update container dimensions on resize
@@ -50,9 +51,6 @@ export default function ConstellationMap({ users }: ConstellationMapProps) {
     return () => window.removeEventListener('resize', updateDimensions);
   }, []);
 
-  const containerWidth = containerDimensions.width;
-  const containerHeight = containerDimensions.height;
-
   const handleMouseMove = (e: React.MouseEvent) => {
     const rect = containerRef.current?.getBoundingClientRect();
     if (rect) {
@@ -60,16 +58,25 @@ export default function ConstellationMap({ users }: ConstellationMapProps) {
     }
   };
 
+  // Calculate star positions based on current container size
+  const starData = useMemo(() => {
+    return users.map(user => ({
+      user,
+      pos: getStarPosition(user.id, containerDimensions.width, containerDimensions.height),
+      isOnline: onlineUsers.includes(user.id)
+    }));
+  }, [users, onlineUsers, containerDimensions]);
+
+  const onlineVisibleCount = useMemo(() => {
+    return starData.filter(d => d.isOnline).length;
+  }, [starData]);
+
   if (users.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-full py-20">
         <Users className="w-20 h-20 text-cyan-500/30 mb-6" />
-        <p className="text-cyan-400/60 font-mono text-lg">
-          NO OPERATIVES DETECTED
-        </p>
-        <p className="text-cyan-500/40 font-mono text-sm mt-2">
-          Scanning for signals...
-        </p>
+        <p className="text-cyan-400/60 font-mono text-lg">NO OPERATIVES DETECTED</p>
+        <p className="text-cyan-500/40 font-mono text-sm mt-2">Scanning for signals...</p>
       </div>
     );
   }
@@ -78,65 +85,54 @@ export default function ConstellationMap({ users }: ConstellationMapProps) {
     <>
       <div
         ref={containerRef}
-        className="relative w-full h-[400px] md:h-[500px] lg:h-[700px] bg-slate-950 rounded-2xl border border-cyan-500/20 overflow-hidden"
+        className="relative w-full h-[400px] md:h-[500px] lg:h-[700px] bg-slate-950 rounded-2xl border border-cyan-500/20 overflow-hidden group"
         onMouseMove={handleMouseMove}
-        style={{
-          backgroundImage: `
-            radial-gradient(circle at 50% 50%, rgba(6, 182, 212, 0.05) 0%, transparent 50%),
-            radial-gradient(1px 1px at 20% 30%, rgba(6, 182, 212, 0.3), transparent),
-            radial-gradient(1px 1px at 60% 70%, rgba(6, 182, 212, 0.3), transparent),
-            radial-gradient(1px 1px at 50% 50%, rgba(6, 182, 212, 0.3), transparent),
-            radial-gradient(1px 1px at 80% 10%, rgba(6, 182, 212, 0.3), transparent),
-            radial-gradient(1px 1px at 90% 60%, rgba(6, 182, 212, 0.3), transparent),
-            radial-gradient(1px 1px at 33% 90%, rgba(6, 182, 212, 0.3), transparent),
-            radial-gradient(1px 1px at 15% 70%, rgba(6, 182, 212, 0.3), transparent)
-          `,
-          backgroundSize: '100% 100%, 200px 200px, 200px 200px, 200px 200px, 200px 200px, 200px 200px, 200px 200px, 200px 200px'
-        }}
       >
-        {/* Grid overlay */}
-        <div className="absolute inset-0 opacity-10 pointer-events-none"
+        {/* Background Grid & Effects */}
+        <div className="absolute inset-0 pointer-events-none opacity-20"
           style={{
             backgroundImage: `
-              linear-gradient(rgba(6, 182, 212, 0.3) 1px, transparent 1px),
-              linear-gradient(90deg, rgba(6, 182, 212, 0.3) 1px, transparent 1px)
+              radial-gradient(circle at 50% 50%, rgba(6, 182, 212, 0.1) 0%, transparent 50%),
+              linear-gradient(rgba(6, 182, 212, 0.1) 1px, transparent 1px),
+              linear-gradient(90deg, rgba(6, 182, 212, 0.1) 1px, transparent 1px)
             `,
-            backgroundSize: '50px 50px'
+            backgroundSize: '100% 100%, 50px 50px, 50px 50px'
           }}
         />
 
         {/* Scanline effect */}
         <motion.div
           className="absolute inset-x-0 h-32 bg-gradient-to-b from-transparent via-cyan-400/10 to-transparent pointer-events-none"
-          animate={{ y: [0, containerHeight - 128, 0] }}
+          animate={{ y: [0, containerDimensions.height - 128, 0] }}
           transition={{ duration: 8, repeat: Infinity, ease: 'linear' }}
         />
 
-        {/* Connection lines between nearby stars */}
-        <svg className="absolute inset-0 pointer-events-none">
-          {users.map((user, i) => {
-            const pos1 = getStarPosition(user.id, containerWidth, containerHeight);
-            const isOnline1 = onlineUsers.includes(user.id);
+        {/* Constellation Lines */}
+        <svg className="absolute inset-0 pointer-events-none overflow-visible">
+          {starData.map((data1, i) => {
+            // Only draw lines for a subset to avoid performance issues
+            if (i % 2 !== 0 && !data1.isOnline) return null;
 
-            return users.slice(i + 1).map(otherUser => {
-              const pos2 = getStarPosition(otherUser.id, containerWidth, containerHeight);
-              const isOnline2 = onlineUsers.includes(otherUser.id);
-              const distance = Math.sqrt(Math.pow(pos2.x - pos1.x, 2) + Math.pow(pos2.y - pos1.y, 2));
+            return starData.slice(i + 1).map(data2 => {
+              const dist = Math.sqrt(
+                Math.pow(data2.pos.x - data1.pos.x, 2) +
+                Math.pow(data2.pos.y - data1.pos.y, 2)
+              );
 
-              // Only draw lines between nearby stars
-              if (distance < 150 && (isOnline1 || isOnline2)) {
+              // Draw lines between nearby stars
+              if (dist < 200) {
                 return (
                   <motion.line
-                    key={`${user.id}-${otherUser.id}`}
-                    x1={pos1.x}
-                    y1={pos1.y}
-                    x2={pos2.x}
-                    y2={pos2.y}
-                    stroke="rgba(6, 182, 212, 0.2)"
+                    key={`${data1.user.id}-${data2.user.id}`}
+                    x1={data1.pos.x}
+                    y1={data1.pos.y}
+                    x2={data2.pos.x}
+                    y2={data2.pos.y}
+                    stroke="rgba(6, 182, 212, 0.15)"
                     strokeWidth="1"
                     initial={{ pathLength: 0 }}
                     animate={{ pathLength: 1 }}
-                    transition={{ duration: 2, delay: i * 0.1 }}
+                    transition={{ duration: 1, delay: i * 0.05 }}
                   />
                 );
               }
@@ -145,68 +141,53 @@ export default function ConstellationMap({ users }: ConstellationMapProps) {
           })}
         </svg>
 
-        {/* User stars */}
-        {users.map((user, index) => {
-          const position = getStarPosition(user.id, containerWidth, containerHeight);
-          const isOnline = onlineUsers.includes(user.id);
+        {/* Stars */}
+        {starData.map(({ user, pos, isOnline }, index) => {
+          // Calculate size based on orbit points (min 16px, max 48px)
+          const size = Math.min(Math.max(16, (user.orbit_points || 0) / 100), 48);
+          const isFocus = user.status === 'Focus Mode';
 
           return (
             <motion.div
               key={user.id}
-              className="absolute cursor-pointer group"
-              style={{ left: position.x, top: position.y }}
+              className="absolute cursor-pointer"
+              style={{ left: pos.x, top: pos.y, zIndex: isOnline ? 10 : 1 }}
               initial={{ scale: 0, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              transition={{ delay: index * 0.05, type: 'spring', stiffness: 300, damping: 20 }}
+              transition={{ delay: index * 0.02, type: 'spring' }}
+              whileHover={{ scale: 1.5, zIndex: 50 }}
+              onClick={() => setSelectedUser(user)}
               onMouseEnter={() => setHoveredUser(user)}
               onMouseLeave={() => setHoveredUser(null)}
-              onClick={() => setSelectedUser(user)}
             >
-              {/* Outer glow ring */}
-              {isOnline && (
+              {/* Pulse for high ranking users */}
+              {user.orbit_points && user.orbit_points > 1000 && (
                 <motion.div
-                  className="absolute inset-0 rounded-full"
-                  animate={{
-                    scale: [1, 1.8, 1],
-                    opacity: [0.5, 0.2, 0.5]
-                  }}
-                  transition={{ duration: 3, repeat: Infinity }}
-                  style={{
-                    background: 'radial-gradient(circle, rgba(6, 182, 212, 0.6) 0%, transparent 70%)',
-                    width: '32px',
-                    height: '32px',
-                    marginLeft: '-8px',
-                    marginTop: '-8px'
-                  }}
+                  className="absolute inset-0 rounded-full bg-cyan-500/20"
+                  animate={{ scale: [1, 2], opacity: [0.5, 0] }}
+                  transition={{ duration: 2, repeat: Infinity }}
+                  style={{ width: size, height: size, left: -size / 2, top: -size / 2 }}
                 />
               )}
 
-              {/* Star avatar */}
-              <motion.div
+              {/* Star Body */}
+              <div
                 className={`
-                  relative w-4 h-4 rounded-full border-2
+                  rounded-full border-2 transition-colors duration-300
                   ${isOnline
-                    ? 'bg-cyan-400 border-cyan-300 shadow-lg shadow-cyan-400/50'
-                    : 'bg-slate-600 border-slate-500 opacity-40'
+                    ? 'bg-cyan-500 border-cyan-300 shadow-[0_0_15px_rgba(6,182,212,0.6)]'
+                    : isFocus
+                      ? 'bg-violet-500 border-violet-400 shadow-[0_0_15px_rgba(139,92,246,0.6)]'
+                      : 'bg-slate-700 border-slate-600 opacity-60'
                   }
-                  group-hover:scale-150 transition-transform
                 `}
-                animate={isOnline ? {
-                  scale: [1, 1.3, 1],
-                  boxShadow: [
-                    '0 0 10px rgba(6, 182, 212, 0.8)',
-                    '0 0 20px rgba(6, 182, 212, 1)',
-                    '0 0 10px rgba(6, 182, 212, 0.8)'
-                  ]
-                } : {}}
-                transition={{ duration: 2, repeat: Infinity }}
-              >
-                {/* Inner core */}
-                <div className={`
-                  absolute inset-0.5 rounded-full
-                  ${isOnline ? 'bg-white' : 'bg-slate-700'}
-                `} />
-              </motion.div>
+                style={{
+                  width: size,
+                  height: size,
+                  marginLeft: -size / 2,
+                  marginTop: -size / 2
+                }}
+              />
 
               {/* Hover tooltip */}
               <AnimatePresence>
@@ -217,7 +198,7 @@ export default function ConstellationMap({ users }: ConstellationMapProps) {
                     exit={{ opacity: 0, scale: 0.9 }}
                     className="absolute left-1/2 -translate-x-1/2 whitespace-nowrap pointer-events-none"
                   >
-                    <div className="bg-slate-900 border border-cyan-500/40 rounded-lg px-4 py-2 shadow-2xl backdrop-blur-xl">
+                    <div className="bg-slate-900 border border-cyan-500/40 rounded-lg px-4 py-2 shadow-2xl backdrop-blur-xl z-50">
                       <div className="flex items-center gap-2">
                         <img
                           src={user.avatar}
@@ -284,7 +265,7 @@ export default function ConstellationMap({ users }: ConstellationMapProps) {
         {/* Stats corner */}
         <div className="absolute top-2 md:top-4 left-2 md:left-4 bg-slate-900/80 backdrop-blur-xl border border-cyan-500/30 rounded-lg px-2 md:px-4 py-2 md:py-3">
           <p className="text-cyan-400 font-mono text-xs md:text-sm">
-            <span className="text-lg md:text-2xl font-bold">{onlineUsers.length}</span>
+            <span className="text-lg md:text-2xl font-bold">{onlineVisibleCount}</span>
             <span className="text-cyan-500/60 text-[10px] md:text-xs ml-1 md:ml-2">/ {users.length} ONLINE</span>
           </p>
         </div>
@@ -303,7 +284,9 @@ export default function ConstellationMap({ users }: ConstellationMapProps) {
               tasks_forfeited: selectedUser.stats.tasksForfeited,
               status: onlineUsers.includes(selectedUser.id) ? 'Online' : 'Offline',
               max_wpm: selectedUser.max_wpm,
-              orbit_points: selectedUser.orbit_points
+              orbit_points: selectedUser.orbit_points,
+              is_admin: selectedUser.isAdmin,
+              can_customize_ai: selectedUser.can_customize_ai
             }}
             onClose={() => setSelectedUser(null)}
           />

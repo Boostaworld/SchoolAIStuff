@@ -69,6 +69,22 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
     'gemini-3-image': 'gemini-3.0-pro-image-preview' // Gemini 3.0 Image Generation
   };
 
+  console.log('[Intel] Request', {
+    model,
+    modelId: modelMap[model],
+    depth,
+    researchMode,
+    conversationMode,
+    thinkingEnabled,
+    thinkingLevel,
+    mode,
+    imageIncluded: Boolean(image),
+    imageLength: image?.length || 0,
+    conversationHistoryLength: conversationHistory.length,
+    promptPreview: prompt.slice(0, 200),
+    instructionsPreview: instructions.slice(0, 200)
+  });
+
   // Build contents with image support
   const buildContents = () => {
     const history = conversationHistory
@@ -108,7 +124,16 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
   const contents = buildContents();
 
   try {
-    console.log(`Intel Query - Model: ${model}, Depth: ${depth}, Research Mode: ${researchMode}, Conversation Mode: ${conversationMode}`);
+    console.log('[Intel] Dispatch', {
+      model,
+      depth,
+      researchMode,
+      conversationMode,
+      thinkingEnabled,
+      thinkingLevel,
+      mode,
+      imageIncluded: Boolean(image)
+    });
 
     // Conversation mode: Simple chat-style responses with optional thinking
     if (conversationMode) {

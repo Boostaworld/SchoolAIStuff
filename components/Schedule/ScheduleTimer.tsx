@@ -8,8 +8,6 @@ import { Period } from '../../types';
 import {
   isWithinPeriod,
   getNextPeriod,
-  getDurationMinutes,
-  getElapsedMinutes,
   formatMinutes,
   getTimeUntil,
   getPeriodColor

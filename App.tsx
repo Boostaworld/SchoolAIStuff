@@ -5,9 +5,21 @@ import { LoginScreen } from './components/Auth/LoginScreen';
 import { RaceSpectatorView } from './components/Training/RaceSpectatorView';
 import { useOrbitStore } from './store/useOrbitStore';
 import { ToastProvider } from './components/Shared/ToastManager';
+import { MessageToast } from './components/Social/MessageToast';
+import { PersistentMessageBanner } from './components/Social/PersistentMessageBanner';
 
 function App() {
-  const { isAuthenticated, initialize, isAuthLoading } = useOrbitStore();
+  const {
+    isAuthenticated,
+    initialize,
+    isAuthLoading,
+    messageToast,
+    persistentBanners,
+    dismissMessageToast,
+    dismissPersistentBanner,
+    setActiveChannel,
+    toggleCommsPanel
+  } = useOrbitStore();
   const [spectatorRaceId, setSpectatorRaceId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -46,6 +58,39 @@ function App() {
 
   return (
     <ToastProvider>
+      {/* Message Toast Notification */}
+      {messageToast && (
+        <MessageToast
+          isVisible={messageToast.isVisible}
+          senderUsername={messageToast.senderUsername}
+          senderAvatar={messageToast.senderAvatar}
+          messagePreview={messageToast.messagePreview}
+          onDismiss={messageToast.onDismiss}
+          onClick={messageToast.onClick}
+        />
+      )}
+
+      {/* Persistent Message Banners */}
+      <PersistentMessageBanner
+        banners={persistentBanners}
+        onDismiss={dismissPersistentBanner}
+        onBannerClick={(channelId) => {
+          if (!isAuthenticated) return;
+
+          // Set the active channel
+          setActiveChannel(channelId);
+
+          // Navigate to comms page using hash navigation
+          window.location.hash = 'comms';
+
+          // Dismiss the banner after clicking
+          const banner = persistentBanners.find(b => b.channelId === channelId);
+          if (banner) {
+            dismissPersistentBanner(banner.id);
+          }
+        }}
+      />
+
       {isAuthenticated ? <Dashboard /> : <LoginScreen />}
     </ToastProvider>
   );

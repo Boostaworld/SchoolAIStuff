@@ -4,6 +4,7 @@ import { X, Trash2, ShieldAlert } from 'lucide-react';
 import { IntelDrop } from '../../types';
 import { IntelResults } from '../Intel/IntelResults';
 import { useOrbitStore } from '../../store/useOrbitStore';
+import { getUserBadgeStyle } from '../../lib/utils/badges';
 
 interface IntelDropModalProps {
     drop: IntelDrop;
@@ -32,6 +33,11 @@ export const IntelDropModal: React.FC<IntelDropModalProps> = ({ drop, onClose })
         }
     };
 
+    const badgeStyle = getUserBadgeStyle({
+        is_admin: drop.author_is_admin,
+        can_customize_ai: drop.author_ai_plus
+    });
+
     return (
         <motion.div
             initial={{ opacity: 0 }}
@@ -53,23 +59,34 @@ export const IntelDropModal: React.FC<IntelDropModalProps> = ({ drop, onClose })
                         <img src={drop.author_avatar} className="w-8 h-8 rounded-full border border-slate-700" alt={drop.author_username} />
                         <div>
                             <h3 className="font-bold text-slate-100 tracking-wider">INTEL ARCHIVE</h3>
-                            <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest mt-0.5">
-                                AUTHOR: {drop.author_username}
-                            </p>
+                            <div className="flex items-center gap-2 mt-0.5">
+                                <span className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">AUTHOR:</span>
+                                <div className="flex items-center gap-2">
+                                    <span className={`text-[10px] font-mono font-bold ${badgeStyle.nameClasses || 'text-slate-400'} ${badgeStyle.glowClasses}`}>
+                                        {drop.author_username}
+                                    </span>
+                                    {badgeStyle.badgeLabel && (
+                                        <div className={`flex items-center gap-1 px-1 py-0 rounded text-[8px] font-bold tracking-wider ${badgeStyle.badgeContainerClasses}`}>
+                                            {badgeStyle.badgeIcon}
+                                            <span>{badgeStyle.badgeLabel}</span>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <div className="flex items-center gap-3">
                         {/* Delete Button for Owner OR Admin */}
-                        {(currentUser?.id === drop.author_id || currentUser?.is_admin) && (
+                        {(currentUser?.id === drop.author_id || currentUser?.isAdmin) && (
                             <button
                                 onClick={handleDelete}
-                                className={`p-1.5 rounded-lg transition-colors border flex items-center gap-2 ${currentUser?.is_admin
-                                        ? 'bg-red-900/20 hover:bg-red-900/40 text-red-500 border-red-900/40'
-                                        : 'bg-red-900/10 hover:bg-red-900/30 text-red-500/80 hover:text-red-400 border-red-900/20'
+                                className={`p-1.5 rounded-lg transition-colors border flex items-center gap-2 ${currentUser?.isAdmin
+                                    ? 'bg-red-900/20 hover:bg-red-900/40 text-red-500 border-red-900/40'
+                                    : 'bg-red-900/10 hover:bg-red-900/30 text-red-500/80 hover:text-red-400 border-red-900/20'
                                     }`}
-                                title={currentUser?.is_admin ? "Admin Force Delete" : "Delete Drop"}
+                                title={currentUser?.isAdmin ? "Admin Force Delete" : "Delete Drop"}
                             >
-                                {currentUser?.is_admin && <ShieldAlert className="w-3 h-3" />}
+                                {currentUser?.isAdmin && <ShieldAlert className="w-3 h-3" />}
                                 <Trash2 className="w-4 h-4" />
                             </button>
                         )}

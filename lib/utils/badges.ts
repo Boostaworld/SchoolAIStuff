@@ -4,12 +4,14 @@
  */
 
 import React from 'react';
-import { Crown, Sparkles } from 'lucide-react';
+import { Crown, Sparkles, Brain, ShieldCheck } from 'lucide-react';
 
 export interface BadgeStyle {
   nameClasses: string;
   badgeIcon?: React.ReactNode;
   glowClasses: string;
+  badgeContainerClasses?: string;
+  badgeLabel?: string;
 }
 
 export interface UserBadgeInput {
@@ -29,26 +31,40 @@ export function getUserBadgeStyle(user: UserBadgeInput | undefined | null): Badg
     };
   }
 
-  // Admin users get gold gradient with crown
+  // Admin users (OWNER)
   if (user.is_admin) {
     return {
-      nameClasses: 'bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-400 bg-clip-text text-transparent font-bold',
+      // Animated Gold Gradient for Name
+      nameClasses: 'bg-gradient-to-r from-amber-300 via-yellow-400 to-amber-300 bg-[length:200%_auto] animate-gradient-x bg-clip-text text-transparent font-bold tracking-wide',
+
+      // Badge Pill Styling
+      badgeContainerClasses: 'bg-amber-950/30 border border-amber-500/40 text-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.2)]',
+      badgeLabel: 'OWNER',
       badgeIcon: React.createElement(Crown, {
-        className: 'w-4 h-4 text-amber-400',
+        className: 'w-3 h-3 text-amber-400',
         fill: 'currentColor'
       }),
-      glowClasses: 'drop-shadow-[0_0_8px_rgba(251,191,36,0.6)] animate-pulse',
+
+      // Glow effect
+      glowClasses: 'drop-shadow-[0_0_8px_rgba(251,191,36,0.5)]',
     };
   }
 
-  // AI+ users get cyan gradient with sparkles
+  // AI+ users (PREMIUM)
   if (user.can_customize_ai) {
     return {
-      nameClasses: 'bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent font-semibold',
-      badgeIcon: React.createElement(Sparkles, {
-        className: 'w-3.5 h-3.5 text-cyan-400'
+      // Animated Aurora Gradient for Name
+      nameClasses: 'bg-gradient-to-r from-cyan-400 via-violet-400 to-fuchsia-400 bg-[length:200%_auto] animate-gradient-x bg-clip-text text-transparent font-semibold',
+
+      // Badge Pill Styling
+      badgeContainerClasses: 'bg-slate-900/50 border border-cyan-500/30 text-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.15)]',
+      badgeLabel: 'AI+',
+      badgeIcon: React.createElement(Brain, {
+        className: 'w-3 h-3 text-cyan-400'
       }),
-      glowClasses: 'drop-shadow-[0_0_6px_rgba(34,211,238,0.4)]',
+
+      // Glow effect
+      glowClasses: 'drop-shadow-[0_0_6px_rgba(34,211,238,0.3)]',
     };
   }
 
@@ -71,7 +87,7 @@ export function hasVIPStatus(user: UserBadgeInput | undefined | null): boolean {
  */
 export function getBadgeLabel(user: UserBadgeInput | undefined | null): string | null {
   if (!user) return null;
-  if (user.is_admin) return 'ADMIN';
+  if (user.is_admin) return 'OWNER';
   if (user.can_customize_ai) return 'AI+';
   return null;
 }
