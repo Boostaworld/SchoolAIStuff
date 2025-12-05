@@ -59,7 +59,12 @@ export const UnifiedResearchLab: React.FC = () => {
   // Access control
   const hasAccess = currentUser?.can_customize_ai;
   const canCustomize = !!currentUser?.can_customize_ai;
-  const unlockedModels = useMemo(() => currentUser?.unlocked_models || ['flash'], [currentUser?.unlocked_models]);
+  const unlockedModels = useMemo(() => {
+    if (currentUser?.isAdmin) {
+      return ['flash', 'pro', 'orbit-x', 'gemini-3-pro', 'gemini-3-image'];
+    }
+    return currentUser?.unlocked_models || ['flash'];
+  }, [currentUser?.unlocked_models, currentUser?.isAdmin]);
   const conversationLength = intelMessages.length;
 
   const intelModels = [
@@ -925,6 +930,18 @@ export const UnifiedResearchLab: React.FC = () => {
                   >
                     Save Settings
                   </button>
+                </div>
+
+                {/* Debug Info */}
+                <div className="mt-4 p-4 bg-slate-950/50 border border-slate-800 rounded-lg">
+                  <h4 className="text-xs text-slate-500 font-mono uppercase mb-2">Debug Info</h4>
+                  <div className="grid grid-cols-2 gap-2 text-[10px] font-mono text-slate-400">
+                    <div>User ID: <span className="text-slate-200">{currentUser?.id}</span></div>
+                    <div>Is Admin: <span className={currentUser?.isAdmin ? "text-green-400" : "text-red-400"}>{currentUser?.isAdmin ? 'YES' : 'NO'}</span></div>
+                    <div className="col-span-2">Unlocked Models: <span className="text-slate-200">{unlockedModels.join(', ')}</span></div>
+                    <div>Selected Model: <span className="text-cyan-400">{selectedIntelModel}</span></div>
+                    <div>Thinking Level: <span className="text-emerald-400">{thinkingLevel}</span></div>
+                  </div>
                 </div>
               </div>
             </motion.div>

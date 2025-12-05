@@ -88,7 +88,8 @@ export const Dashboard: React.FC = () => {
     markAllNotificationsRead,
     updateOrbitPoints,
     fetchNotifications,
-    schedule
+    schedule,
+    activeChannelId
   } = useOrbitStore();
   const isAdminUser = currentUser?.isAdmin;
 
@@ -151,6 +152,20 @@ export const Dashboard: React.FC = () => {
       }
     }
   }, [activeView]);
+
+  // Update hash when activeChannelId changes (while in comms view)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (activeView !== 'comms') return;
+
+    if (activeChannelId) {
+      // Update URL to include channel ID
+      window.location.hash = `comms/${activeChannelId}`;
+    } else {
+      // No channel selected, just show comms
+      window.location.hash = 'comms';
+    }
+  }, [activeChannelId, activeView]);
   const addCounts = React.useCallback((challenge: TypingChallenge) => {
     const wordCount = challenge.text_content.trim().split(/\s+/).length;
     return {
@@ -594,6 +609,7 @@ export const Dashboard: React.FC = () => {
               onClick={() => {
                 setActiveView('notifications');
                 setIsSidebarOpen(false);
+                markAllNotificationsRead();
               }}
               className={clsx(
                 "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 relative flex items-center gap-3 lg:justify-center",

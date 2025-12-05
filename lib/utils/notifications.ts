@@ -129,6 +129,6 @@ export function showDMNotification(options: DMNotificationOptions) {
  * @param channels Array of DM channels with unread counts
  * @returns Total unread count
  */
-export function getTotalUnreadCount(channels: Array<{ unread_count?: number }>): number {
-  return channels.reduce((total, channel) => total + (channel.unread_count || 0), 0);
+export function getTotalUnreadCount(channels: Array<{ unread_count?: number; unreadCount?: number }>): number {
+  return channels.reduce((total, channel) => total + (channel.unread_count || channel.unreadCount || 0), 0);
 }

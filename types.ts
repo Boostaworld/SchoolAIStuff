@@ -105,6 +105,7 @@ export interface DMChannel {
   user1_id: string;
   user2_id: string;
   created_at: string;
+  read_receipts_enabled?: boolean;
   // Computed properties
   otherUser?: UserProfile;
   lastMessage?: Message;
@@ -120,6 +121,8 @@ export interface Message {
   attachment_type?: string;
   read: boolean;
   created_at: string;
+  edited_at?: string;  // Added for edit tracking
+  deleted_at?: string; // Added for soft delete
   // Computed properties
   senderUsername?: string;
   senderAvatar?: string;

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Send, Paperclip, AlertTriangle, Signal, Users } from 'lucide-react';
+import { X, Send, Paperclip, AlertTriangle, Signal, Users, Trash2, Eye, EyeOff } from 'lucide-react';
 import { useOrbitStore } from '../../store/useOrbitStore';
 import { DMChannel } from '../../types';
 import MessageBubble from './MessageBubble';
@@ -19,7 +19,9 @@ export default function CommsPanel() {
     onlineUsers,
     setActiveChannel,
     sendMessage,
-    setTyping
+    setTyping,
+    hideChannel,
+    toggleReadReceipts
   } = useOrbitStore();
 
   const [inputValue, setInputValue] = useState('');
@@ -314,7 +316,7 @@ export default function CommsPanel() {
                         <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-cyan-400 rounded-full border-2 border-slate-950" />
                       )}
                     </div>
-                    <div>
+                    <div className="flex-1">
                       <p className="text-cyan-300 font-mono font-semibold">
                         {otherUser?.username || 'Unknown'}
                       </p>
@@ -322,6 +324,34 @@ export default function CommsPanel() {
                         {online ? 'ONLINE' : `LAST SEEN: ${formatLastSeen(otherUser?.last_active)}`}
                       </p>
                     </div>
+                    {/* Read Receipts Toggle */}
+                    <button
+                      onClick={() => toggleReadReceipts(activeChannelId, !activeChannel.read_receipts_enabled)}
+                      className={`p-2 border rounded-lg transition-colors group ${activeChannel.read_receipts_enabled
+                          ? 'hover:bg-cyan-500/20 border-cyan-500/30 hover:border-cyan-500/50'
+                          : 'hover:bg-slate-700/50 border-slate-700 hover:border-slate-600'
+                        }`}
+                      title={activeChannel.read_receipts_enabled ? "Read Receipts: ON" : "Read Receipts: OFF"}
+                    >
+                      {activeChannel.read_receipts_enabled ? (
+                        <Eye className="w-4 h-4 text-cyan-400 group-hover:text-cyan-300" />
+                      ) : (
+                        <EyeOff className="w-4 h-4 text-slate-500 group-hover:text-slate-400" />
+                      )}
+                    </button>
+
+                    {/* Delete Chat Button */}
+                    <button
+                      onClick={async () => {
+                        if (confirm(`Delete chat with ${otherUser?.username}? Messages will only be deleted for you.`)) {
+                          await hideChannel(activeChannelId);
+                        }
+                      }}
+                      className="p-2 hover:bg-red-500/20 border border-red-500/30 hover:border-red-500/50 rounded-lg transition-colors group"
+                      title="Delete Chat"
+                    >
+                      <Trash2 className="w-4 h-4 text-red-400 group-hover:text-red-300" />
+                    </button>
                   </div>
                 );
               })()}

@@ -23,6 +23,7 @@ export const IntelPanel: React.FC = () => {
   const [mode, setMode] = useState<'chat' | 'image' | 'generation'>('chat');
   const [thinkingLevel, setThinkingLevel] = useState<'low' | 'medium' | 'high'>('medium');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [imageResolution, setImageResolution] = useState<'1K' | '2K' | '3K' | '4K'>('4K');
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
   const [shareTarget, setShareTarget] = useState<'dm' | null>(null);
@@ -40,7 +41,12 @@ export const IntelPanel: React.FC = () => {
     shareAIChatToDM
   } = useOrbitStore();
   const canCustomize = !!currentUser?.can_customize_ai;
-  const unlockedModels = useMemo(() => currentUser?.unlocked_models || ['flash'], [currentUser?.unlocked_models]);
+  const unlockedModels = useMemo(() => {
+    if (currentUser?.isAdmin || currentUser?.is_admin) {
+      return ['flash', 'pro', 'orbit-x', 'gemini-3-pro', 'gemini-3-image'];
+    }
+    return currentUser?.unlocked_models || ['flash'];
+  }, [currentUser?.unlocked_models, currentUser?.isAdmin, currentUser?.is_admin]);
   const conversationLength = intelMessages.length;
 
   const models = [
@@ -49,7 +55,12 @@ export const IntelPanel: React.FC = () => {
     { id: 'orbit-x' as const, name: 'Orbit-X', color: 'from-violet-500 to-indigo-500', locked: !unlockedModels.includes('orbit-x'), tier: 3 },
     { id: 'gemini-3-pro' as const, name: 'Gemini 3.0 Pro', color: 'from-emerald-500 to-teal-500', locked: !unlockedModels.includes('gemini-3-pro'), tier: 4 },
     { id: 'gemini-3-image' as const, name: 'Gemini 3.0 Image', color: 'from-rose-500 to-orange-500', locked: !unlockedModels.includes('gemini-3-image'), tier: 4 }
-  ];
+  ].filter(m => {
+    if (mode === 'generation') {
+      return ['gemini-3-image', 'flash'].includes(m.id);
+    }
+    return true;
+  });
 
   // Check if current model supports thinking
   const supportsThinking = ['pro', 'orbit-x', 'flash', 'gemini-3-pro', 'gemini-3-image'].includes(selectedModel);
@@ -173,7 +184,8 @@ export const IntelPanel: React.FC = () => {
         customInstructions: customInstructions.trim() || undefined,
         mode,
         thinkingLevel,
-        image: selectedImage || undefined
+        image: selectedImage || undefined,
+        imageResolution: mode === 'generation' ? imageResolution : undefined
       });
       // Clear image after successful submission
       if (mode === 'image') {
@@ -399,38 +411,38 @@ export const IntelPanel: React.FC = () => {
 
         {/* Deep Dive Toggle */}
         <div className="flex items-center justify-between">
-           <p className="text-[10px] text-slate-500 font-mono uppercase tracking-wide">
-             Query structured intelligence from global sources
-           </p>
-           
-           <button 
-             type="button"
-             onClick={() => {
-               setUseDeepThinking(!useDeepThinking);
-               setResearchMode(!useDeepThinking);
-             }}
-             disabled={isIntelLoading}
-             className={clsx(
-               "flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all text-xs font-mono disabled:opacity-50",
-               useDeepThinking 
-                 ? "bg-violet-500/10 border-violet-500 text-violet-300 shadow-[0_0_10px_rgba(139,92,246,0.3)]"
-                 : "bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500"
-             )}
-           >
-             <div className="relative">
-               <BrainCircuit className={clsx("w-3.5 h-3.5", useDeepThinking && "animate-pulse")} />
-               {useDeepThinking && (
-                 <motion.div 
-                   layoutId="sparkles"
-                   className="absolute -top-1 -right-1"
-                 >
-                   <Sparkles className="w-2 h-2 text-yellow-400" />
-                 </motion.div>
-               )}
-             </div>
-             <span>DEEP THINKING MODE</span>
-             {useDeepThinking && <span className="px-1 bg-violet-600 text-white text-[9px] rounded ml-1">PRO</span>}
-           </button>
+          <p className="text-[10px] text-slate-500 font-mono uppercase tracking-wide">
+            Query structured intelligence from global sources
+          </p>
+
+          <button
+            type="button"
+            onClick={() => {
+              setUseDeepThinking(!useDeepThinking);
+              setResearchMode(!useDeepThinking);
+            }}
+            disabled={isIntelLoading}
+            className={clsx(
+              "flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all text-xs font-mono disabled:opacity-50",
+              useDeepThinking
+                ? "bg-violet-500/10 border-violet-500 text-violet-300 shadow-[0_0_10px_rgba(139,92,246,0.3)]"
+                : "bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500"
+            )}
+          >
+            <div className="relative">
+              <BrainCircuit className={clsx("w-3.5 h-3.5", useDeepThinking && "animate-pulse")} />
+              {useDeepThinking && (
+                <motion.div
+                  layoutId="sparkles"
+                  className="absolute -top-1 -right-1"
+                >
+                  <Sparkles className="w-2 h-2 text-yellow-400" />
+                </motion.div>
+              )}
+            </div>
+            <span>DEEP THINKING MODE</span>
+            {useDeepThinking && <span className="px-1 bg-violet-600 text-white text-[9px] rounded ml-1">PRO</span>}
+          </button>
         </div>
       </div>
 
@@ -710,13 +722,12 @@ export const IntelPanel: React.FC = () => {
                           }
                           setSelectedModel(model.id);
                         }}
-                        className={`relative p-4 rounded-xl border-2 transition-all ${
-                          selectedModel === model.id
-                            ? `bg-gradient-to-br ${model.color} border-transparent text-white shadow-[0_0_20px_rgba(59,130,246,0.5)]`
-                            : model.locked
+                        className={`relative p-4 rounded-xl border-2 transition-all ${selectedModel === model.id
+                          ? `bg-gradient-to-br ${model.color} border-transparent text-white shadow-[0_0_20px_rgba(59,130,246,0.5)]`
+                          : model.locked
                             ? 'bg-slate-800/30 border-slate-700 text-slate-600 cursor-not-allowed'
                             : 'bg-slate-800/50 border-blue-500/30 text-slate-300 hover:border-blue-500/50'
-                        }`}
+                          }`}
                       >
                         {model.locked && (
                           <div className="absolute top-2 right-2">
@@ -738,11 +749,10 @@ export const IntelPanel: React.FC = () => {
                       <button
                         key={m}
                         onClick={() => setMode(m as typeof mode)}
-                        className={`px-4 py-2 rounded-lg border-2 transition-all text-sm font-mono uppercase ${
-                          mode === m
-                            ? 'bg-blue-500 border-blue-400 text-white'
-                            : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-500'
-                        }`}
+                        className={`px-4 py-2 rounded-lg border-2 transition-all text-sm font-mono uppercase ${mode === m
+                          ? 'bg-blue-500 border-blue-400 text-white'
+                          : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-500'
+                          }`}
                       >
                         {m}
                       </button>
@@ -762,11 +772,10 @@ export const IntelPanel: React.FC = () => {
                         <button
                           key={level}
                           onClick={() => setThinkingLevel(level as typeof thinkingLevel)}
-                          className={`px-4 py-2 rounded-lg border-2 transition-all text-sm font-mono uppercase ${
-                            thinkingLevel === level
-                              ? 'bg-emerald-500 border-emerald-400 text-white'
-                              : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-500'
-                          }`}
+                          className={`px-4 py-2 rounded-lg border-2 transition-all text-sm font-mono uppercase ${thinkingLevel === level
+                            ? 'bg-emerald-500 border-emerald-400 text-white'
+                            : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-500'
+                            }`}
                         >
                           {level}
                         </button>
@@ -856,6 +865,32 @@ export const IntelPanel: React.FC = () => {
                   >
                     Save Settings
                   </button>
+                </div>
+
+                {/* Debug Info */}
+                <div className="mt-4 p-4 bg-slate-950/50 border border-slate-800 rounded-lg font-mono text-[10px] text-slate-400">
+                  <h4 className="text-xs text-slate-500 uppercase mb-2 border-b border-slate-800 pb-1">Debug Configuration</h4>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                    <div className="flex justify-between"><span>User ID:</span> <span className="text-slate-200">{currentUser?.id}</span></div>
+                    <div className="flex justify-between"><span>Admin:</span> <span className={currentUser?.is_admin || currentUser?.isAdmin ? "text-green-400" : "text-red-400"}>{currentUser?.is_admin || currentUser?.isAdmin ? 'YES' : 'NO'}</span></div>
+                    <div className="col-span-2 flex justify-between border-t border-slate-800/50 pt-1 mt-1"><span>Unlocked:</span> <span className="text-slate-200">{unlockedModels.join(', ')}</span></div>
+
+                    <div className="col-span-2 mt-2 mb-1 text-slate-500 font-bold">Model Parameters</div>
+                    <div className="flex justify-between"><span>Model:</span> <span className="text-cyan-400">{selectedModel}</span></div>
+                    <div className="flex justify-between"><span>Mode:</span> <span className="text-blue-400">{mode}</span></div>
+                    <div className="flex justify-between"><span>Thinking:</span> <span className="text-emerald-400">{supportsThinkingLevel ? thinkingLevel : 'N/A'}</span></div>
+                    <div className="flex justify-between"><span>Depth:</span> <span className="text-purple-400">{depth}</span></div>
+                    <div className="flex justify-between"><span>Research:</span> <span className={researchMode ? "text-green-400" : "text-slate-600"}>{researchMode ? 'ACTIVE' : 'OFF'}</span></div>
+                    <div className="flex justify-between"><span>Deep Think:</span> <span className={useDeepThinking ? "text-green-400" : "text-slate-600"}>{useDeepThinking ? 'ON' : 'OFF'}</span></div>
+
+                    <div className="col-span-2 mt-2 mb-1 text-slate-500 font-bold">Context</div>
+                    <div className="col-span-2 truncate">
+                      <span className="mr-2">Instructions:</span>
+                      <span className="text-slate-300 italic">
+                        {customInstructions ? `"${customInstructions.slice(0, 40)}..."` : 'None'}
+                      </span>
+                    </div>
+                  </div>
                 </div>
               </div>
             </motion.div>

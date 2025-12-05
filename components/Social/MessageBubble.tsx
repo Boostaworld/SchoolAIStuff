@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { motion } from 'framer-motion';
-import { Download, FileText, Image as ImageIcon, Smile, Maximize2 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Download, FileText, Image as ImageIcon, Smile, Maximize2, Edit2, Trash2, Check, X } from 'lucide-react';
 import { Message } from '../../types';
 import { useOrbitStore } from '../../store/useOrbitStore';
 import ReactionPicker from './ReactionPicker';
@@ -13,9 +13,11 @@ interface MessageBubbleProps {
 }
 
 const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
-  const { currentUser, reactions, addReaction, removeReaction } = useOrbitStore();
+  const { currentUser, reactions, addReaction, removeReaction, deleteMessage, editMessage } = useOrbitStore();
   const [showReactionPicker, setShowReactionPicker] = useState(false);
   const [showModal, setShowModal] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editContent, setEditContent] = useState(message.content);
 
   const isSelf = message.sender_id === currentUser?.id;
   const messageReactions = reactions[message.id] || [];
@@ -50,11 +52,82 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
     return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
   };
 
+  // Check if message can be edited or deleted
+  const minutesSinceSent = (Date.now() - new Date(message.created_at).getTime()) / (1000 * 60);
+  const daysSinceSent = minutesSinceSent / (60 * 24);
+  const canEdit = isSelf && minutesSinceSent <= 5;
+  const canDelete = isSelf && daysSinceSent <= 7;
+
+  const handleDelete = async () => {
+    if (!confirm('Delete this message?')) return;
+    await deleteMessage(message.id, message.channel_id);
+  };
+
+  const handleEditSave = async () => {
+    if (editContent.trim() === message.content) {
+      setIsEditing(false);
+      return;
+    }
+    await editMessage(message.id, message.channel_id, editContent);
+    setIsEditing(false);
+  };
+
+  const handleEditCancel = () => {
+    setEditContent(message.content);
+    setIsEditing(false);
+  };
+
+  // Check if message is deleted
+  if (message.deleted_at) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className={`flex gap-3 ${isSelf ? 'flex-row-reverse' : 'flex-row'} group opacity-60`}
+      >
+        {/* Avatar (only for received messages) */}
+        {!isSelf && (
+          <div className="w-8 h-8 rounded-full overflow-hidden bg-slate-800 border border-cyan-500/10 flex items-center justify-center flex-shrink-0 grayscale">
+            {message.senderAvatar ? (
+              <img
+                src={message.senderAvatar}
+                alt={message.senderUsername || 'User'}
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <span className="text-cyan-400 text-xs font-mono">OP</span>
+            )}
+          </div>
+        )}
+
+        <div className={`flex flex-col gap-1 max-w-[75%] ${isSelf ? 'items-end' : 'items-start'}`}>
+          {!isSelf && message.senderUsername && (
+            <div className="flex items-center gap-1.5 px-2 opacity-50">
+              <span className="text-xs font-mono text-slate-400">
+                {message.senderUsername}
+              </span>
+            </div>
+          )}
+
+          <div className={`
+            px-4 py-3 rounded-2xl font-mono text-sm italic
+            ${isSelf
+              ? 'bg-slate-800/50 border border-slate-700 text-slate-400 rounded-tr-sm'
+              : 'bg-slate-900/50 border border-slate-800 text-slate-500 rounded-tl-sm'
+            }
+          `}>
+            [message deleted at {formatTimestamp(message.deleted_at)}]
+          </div>
+        </div>
+      </motion.div>
+    );
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      className={`flex gap-3 ${isSelf ? 'flex-row-reverse' : 'flex-row'}`}
+      className={`flex gap-3 ${isSelf ? 'flex-row-reverse' : 'flex-row'} group`}
     >
       {/* Avatar (only for received messages) */}
       {!isSelf && (
@@ -71,7 +144,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
         </div>
       )}
 
-      <div className={`flex flex-col gap-1 max-w-[75%] ${isSelf ? 'items-end' : 'items-start'}`}>
+      <div className={`relative flex flex-col gap-1 max-w-[75%] ${isSelf ? 'items-end' : 'items-start'}`}>
         {/* Sender Name with Badge (only for received messages) */}
         {!isSelf && message.senderUsername && (
           <div className={`flex items-center gap-1.5 px-2 ${badgeStyle.glowClasses}`}>
@@ -107,9 +180,36 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
             }}
           />
 
-          {/* Message text with markdown support */}
+          {/* Message text - edit mode or markdown display */}
           <div className="relative z-10">
-            <MarkdownRenderer content={message.content} />
+            {isEditing ? (
+              <div className="space-y-2">
+                <textarea
+                  value={editContent}
+                  onChange={(e) => setEditContent(e.target.value)}
+                  className="w-full bg-slate-900/50 border border-cyan-500/30 rounded p-2 text-cyan-100 font-mono text-sm focus:outline-none focus:border-cyan-500/50 min-h-[60px] resize-y"
+                  autoFocus
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleEditSave}
+                    className="flex items-center gap-1 px-2 py-1 bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 rounded text-xs text-cyan-300 transition-colors"
+                  >
+                    <Check className="w-3 h-3" />
+                    Save
+                  </button>
+                  <button
+                    onClick={handleEditCancel}
+                    className="flex items-center gap-1 px-2 py-1 bg-slate-700/50 hover:bg-slate-700 border border-slate-600 rounded text-xs text-slate-300 transition-colors"
+                  >
+                    <X className="w-3 h-3" />
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <MarkdownRenderer content={message.content} />
+            )}
           </div>
 
           {/* Expand button for long messages */}
@@ -168,11 +268,36 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
           )}
         </motion.div>
 
-        {/* Timestamp & Reaction Trigger */}
+        {/* Timestamp, Actions & Reaction Trigger */}
         <div className={`flex items-center gap-2 px-2 ${isSelf ? 'flex-row-reverse' : 'flex-row'}`}>
           <span className="text-cyan-500/50 text-xs font-mono">
             {formatTimestamp(message.created_at)}
+            {message.edited_at && <span className="ml-1 opacity-70">(edited)</span>}
           </span>
+
+          {/* Edit/Delete buttons (only for own messages) */}
+          {isSelf && !isEditing && (
+            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              {canEdit && (
+                <button
+                  onClick={() => setIsEditing(true)}
+                  className="p-1 hover:bg-cyan-500/20 rounded transition-colors"
+                  title="Edit message (5 min window)"
+                >
+                  <Edit2 className="w-3 h-3 text-cyan-400" />
+                </button>
+              )}
+              {canDelete && (
+                <button
+                  onClick={handleDelete}
+                  className="p-1 hover:bg-red-500/20 rounded transition-colors"
+                  title="Delete message (7 day window)"
+                >
+                  <Trash2 className="w-3 h-3 text-red-400" />
+                </button>
+              )}
+            </div>
+          )}
 
           <button
             onClick={() => setShowReactionPicker(!showReactionPicker)}
@@ -214,10 +339,12 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
 
         {/* Reaction Picker */}
         {showReactionPicker && (
-          <ReactionPicker
-            onSelect={handleAddReaction}
-            onClose={() => setShowReactionPicker(false)}
-          />
+          <div className={`absolute z-50 bottom-full mb-2 ${isSelf ? 'right-0' : 'left-0'}`}>
+            <ReactionPicker
+              onSelect={handleAddReaction}
+              onClose={() => setShowReactionPicker(false)}
+            />
+          </div>
         )}
       </div>
 

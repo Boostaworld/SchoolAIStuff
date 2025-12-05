@@ -30,6 +30,7 @@ export interface IntelQueryOptions {
   thinkingLevel?: 'low' | 'medium' | 'high'; // Thinking depth level
   mode?: 'chat' | 'image' | 'generation'; // Interaction mode
   image?: string; // Base64 encoded image data
+  imageResolution?: '1K' | '2K' | '3K' | '4K'; // Resolution for generated images
 }
 
 const buildInstructions = (
@@ -167,14 +168,19 @@ export const sendIntelQueryWithPersistence = async (options: IntelQueryOptions) 
     throw new Error('CLEARANCE_DENIED: Custom instructions disabled');
   }
 
-  const instruction = conversationMode
-    ? 'You are a helpful AI assistant. Provide clear, concise answers based on the conversation context.'
-    : buildInstructions(
-        depthLevel,
-        researchMode,
-        options.customInstructions,
-        options.profileInstructions
-      );
+  let instruction = '';
+  if (mode === 'generation') {
+    instruction = 'You are a creative AI assistant capable of generating images. Create the image as requested by the user.';
+  } else if (conversationMode) {
+    instruction = 'You are a helpful AI assistant. Provide clear, concise answers based on the conversation context.';
+  } else {
+    instruction = buildInstructions(
+      depthLevel,
+      researchMode,
+      options.customInstructions,
+      options.profileInstructions
+    );
+  }
 
   console.log('[IntelService] Prepared request', {
     modelUsed,
@@ -202,7 +208,8 @@ export const sendIntelQueryWithPersistence = async (options: IntelQueryOptions) 
     thinkingEnabled, // Pass thinking preference
     thinkingLevel, // Pass thinking level
     mode, // Pass interaction mode
-    image // Pass image data
+    image, // Pass image data
+    imageResolution: options.imageResolution // Pass image resolution
   });
 
   let sessionId: string | undefined;

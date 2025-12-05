@@ -13,7 +13,12 @@ export const NotificationTray: React.FC = () => {
   return (
     <div className="relative">
       <button
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          if (!open) {
+            markAllNotificationsRead();
+          }
+          setOpen((v) => !v);
+        }}
         className="relative p-2 rounded-lg border border-slate-800 bg-slate-900/70 hover:border-cyan-500/50"
       >
         <Bell className="w-5 h-5 text-slate-200" />

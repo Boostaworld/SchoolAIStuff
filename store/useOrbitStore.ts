@@ -103,11 +103,14 @@ interface OrbitState {
   executeIntelQuery: (query: string, deepDive?: boolean) => Promise<void>;
   sendIntelQuery: (prompt: string, options?: {
     depthLevel?: number;
-    modelUsed?: 'flash' | 'pro' | 'orbit-x';
+    modelUsed?: 'flash' | 'pro' | 'orbit-x' | 'gemini-3-pro' | 'gemini-3-image';
     researchMode?: boolean;
     customInstructions?: string;
     conversationMode?: boolean;
-    thinkingEnabled?: boolean; // New: Toggle thinking mode
+    thinkingEnabled?: boolean;
+    mode?: 'chat' | 'image' | 'generation';
+    thinkingLevel?: 'low' | 'medium' | 'high';
+    image?: string;
   }) => Promise<IntelResult | null>;
   loadIntelHistory: () => Promise<void>;
   clearIntelHistory: () => void;
@@ -115,6 +118,7 @@ interface OrbitState {
   saveIntelDrop: (query: string, isPrivate: boolean) => Promise<void>;
   shareAIChatToFeed: (messages: IntelChatMessage[], subject: string) => Promise<void>;
   shareAIChatToDM: (messages: IntelChatMessage[], subject: string, recipientId: string) => Promise<void>;
+  shareResearchChatToFeed: (messages: Array<{ role: 'user' | 'model', text: string, thinking?: string, image?: string }>, subject: string, mode: 'chat' | 'vision') => Promise<void>;
   publishManualDrop: (title: string, content: string, tags?: string[], attachmentFile?: File, isPrivate?: boolean) => Promise<void>;
   deleteIntelDrop: (id: string) => Promise<void>; // Admin-only deletion
   fetchIntelDrops: () => Promise<void>;
@@ -124,6 +128,10 @@ interface OrbitState {
   createOrGetChannel: (otherUserId: string) => Promise<string>;
   fetchMessages: (channelId: string) => Promise<void>;
   sendMessage: (channelId: string, content: string, attachmentFile?: File) => Promise<void>;
+  deleteMessage: (messageId: string, channelId: string) => Promise<void>;
+  editMessage: (messageId: string, channelId: string, newContent: string) => Promise<void>;
+  hideChannel: (channelId: string) => Promise<void>;
+  toggleReadReceipts: (channelId: string, enabled: boolean) => Promise<void>;
   addReaction: (messageId: string, emoji: string) => Promise<void>;
   removeReaction: (reactionId: string) => Promise<void>;
   setTyping: (channelId: string, isTyping: boolean) => void;
@@ -135,7 +143,7 @@ interface OrbitState {
   // Phase 3: Training Actions
   fetchChallenges: () => Promise<void>;
   startChallenge: (challengeId: string) => void;
-  submitSession: (challengeId: string | null, wpm: number, accuracy: number, errorCount: number) => Promise<void>;
+  submitSession: (challengeId: string | null, wpm: number, accuracy: number, errorCount: number) => Promise<number>;
   syncTypingStats: (keyStats: Record<string, { errors: number; presses: number }>) => Promise<void>;
   fetchTypingHeatmap: () => Promise<void>;
   fetchRecentSessions: () => Promise<void>;
@@ -528,13 +536,15 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
             const newReaction = payload.new as MessageReaction;
             const currentReactions = get().reactions;
 
+            const currentList = currentReactions[newReaction.message_id] || [];
+
+            // Avoid duplicates (e.g. from optimistic updates or double events)
+            if (currentList.some(r => r.id === newReaction.id)) return;
+
             set({
               reactions: {
                 ...currentReactions,
-                [newReaction.message_id]: [
-                  ...(currentReactions[newReaction.message_id] || []),
-                  newReaction
-                ]
+                [newReaction.message_id]: [...currentList, newReaction]
               }
             });
           })
@@ -1108,10 +1118,15 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
         customInstructions: customInstructions || undefined,
         profileInstructions,
         canCustomize: currentUser.can_customize_ai || false,
-        unlockedModels: currentUser.unlocked_models || ['flash'],
+        unlockedModels: (currentUser.is_admin || currentUser.isAdmin)
+          ? ['flash', 'pro', 'orbit-x', 'gemini-3-pro', 'gemini-3-image']
+          : (currentUser.unlocked_models || ['flash']),
         conversationHistory: historyForContext,
         conversationMode,
-        thinkingEnabled // Pass thinking preference to service
+        thinkingEnabled,
+        mode: options?.mode,
+        thinkingLevel: options?.thinkingLevel,
+        image: options?.image
       });
 
       const modelMessage: IntelChatMessage = {
@@ -1300,6 +1315,69 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     }
   },
 
+  shareResearchChatToFeed: async (
+    messages: Array<{ role: 'user' | 'model', text: string, thinking?: string, image?: string }>,
+    subject: string,
+    mode: 'chat' | 'vision'
+  ) => {
+    const { currentUser } = get();
+    if (!currentUser) return;
+
+    const { toast } = await import('../lib/toast');
+    const trimmedSubject = (subject || '').trim() || (mode === 'vision' ? 'Vision Analysis' : 'AI Chat');
+
+    if (!messages || messages.length === 0) {
+      toast.error('Select at least one message to share.');
+      return;
+    }
+
+    // Format messages for feed
+    const formattedChat = messages
+      .map((msg) => {
+        const sender = msg.role === 'user' ? (currentUser.username || 'User') : 'AI Assistant';
+        let body = msg.text;
+
+        // Add thinking if available
+        if (msg.thinking) {
+          body += `\n\n_[Thinking: ${msg.thinking.substring(0, 200)}...]_`;
+        }
+
+        // Add image indicator for vision mode
+        if (msg.image) {
+          body = `🖼️ _[Image attached]_\n\n${body}`;
+        }
+
+        return `**${sender}:** ${body}`;
+      })
+      .join('\n\n');
+
+    const { error } = await supabase
+      .from('intel_drops')
+      .insert({
+        author_id: currentUser.id,
+        query: `${mode === 'vision' ? '🔬 Vision Analysis' : '💬 Research Chat'}: ${trimmedSubject}`,
+        summary_bullets: [
+          mode === 'vision' ? 'Vision Lab Analysis' : 'Research Lab Conversation',
+          `${messages.length} messages shared`,
+          `Topic: ${trimmedSubject}`
+        ],
+        sources: [],
+        related_concepts: trimmedSubject ? [trimmedSubject] : [],
+        essay: formattedChat,
+        is_private: false,
+        attachment_type: mode === 'vision' ? 'vision_chat' : 'research_chat'
+      });
+
+    if (error) {
+      console.error('Failed to share research chat to feed:', error);
+      toast.error('Failed to share to feed.');
+      throw error;
+    }
+
+    toast.success('Shared to feed!');
+    await get().fetchIntelDrops();
+  },
+
   fetchIntelDrops: async () => {
     const { currentUser } = get();
     if (!currentUser) return;
@@ -1407,7 +1485,7 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       // Fallback if attachment columns are missing in older databases
       if (error && (error.code === '42703' || error.message?.toLowerCase().includes('attachment'))) {
         const { toast } = await import('@/lib/toast');
-        toast.warn('Transmission posted, but attachment failed. The database may need an update.');
+        toast.warning('Transmission posted, but attachment failed. The database may need an update.');
         console.warn('Attachment columns missing; retrying transmission without attachment metadata. An orphaned file may exist in storage as a result.');
         ({ data, error } = await attemptInsert(false));
       }
@@ -1477,6 +1555,14 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     const { currentUser } = get();
     if (!currentUser) return;
 
+    // First, get hidden channels for this user
+    const { data: hiddenChannels } = await supabase
+      .from('user_hidden_channels')
+      .select('channel_id')
+      .eq('user_id', currentUser.id);
+
+    const hiddenChannelIds = new Set(hiddenChannels?.map(h => h.channel_id) || []);
+
     const { data, error } = await supabase
       .from('dm_channels')
       .select(`
@@ -1519,6 +1605,7 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
           user1_id: channel.user1_id,
           user2_id: channel.user2_id,
           created_at: channel.created_at,
+          read_receipts_enabled: channel.read_receipts_enabled,
           unreadCount: count || 0,
           otherUser: otherUserData ? {
             id: otherUserData.id,
@@ -1538,7 +1625,10 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       })
     );
 
-    set({ dmChannels: channelsWithUnread });
+    // Filter out hidden channels
+    const visibleChannels = channelsWithUnread.filter(ch => !hiddenChannelIds.has(ch.id));
+
+    set({ dmChannels: visibleChannels });
 
     // Update favicon badge with total unread count
     if (typeof window !== 'undefined') {
@@ -1596,7 +1686,7 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       .from('messages')
       .select(`
         *,
-        profiles:sender_id (username, avatar, is_admin, can_customize_ai)
+        profiles:sender_id (username, avatar_url, is_admin, can_customize_ai)
       `)
       .eq('channel_id', channelId)
       .order('created_at', { ascending: true });
@@ -1610,7 +1700,7 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     const messagesWithSender = (data || []).map((msg: any) => ({
       ...msg,
       senderUsername: msg.profiles?.username,
-      senderAvatar: msg.profiles?.avatar,
+      senderAvatar: msg.profiles?.avatar_url,
       senderIsAdmin: msg.profiles?.is_admin || false,
       senderCanCustomizeAI: msg.profiles?.can_customize_ai || false,
       profiles: undefined // Remove nested object
@@ -1717,7 +1807,7 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
         .select('user1_id, user2_id')
         .eq('id', channelId)
         .single()
-        .then(({ data: channel }) => {
+        .then(async ({ data: channel }) => {
           if (channel) {
             // Recipient is the other user (not the sender)
             const recipientId = channel.user1_id === currentUser.id
@@ -1725,7 +1815,7 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
               : channel.user1_id;
 
             // Create notification for the recipient
-            supabase
+            const { error: notificationError } = await supabase
               .from('notifications')
               .insert({
                 recipient_id: recipientId,
@@ -1733,18 +1823,18 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
                 type: 'dm',
                 title: `New message from ${currentUser.username}`,
                 content: content.length > 50 ? content.substring(0, 50) + '...' : content,
-                link_url: `#comms?channel=${channelId}`,
+                link_url: `#comms/${channelId}`,
                 metadata: {
                   channel_id: channelId,
                   message_id: data.id
                 }
-              })
-              .then(() => {
-                console.log('✅ DM notification created');
-              })
-              .catch((err) => {
-                console.error('❌ Failed to create DM notification:', err);
               });
+
+            if (notificationError) {
+              console.error('❌ Failed to create DM notification:', notificationError);
+            } else {
+              console.log('✅ DM notification created');
+            }
           }
         });
     }
@@ -1754,27 +1844,107 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     const { currentUser } = get();
     if (!currentUser) return;
 
-    const { error } = await supabase
+    // Optimistic Update
+    const tempId = `temp-${Date.now()}`;
+    const optimisticReaction: MessageReaction = {
+      id: tempId,
+      message_id: messageId,
+      user_id: currentUser.id,
+      emoji,
+      created_at: new Date().toISOString()
+    };
+
+    set(state => ({
+      reactions: {
+        ...state.reactions,
+        [messageId]: [...(state.reactions[messageId] || []), optimisticReaction]
+      }
+    }));
+
+    const { data, error } = await supabase
       .from('message_reactions')
       .insert({
         message_id: messageId,
         user_id: currentUser.id,
         emoji
-      });
+      })
+      .select()
+      .single();
 
     if (error) {
       console.error('Add Reaction Error:', error);
+      // Revert optimistic update
+      set(state => ({
+        reactions: {
+          ...state.reactions,
+          [messageId]: state.reactions[messageId].filter(r => r.id !== tempId)
+        }
+      }));
+    } else if (data) {
+      // Replace temp ID with real ID
+      set(state => {
+        const currentList = state.reactions[messageId] || [];
+        // Check if real ID already exists (from subscription)
+        const exists = currentList.some(r => r.id === data.id);
+
+        if (exists) {
+          // Just remove the temp one, since real one is already there
+          return {
+            reactions: {
+              ...state.reactions,
+              [messageId]: currentList.filter(r => r.id !== tempId)
+            }
+          };
+        }
+
+        // Otherwise replace
+        return {
+          reactions: {
+            ...state.reactions,
+            [messageId]: currentList.map(r => r.id === tempId ? data : r)
+          }
+        };
+      });
     }
   },
 
   removeReaction: async (reactionId: string) => {
-    const { error } = await supabase
-      .from('message_reactions')
-      .delete()
-      .eq('id', reactionId);
+    // Find the messageId for this reaction to update state
+    const { reactions } = get();
+    let messageId: string | undefined;
 
-    if (error) {
-      console.error('Remove Reaction Error:', error);
+    for (const [msgId, msgReactions] of Object.entries(reactions)) {
+      if (msgReactions.some(r => r.id === reactionId)) {
+        messageId = msgId;
+        break;
+      }
+    }
+
+    if (messageId) {
+      // Optimistic Update
+      const previousReactions = reactions[messageId];
+      set(state => ({
+        reactions: {
+          ...state.reactions,
+          [messageId]: state.reactions[messageId].filter(r => r.id !== reactionId)
+        }
+      }));
+
+      const { error } = await supabase
+        .from('message_reactions')
+        .delete()
+        .eq('id', reactionId);
+
+      if (error) {
+        console.error('Remove Reaction Error:', error);
+        // Revert
+        set(state => ({
+          reactions: {
+            ...state.reactions,
+            [messageId!]: previousReactions
+          }
+        }));
+      }
     }
   },
 
@@ -1786,14 +1956,12 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     const existingChannel = get().typingChannels[channelName];
 
     if (existingChannel) {
-      // Reuse existing channel
       existingChannel.send({
         type: 'broadcast',
         event: 'typing',
         payload: { user_id: currentUser.id, typing: isTyping }
       });
     } else {
-      // Create new channel and store it
       const channel = supabase.channel(channelName);
       channel
         .on('broadcast', { event: 'typing' }, ({ payload }) => {
@@ -1801,7 +1969,6 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
           const currentTyping = get().typingUsers[channelId] || [];
 
           if (typing) {
-            // Add user to typing list if not already there
             if (!currentTyping.includes(user_id)) {
               set({
                 typingUsers: {
@@ -1811,7 +1978,6 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
               });
             }
           } else {
-            // Remove user from typing list
             set({
               typingUsers: {
                 ...get().typingUsers,
@@ -1830,7 +1996,6 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
           }
         });
 
-      // Store channel for reuse
       set(state => ({
         typingChannels: { ...state.typingChannels, [channelName]: channel }
       }));
@@ -1840,13 +2005,11 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
   setActiveChannel: (channelId: string | null) => {
     const prevChannelId = get().activeChannelId;
 
-    // Clean up previous channel's typing subscription
     if (prevChannelId && prevChannelId !== channelId) {
       const prevChannelName = `typing:${prevChannelId}`;
       const prevChannel = get().typingChannels[prevChannelName];
       if (prevChannel) {
         prevChannel.unsubscribe();
-        // Remove from stored channels
         set(state => {
           const { [prevChannelName]: removed, ...rest } = state.typingChannels;
           return { typingChannels: rest };
@@ -1856,11 +2019,9 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
 
     set({ activeChannelId: channelId });
 
-    // Fetch messages when opening a channel
     if (channelId) {
       get().fetchMessages(channelId);
 
-      // Mark all messages in this channel as read
       const currentUser = get().currentUser;
       if (currentUser) {
         supabase
@@ -1873,18 +2034,15 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
             if (error) {
               console.error('Error marking messages as read:', error);
             } else {
-              // Refresh channel list to update unread counts and favicon
               get().fetchDMChannels();
             }
           });
       }
 
-      // Only subscribe if we don't already have a channel
       const channelName = `typing:${channelId}`;
       const existingChannel = get().typingChannels[channelName];
 
       if (!existingChannel) {
-        // Subscribe to typing indicators for this channel
         const typingChannel = supabase.channel(channelName);
         typingChannel
           .on('broadcast', { event: 'typing' }, (payload: any) => {
@@ -1892,17 +2050,15 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
             const currentTyping = get().typingUsers;
 
             if (typing) {
-              // Add user to typing list
               set({
                 typingUsers: {
                   ...currentTyping,
                   [channelId]: [...(currentTyping[channelId] || []), user_id].filter(
-                    (id, idx, arr) => arr.indexOf(id) === idx // dedupe
+                    (id, idx, arr) => arr.indexOf(id) === idx
                   )
                 }
               });
             } else {
-              // Remove user from typing list
               set({
                 typingUsers: {
                   ...currentTyping,
@@ -1913,11 +2069,172 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
           })
           .subscribe();
 
-        // Store the channel
         set(state => ({
           typingChannels: { ...state.typingChannels, [channelName]: typingChannel }
         }));
       }
+    }
+  },
+
+  deleteMessage: async (messageId: string, channelId: string) => {
+    const { currentUser } = get();
+    if (!currentUser) return;
+
+    const { data: msg, error: fetchError } = await supabase
+      .from('messages')
+      .select('created_at, sender_id')
+      .eq('id', messageId)
+      .single();
+
+    if (fetchError || !msg) {
+      console.error('Failed to fetch message:', fetchError);
+      const { toast } = await import('../lib/toast');
+      toast.error('Failed to delete message');
+      return;
+    }
+
+    if (msg.sender_id !== currentUser.id) {
+      const { toast } = await import('../lib/toast');
+      toast.error('Can only delete your own messages');
+      return;
+    }
+
+    const daysSinceSent = (Date.now() - new Date(msg.created_at).getTime()) / (1000 * 60 * 60 * 24);
+    if (daysSinceSent > 7) {
+      const { toast } = await import('../lib/toast');
+      toast.error('Cannot delete messages older than 7 days');
+      return;
+    }
+
+    const { error } = await supabase
+      .from('messages')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', messageId);
+
+    if (error) {
+      console.error('Delete message error:', error);
+      const { toast } = await import('../lib/toast');
+      toast.error('Failed to delete message');
+      return;
+    }
+
+    set(state => ({
+      messages: {
+        ...state.messages,
+        [channelId]: state.messages[channelId]?.map(m =>
+          m.id === messageId ? { ...m, deleted_at: new Date().toISOString() } : m
+        ) || []
+      }
+    }));
+
+    const { toast } = await import('../lib/toast');
+    toast.success('Message deleted');
+  },
+
+  editMessage: async (messageId: string, channelId: string, newContent: string) => {
+    const { currentUser } = get();
+    if (!currentUser) return;
+
+    const { data: msg, error: fetchError } = await supabase
+      .from('messages')
+      .select('created_at, sender_id')
+      .eq('id', messageId)
+      .single();
+
+    if (fetchError || !msg) {
+      console.error('Failed to fetch message:', fetchError);
+      return;
+    }
+
+    if (msg.sender_id !== currentUser.id) {
+      const { toast } = await import('../lib/toast');
+      toast.error('Can only edit your own messages');
+      return;
+    }
+
+    const minutesSinceSent = (Date.now() - new Date(msg.created_at).getTime()) / (1000 * 60);
+    if (minutesSinceSent > 5) {
+      const { toast } = await import('../lib/toast');
+      toast.error('Cannot edit messages older than 5 minutes');
+      return;
+    }
+
+    const { error } = await supabase
+      .from('messages')
+      .update({
+        content: newContent,
+        edited_at: new Date().toISOString()
+      })
+      .eq('id', messageId);
+
+    if (error) {
+      console.error('Edit message error:', error);
+      const { toast } = await import('../lib/toast');
+      toast.error('Failed to edit message');
+      return;
+    }
+
+    set(state => ({
+      messages: {
+        ...state.messages,
+        [channelId]: state.messages[channelId]?.map(m =>
+          m.id === messageId ? { ...m, content: newContent, edited_at: new Date().toISOString() } : m
+        ) || []
+      }
+    }));
+
+    const { toast } = await import('../lib/toast');
+    toast.success('Message edited');
+  },
+
+  hideChannel: async (channelId: string) => {
+    const { currentUser } = get();
+    if (!currentUser) return;
+
+    const { error } = await supabase
+      .from('user_hidden_channels')
+      .insert({ user_id: currentUser.id, channel_id: channelId });
+
+    if (error) {
+      console.error('Hide channel error:', error);
+      const { toast } = await import('../lib/toast');
+      toast.error('Failed to delete chat');
+      return;
+    }
+
+    set(state => ({
+      dmChannels: state.dmChannels.filter(ch => ch.id !== channelId),
+      activeChannelId: state.activeChannelId === channelId ? null : state.activeChannelId
+    }));
+
+    const { toast } = await import('../lib/toast');
+    toast.success('Chat deleted');
+  },
+
+  toggleReadReceipts: async (channelId: string, enabled: boolean) => {
+    set(state => ({
+      dmChannels: state.dmChannels.map(ch =>
+        ch.id === channelId ? { ...ch, read_receipts_enabled: enabled } : ch
+      )
+    }));
+
+    const { error } = await supabase
+      .from('dm_channels')
+      .update({ read_receipts_enabled: enabled })
+      .eq('id', channelId);
+
+    if (error) {
+      console.error('Toggle read receipts error:', error);
+      set(state => ({
+        dmChannels: state.dmChannels.map(ch =>
+          ch.id === channelId ? { ...ch, read_receipts_enabled: !enabled } : ch
+        )
+      }));
+      const { toast } = await import('../lib/toast');
+      toast.error('Failed to update read receipts');
+    } else {
+      const { toast } = await import('../lib/toast');
+      toast.success(`Read receipts ${enabled ? 'enabled' : 'disabled'}`);
     }
   },
 
@@ -1934,6 +2251,7 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       persistentBanners: state.persistentBanners.filter(b => b.id !== bannerId)
     }));
   },
+
 
   // ============================================
   // PHASE 3: TRAINING ACTIONS

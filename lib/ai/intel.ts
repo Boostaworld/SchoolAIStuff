@@ -20,6 +20,7 @@ export interface IntelQueryParams {
   thinkingLevel?: 'low' | 'medium' | 'high'; // Thinking depth level
   mode?: 'chat' | 'image' | 'generation'; // Interaction mode
   image?: string; // Base64 encoded image data or file URI
+  imageResolution?: '1K' | '2K' | '3K' | '4K'; // Resolution for generated images
 }
 
 const getIntelApiKey = () => {
@@ -58,7 +59,8 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
     thinkingEnabled = true, // Default to enabled
     thinkingLevel = 'medium', // Default thinking level
     mode = 'chat',
-    image
+    image,
+    imageResolution = '4K' // Default to 4K
   } = params;
 
   const modelMap: Record<IntelQueryParams['model'], string> = {
@@ -66,12 +68,20 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
     pro: 'gemini-2.5-pro', // Updated to 2.5 Pro with thinking
     'orbit-x': 'gemini-2.5-pro', // Use 2.5 Pro for premium queries
     'gemini-3-pro': 'gemini-3.0-pro-preview', // Gemini 3.0 Pro with advanced thinking
-    'gemini-3-image': 'gemini-3.0-pro-image-preview' // Gemini 3.0 Image Generation
+    'gemini-3-image': 'gemini-3-pro-image-preview' // Gemini 3.0 Image Generation (Updated name)
   };
+
+  // Determine the actual model ID to use
+  let modelId = modelMap[model];
+
+  // Override for Flash in generation mode
+  if (mode === 'generation' && model === 'flash') {
+    modelId = 'gemini-2.5-flash-image';
+  }
 
   console.log('[Intel] Request', {
     model,
-    modelId: modelMap[model],
+    modelId,
     depth,
     researchMode,
     conversationMode,
@@ -211,12 +221,12 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
     // Configure thinking budget based on depth and model
     const thinkingBudget = thinkingEnabled
       ? (model === 'pro' || model === 'orbit-x'
-          ? -1 // Dynamic thinking for Pro models
-          : depth <= 3
-            ? 2048 // Light thinking for quick queries
-            : depth <= 6
-              ? 8192 // Medium thinking for academic queries
-              : 16384) // Deep thinking for exhaustive research
+        ? -1 // Dynamic thinking for Pro models
+        : depth <= 3
+          ? 2048 // Light thinking for quick queries
+          : depth <= 6
+            ? 8192 // Medium thinking for academic queries
+            : 16384) // Deep thinking for exhaustive research
       : 0; // Disabled
 
     console.log(`Max output tokens: ${maxOutputTokens}, Thinking: ${thinkingEnabled ? `Budget ${thinkingBudget}` : 'Disabled'}`);
@@ -271,12 +281,27 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
         : ['summary_bullets', 'sources', 'related_concepts']
     };
 
-    const researchConfig: any = {
-      responseMimeType: 'application/json',
-      responseSchema,
-      maxOutputTokens,
-      temperature: 0.7 // Balanced creativity and consistency
-    };
+    let researchConfig: any;
+
+    if (mode === 'generation') {
+      researchConfig = {
+        maxOutputTokens,
+        temperature: 0.7,
+        responseModalities: ['TEXT', 'IMAGE'],
+        tools: [{ googleSearch: {} }], // Enable web search for image generation
+        imageConfig: {
+          aspectRatio: '16:9',
+          imageSize: imageResolution // Use customizable resolution
+        }
+      };
+    } else {
+      researchConfig = {
+        responseMimeType: 'application/json',
+        responseSchema,
+        maxOutputTokens,
+        temperature: 0.7
+      };
+    }
 
     // Only add thinking config if enabled and model supports it
     if (thinkingEnabled) {
@@ -294,7 +319,7 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
     }
 
     const response = await ai.models.generateContent({
-      model: modelMap[model] || modelMap.flash,
+      model: modelId,
       systemInstruction: thinkingEnabled
         ? 'You are an advanced research AI with deep analytical capabilities. Think critically and provide comprehensive, factual research.'
         : 'You are a fast, efficient research AI. Provide comprehensive, factual research with high quality responses.',
@@ -307,34 +332,61 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
       await new Promise(resolve => setTimeout(resolve, targetDelayMs - elapsed));
     }
 
-    const text = response.candidates?.[0]?.content?.parts?.[0]?.text;
+    const firstPart = response.candidates?.[0]?.content?.parts?.[0];
+    const text = firstPart?.text;
+    const inlineData = firstPart?.inlineData;
+
+    // Handle image generation response
+    if (inlineData && inlineData.data) {
+      console.log("Received image generation response");
+      const base64Image = `data:${inlineData.mimeType || 'image/png'};base64,${inlineData.data}`;
+
+      return {
+        summary_bullets: ['Image generated successfully.'],
+        sources: [],
+        related_concepts: [],
+        essay: `![Generated Image](${base64Image})`
+      };
+    }
+
     if (!text) {
-      console.error("No text in AI response. Full response:", JSON.stringify(response, null, 2));
+      console.error("No text or image in AI response. Full response:", JSON.stringify(response, null, 2));
       throw new Error("No response from AI");
     }
 
     console.log("Raw AI response text:", text);
 
     let parsed: any;
-    try {
-      parsed = JSON.parse(text);
-    } catch (parseError) {
-      console.error("Failed to parse AI response as JSON:", parseError);
-      console.error("Response text was:", text);
 
-      // Try to extract JSON from markdown code blocks if present
-      const jsonMatch = text.match(/```(?:json)?\s*(\{[\s\S]*\})\s*```/);
-      if (jsonMatch) {
-        try {
-          parsed = JSON.parse(jsonMatch[1]);
-          console.log("Successfully extracted JSON from code block");
-        } catch (e) {
-          throw new Error("AI response is not valid JSON and could not be extracted from markdown");
+    // If in generation mode, treat text as simple output, don't parse JSON
+    if (mode === 'generation') {
+      parsed = {
+        summary_bullets: [text],
+        sources: [],
+        related_concepts: [],
+        essay: undefined
+      };
+    } else {
+      try {
+        parsed = JSON.parse(text);
+      } catch (parseError) {
+        console.error("Failed to parse AI response as JSON:", parseError);
+        console.error("Response text was:", text);
+
+        // Try to extract JSON from markdown code blocks if present
+        const jsonMatch = text.match(/```(?:json)?\s*(\{[\s\S]*\})\s*```/);
+        if (jsonMatch) {
+          try {
+            parsed = JSON.parse(jsonMatch[1]);
+          } catch (e) {
+            throw new Error("AI response is not valid JSON and could not be extracted from markdown");
+          }
+        } else {
+          throw new Error("AI response is not valid JSON: " + parseError);
         }
-      } else {
-        throw new Error("AI response is not valid JSON: " + parseError);
       }
     }
+
 
     // Validate and ensure all required fields exist
     const result: IntelResult = {

@@ -144,6 +144,20 @@ export function GodModePanel() {
         console.warn('Failed to get real channel for test, falling back to test-channel', err);
       }
 
+      // 0.5. Insert real message into database
+      const { data: msgData, error: msgError } = await supabase
+        .from('messages')
+        .insert({
+          channel_id: channelId,
+          sender_id: mockSender.id,
+          content: mockMessage,
+          read: false
+        })
+        .select()
+        .single();
+
+      if (msgError) throw msgError;
+
       // 1. Create database notification
       const { error: notifError } = await supabase.from('notifications').insert({
         recipient_id: currentUser?.id,
@@ -157,6 +171,10 @@ export function GodModePanel() {
           senderAvatar: mockSender.avatar_url
         },
         link_url: `#comms/${channelId}`,
+        metadata: {
+          channel_id: channelId,
+          message_id: msgData.id
+        },
         is_read: false
       });
 

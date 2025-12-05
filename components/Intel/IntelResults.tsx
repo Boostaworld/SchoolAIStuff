@@ -107,22 +107,22 @@ export const IntelResults: React.FC<IntelResultsProps> = ({ result, query, onSav
             ) : (
               // Research mode: Show as numbered bullets with markdown rendering
               summaryBullets.map((bullet, idx) => (
-            <motion.div
-              key={idx}
-              initial={{ opacity: 0, x: -10 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: idx * 0.1 }}
-              className="flex gap-3 group"
-            >
-              <div className="flex-shrink-0 mt-1">
-                <div className="w-6 h-6 rounded bg-gradient-to-br from-cyan-500/20 to-violet-500/20 border border-cyan-500/30 flex items-center justify-center">
-                  <span className="text-xs font-mono text-cyan-400">{idx + 1}</span>
-                </div>
-              </div>
-              <div className="text-slate-300 text-sm leading-relaxed flex-1 prose prose-invert prose-sm max-w-none prose-p:my-1 prose-headings:text-slate-200 prose-strong:text-slate-100 prose-code:text-cyan-400">
-                <Streamdown>{bullet}</Streamdown>
-              </div>
-            </motion.div>
+                <motion.div
+                  key={idx}
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: idx * 0.1 }}
+                  className="flex gap-3 group"
+                >
+                  <div className="flex-shrink-0 mt-1">
+                    <div className="w-6 h-6 rounded bg-gradient-to-br from-cyan-500/20 to-violet-500/20 border border-cyan-500/30 flex items-center justify-center">
+                      <span className="text-xs font-mono text-cyan-400">{idx + 1}</span>
+                    </div>
+                  </div>
+                  <div className="text-slate-300 text-sm leading-relaxed flex-1 prose prose-invert prose-sm max-w-none prose-p:my-1 prose-headings:text-slate-200 prose-strong:text-slate-100 prose-code:text-cyan-400">
+                    <Streamdown>{bullet}</Streamdown>
+                  </div>
+                </motion.div>
               ))
             )}
           </div>
@@ -163,29 +163,29 @@ export const IntelResults: React.FC<IntelResultsProps> = ({ result, query, onSav
           </div>
           <div className="p-4 space-y-2">
             {sources.map((source, idx) => (
-            <motion.a
-              key={idx}
-              href={source.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              initial={{ opacity: 0, x: -10 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.3 + idx * 0.1 }}
-              className="block p-3 bg-slate-950/50 border border-slate-800 rounded-lg hover:border-violet-500/50 hover:bg-slate-950/80 transition-all group"
-            >
-              <div className="flex items-start gap-3">
-                <div className="flex-shrink-0 w-8 h-8 rounded bg-violet-500/10 border border-violet-500/20 flex items-center justify-center group-hover:bg-violet-500/20 transition-colors">
-                  <ExternalLink className="w-4 h-4 text-violet-400" />
+              <motion.a
+                key={idx}
+                href={source.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.3 + idx * 0.1 }}
+                className="block p-3 bg-slate-950/50 border border-slate-800 rounded-lg hover:border-violet-500/50 hover:bg-slate-950/80 transition-all group"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="flex-shrink-0 w-8 h-8 rounded bg-violet-500/10 border border-violet-500/20 flex items-center justify-center group-hover:bg-violet-500/20 transition-colors">
+                    <ExternalLink className="w-4 h-4 text-violet-400" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-slate-200 group-hover:text-violet-400 transition-colors truncate">
+                      {source.title}
+                    </p>
+                    <p className="text-xs text-slate-500 font-mono truncate mt-0.5">{source.url}</p>
+                    <p className="text-xs text-slate-400 mt-2 line-clamp-2 leading-relaxed">{source.snippet}</p>
+                  </div>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-slate-200 group-hover:text-violet-400 transition-colors truncate">
-                    {source.title}
-                  </p>
-                  <p className="text-xs text-slate-500 font-mono truncate mt-0.5">{source.url}</p>
-                  <p className="text-xs text-slate-400 mt-2 line-clamp-2 leading-relaxed">{source.snippet}</p>
-                </div>
-              </div>
-            </motion.a>
+              </motion.a>
             ))}
           </div>
         </div>
@@ -203,15 +203,15 @@ export const IntelResults: React.FC<IntelResultsProps> = ({ result, query, onSav
           <div className="p-4">
             <div className="flex flex-wrap gap-2">
               {relatedConcepts.map((concept, idx) => (
-              <motion.button
-                key={idx}
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: 0.5 + idx * 0.1 }}
-                className="px-3 py-1.5 bg-gradient-to-r from-amber-500/10 to-orange-500/10 border border-amber-500/20 hover:border-amber-500/40 rounded-full text-xs text-amber-400 hover:text-amber-300 font-mono uppercase tracking-wide transition-all hover:scale-105"
-              >
-                {concept}
-              </motion.button>
+                <motion.button
+                  key={idx}
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: 0.5 + idx * 0.1 }}
+                  className="px-3 py-1.5 bg-gradient-to-r from-amber-500/10 to-orange-500/10 border border-amber-500/20 hover:border-amber-500/40 rounded-full text-xs text-amber-400 hover:text-amber-300 font-mono uppercase tracking-wide transition-all hover:scale-105"
+                >
+                  {concept}
+                </motion.button>
               ))}
             </div>
           </div>

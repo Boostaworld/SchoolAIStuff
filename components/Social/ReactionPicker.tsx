@@ -33,7 +33,7 @@ export default function ReactionPicker({ onSelect, onClose }: ReactionPickerProp
         initial={{ opacity: 0, scale: 0.9, y: 10 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.9, y: 10 }}
-        className="absolute z-50 bg-slate-900 border border-cyan-500/40 rounded-xl p-3 shadow-2xl shadow-cyan-900/30 backdrop-blur-xl"
+        className="bg-slate-900 border border-cyan-500/40 rounded-xl p-4 shadow-2xl shadow-cyan-900/30 backdrop-blur-xl"
         style={{
           background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.95) 0%, rgba(2, 6, 23, 0.98) 100%)'
         }}
@@ -49,13 +49,13 @@ export default function ReactionPicker({ onSelect, onClose }: ReactionPickerProp
           }} />
         </div>
 
-        <div className="relative space-y-3">
+        <div className="relative space-y-4">
           {Object.entries(EMOJI_CATEGORIES).map(([category, emojis], categoryIndex) => (
             <div key={category}>
-              <p className="text-cyan-400 text-xs font-mono uppercase tracking-wider mb-2 px-1">
+              <p className="text-cyan-400 text-xs font-mono uppercase tracking-wider mb-3 px-1">
                 {category}
               </p>
-              <div className="grid grid-cols-8 gap-1">
+              <div className="grid grid-cols-8 gap-2">
                 {emojis.map((emoji, index) => (
                   <motion.button
                     key={emoji}

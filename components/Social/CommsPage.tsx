@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { AlertTriangle, Paperclip, Send, Signal, Users } from 'lucide-react';
+import { AlertTriangle, Paperclip, Send, Signal, Users, Trash2, Eye, EyeOff } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useOrbitStore } from '../../store/useOrbitStore';
 import { DMChannel } from '../../types';
@@ -17,7 +17,9 @@ export default function CommsPage() {
     onlineUsers,
     setActiveChannel,
     sendMessage,
-    setTyping
+    setTyping,
+    hideChannel,
+    toggleReadReceipts
   } = useOrbitStore();
 
   const [inputValue, setInputValue] = useState('');
@@ -122,11 +124,10 @@ export default function CommsPage() {
                 <motion.button
                   key={channel.id}
                   onClick={() => setActiveChannel(channel.id)}
-                  className={`w-full p-3 rounded-lg border text-left transition-all ${
-                    activeChannelId === channel.id
-                      ? 'bg-cyan-500/10 border-cyan-400/40'
-                      : 'bg-slate-900/40 border-cyan-500/20 hover:border-cyan-400/40 hover:bg-slate-900/70'
-                  }`}
+                  className={`w-full p-3 rounded-lg border text-left transition-all ${activeChannelId === channel.id
+                    ? 'bg-cyan-500/10 border-cyan-400/40'
+                    : 'bg-slate-900/40 border-cyan-500/20 hover:border-cyan-400/40 hover:bg-slate-900/70'
+                    }`}
                   whileHover={{ scale: 1.01 }}
                   whileTap={{ scale: 0.99 }}
                 >
@@ -188,6 +189,34 @@ export default function CommsPage() {
                       {online ? 'ONLINE' : `LAST SEEN: ${formatLastSeen(otherUser?.last_active)}`}
                     </p>
                   </div>
+                  {/* Read Receipts Toggle */}
+                  <button
+                    onClick={() => toggleReadReceipts(activeChannelId, !activeChannel.read_receipts_enabled)}
+                    className={`p-2 border rounded-lg transition-colors group ml-auto mr-2 ${activeChannel.read_receipts_enabled
+                        ? 'hover:bg-cyan-500/20 border-cyan-500/30 hover:border-cyan-500/50'
+                        : 'hover:bg-slate-700/50 border-slate-700 hover:border-slate-600'
+                      }`}
+                    title={activeChannel.read_receipts_enabled ? "Read Receipts: ON" : "Read Receipts: OFF"}
+                  >
+                    {activeChannel.read_receipts_enabled ? (
+                      <Eye className="w-4 h-4 text-cyan-400 group-hover:text-cyan-300" />
+                    ) : (
+                      <EyeOff className="w-4 h-4 text-slate-500 group-hover:text-slate-400" />
+                    )}
+                  </button>
+
+                  {/* Delete Chat Button */}
+                  <button
+                    onClick={async () => {
+                      if (confirm(`Delete chat with ${otherUser?.username}? Messages will only be deleted for you.`)) {
+                        await hideChannel(activeChannelId);
+                      }
+                    }}
+                    className="p-2 hover:bg-red-500/20 border border-red-500/30 hover:border-red-500/50 rounded-lg transition-colors group"
+                    title="Delete Chat"
+                  >
+                    <Trash2 className="w-4 h-4 text-red-400 group-hover:text-red-300" />
+                  </button>
                 </div>
               );
             })()}
@@ -329,6 +358,6 @@ export default function CommsPage() {
           </form>
         </div>
       </div>
-    </div>
+    </div >
   );
 }

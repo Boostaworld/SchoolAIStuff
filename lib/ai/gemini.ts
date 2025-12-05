@@ -271,17 +271,6 @@ export const analyzeImageWithVision = async (
       // Add current message with image
       {
         role: 'user' as const,
-        parts: [
-          {
-            inlineData: {
-              mimeType: mimeType,
-              data: cleanBase64
-            }
-          },
-          {
-            text: prompt || 'What do you see in this image?'
-          }
-        ]
       }
     ];
 
@@ -421,7 +410,7 @@ If you cannot read the form clearly, explain why.`;
 export interface ChatRequest {
   message: string;
   model: string;
-  thinkingLevel?: 'low' | 'medium' | 'high';
+  thinkingLevel?: 'low' | 'medium' | 'high' | 'max';
   systemInstructions?: string;
   temperature?: number;
   maxTokens?: number;
@@ -462,9 +451,10 @@ export const sendChatMessage = async (request: ChatRequest): Promise<ChatRespons
     ];
 
     // Configure thinking based on model and level
+    const isMaxThinking = request.thinkingLevel === 'max';
     const config: any = {
       temperature: request.model.includes('gemini-3') ? 1.0 : (request.temperature ?? 0.7),
-      maxOutputTokens: request.maxTokens ?? 4096,
+      maxOutputTokens: isMaxThinking ? 65536 : (request.maxTokens ?? 4096),
       safetySettings: [
         { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
         { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -485,12 +475,27 @@ export const sendChatMessage = async (request: ChatRequest): Promise<ChatRespons
       const thinkingBudgets = {
         'low': 2048,
         'medium': 8192,
-        'high': 16384
+        'high': 16384,
+        'max': 65535  // API maximum
       };
       config.thinkingConfig = {
         thinkingBudget: thinkingBudgets[request.thinkingLevel],
         includeThoughts: true // Enable viewing model's reasoning
       };
+    }
+
+    // Enable Google Search grounding for Gemini 3.0 models
+    if (request.model.includes('gemini-3') || request.model.includes('3.0')) {
+      config.tools = [
+        { googleSearch: {} },
+        { urlContext: {} }
+      ];
+      console.log('[Gemini 3.0] Config for', request.model, ':', {
+        hasTools: true,
+        tools: config.tools,
+        thinkingLevel: request.thinkingLevel,
+        maxOutputTokens: config.maxOutputTokens
+      });
     }
 
     // Use streaming to get live thoughts and response
