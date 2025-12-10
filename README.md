@@ -68,9 +68,8 @@ Orbit OS is a gamified typing training platform featuring a real-time economy, A
 
 ## 📚 Documentation
 
-- **[MASTER_ROADMAP.md](./MASTER_ROADMAP.md)**: Detailed technical plan and feature inventory.
-- **[handoff.md](./handoff.md)**: High-level summary for developers.
-- **[implementation_plan.md](./implementation_plan.md)**: Current active task plan.
+- **[PROGRESS.md](./PROGRESS.md)**: Current roadmap, active sprint status, and recent completions.
+- **[docs/archive/](./docs/archive/)**: Deprecated plans and historical logs.
 
 ## 📂 Codebase Structure
 

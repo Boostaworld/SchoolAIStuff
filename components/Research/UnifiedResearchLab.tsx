@@ -1,970 +1,1407 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Upload, Send, X, Loader2, Image as ImageIcon, FileText, Zap, CheckCircle2, Database, BrainCircuit, Settings, Lock, Search, Sparkles } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Upload, Send, X, Loader2, Image as ImageIcon, MessageSquare, Settings as SettingsIcon, Trash2, BrainCircuit, Sparkles, Share2, FolderOpen, Plus, Search, Zap, Globe, Sliders, FileText, ExternalLink, Copy, BookOpen, Crown, Pencil, ChevronUp, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useOrbitStore } from '../../store/useOrbitStore';
 import { LockedResearchLab } from './LockedResearchLab';
 import { useToast } from '../Shared/ToastManager';
-import { analyzeImageWithVision, analyzeGoogleForm, VisionMessage } from '../../lib/ai/gemini';
-import { IntelResults } from '../Intel/IntelResults';
-import { SaveDropModal } from '../Intel/SaveDropModal';
-import { toast } from '@/lib/toast';
+import { analyzeImageWithVision, VisionMessage, sendChatMessage, ChatRequest } from '../../lib/ai/gemini';
+import { runIntelQuery, IntelResult } from '../../lib/ai/intel';
 import clsx from 'clsx';
 import { MarkdownRenderer } from '../Social/MarkdownRenderer';
+import { ConfirmModal } from '../Shared/ConfirmModal';
 
-type Tab = 'intel' | 'vision';
+// ============================================================================
+// TYPES
+// ============================================================================
+type ResearchTab = 'quick-chat' | 'deep-research' | 'intel-research' | 'settings';
 
-interface VisionMessage {
-  id: string;
-  role: 'user' | 'model';
-  text: string;
-  image?: string;
-  timestamp: Date;
+interface ChatMessage {
+    id: string;
+    role: 'user' | 'model';
+    text: string;
+    thinking?: string;
+    timestamp: Date;
 }
 
-const VISION_MODELS = [
-  { id: 'gemini-2.0-flash-exp', name: 'Flash Experimental', badge: 'FAST', color: 'cyan', requiredAccess: 'flash' },
-  { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', badge: 'BALANCED', color: 'purple', requiredAccess: 'pro' },
-  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', badge: 'VISION+', color: 'amber', requiredAccess: 'flash' },
-  { id: 'gemini-exp-1206', name: 'Gemini Experimental', badge: 'NEXT-GEN', color: 'green', requiredAccess: 'orbit-x' },
+interface ResearchTopic {
+    id: string;
+    name: string;
+    messages: ChatMessage[];
+    createdAt: Date;
+    updatedAt: Date;
+}
+
+interface IntelReport {
+    id: string;
+    title: string;
+    bullets: Array<{ text: string; sourceIndex?: number }>;
+    sources: Array<{ title: string; url: string; snippet: string }>;
+    relatedConcepts: string[];
+    essay?: string;
+    depth: 'light' | 'standard' | 'deep' | 'max';
+    essayEnabled: boolean;
+    createdAt: Date;
+}
+
+const DEPTH_OPTIONS = [
+    { id: 'light' as const, label: 'Light', bullets: '3-5', color: 'cyan' },
+    { id: 'standard' as const, label: 'Standard', bullets: '8-12', color: 'blue' },
+    { id: 'deep' as const, label: 'Deep', bullets: '15-20', color: 'purple' },
+    { id: 'max' as const, label: 'MAX/GOD MODE', bullets: '25+', color: 'amber', restricted: true },
 ];
 
-export const UnifiedResearchLab: React.FC = () => {
-  const { currentUser, sendIntelQuery, isIntelLoading, currentIntelResult, intelMessages, clearIntelHistory } = useOrbitStore();
-  const toastManager = useToast();
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const chatEndRef = useRef<HTMLDivElement>(null);
+// ============================================================================
+// MODEL DEFINITIONS
+// ============================================================================
+const ALL_MODELS = [
+    {
+        id: 'gemini-2.5-flash',
+        name: 'Gemini 2.5 Flash',
+        badge: 'FAST',
+        color: 'cyan',
+        tier: 1,
+        permissionKey: 'flash', // maps to unlocked_models
+        capabilities: { chat: true, vision: true, imageGen: false, web: true, thinking: true, thinkingDefault: false }
+    },
+    {
+        id: 'gemini-2.5-pro',
+        name: 'Gemini 2.5 Pro',
+        badge: 'BEST',
+        color: 'purple',
+        tier: 2,
+        permissionKey: 'pro', // maps to unlocked_models
+        capabilities: { chat: true, vision: true, imageGen: false, web: true, thinking: true, thinkingDefault: false }
+    },
+    {
+        id: 'gemini-2.0-flash-exp',
+        name: 'Gemini 2.0 Flash Exp',
+        badge: 'EXPERIMENTAL',
+        color: 'amber',
+        tier: 1,
+        permissionKey: 'flash', // shares permission with flash
+        capabilities: { chat: true, vision: true, imageGen: false, web: true, thinking: false, thinkingDefault: false }
+    },
+    {
+        id: 'gemini-3-pro',
+        name: 'Gemini 3.0 Pro',
+        badge: 'STABLE',
+        color: 'teal',
+        tier: 3,
+        permissionKey: 'gemini-3-pro', // maps to unlocked_models
+        capabilities: { chat: true, vision: true, imageGen: false, web: true, thinking: true, thinkingDefault: true }
+    },
+    {
+        id: 'gemini-3-pro-preview',
+        name: 'Gemini 3.0 Pro Preview',
+        badge: 'BETA/MAX',
+        color: 'emerald',
+        tier: 3,
+        permissionKey: 'gemini-3-pro', // shares permission with gemini-3-pro
+        capabilities: { chat: true, vision: true, imageGen: false, web: true, thinking: true, thinkingDefault: true }
+    },
+];
 
-  // Tab state
-  const [activeTab, setActiveTab] = useState<Tab>('intel');
+// Helper to filter models based on user permissions
+const getAvailableModels = (unlockedModels: string[] | undefined) => {
+    if (!unlockedModels || unlockedModels.length === 0) return [];
+    return ALL_MODELS.filter(m => unlockedModels.includes(m.permissionKey));
+};
 
-  // Intel Engine state
-  const [intelQuery, setIntelQuery] = useState('');
-  const [showCommandDeck, setShowCommandDeck] = useState(false);
-  const [selectedIntelModel, setSelectedIntelModel] = useState<'flash' | 'pro' | 'orbit-x' | 'gemini-3-pro' | 'gemini-3-image'>('flash');
-  const [depth, setDepth] = useState(3);
-  const [researchMode, setResearchMode] = useState(false);
-  const [customInstructions, setCustomInstructions] = useState('');
-  const [thinkingLevel, setThinkingLevel] = useState<'low' | 'medium' | 'high'>('medium');
-  const [showSaveModal, setShowSaveModal] = useState(false);
-  const [currentQuery, setCurrentQuery] = useState('');
+// ============================================================================
+// CUSTOMIZATION PANEL COMPONENT
+// ============================================================================
+interface CustomizationPanelProps {
+    availableModels: typeof ALL_MODELS; // Filtered models based on permissions
+    selectedModel: string;
+    setSelectedModel: (id: string) => void;
+    thinkingEnabled: boolean;
+    setThinkingEnabled: (v: boolean) => void;
+    thinkingLevel: 'low' | 'medium' | 'high';
+    setThinkingLevel: (v: 'low' | 'medium' | 'high') => void;
+    webSearchEnabled: boolean;
+    setWebSearchEnabled: (v: boolean) => void;
+    temperature: number;
+    setTemperature: (v: number) => void;
+    systemInstructions?: string;
+    setSystemInstructions?: (v: string) => void;
+    showSystemInstructions?: boolean;
+    isExpanded: boolean;
+    setIsExpanded: (v: boolean) => void;
+}
 
-  // Vision Lab state
-  const [visionMessages, setVisionMessages] = useState<VisionMessage[]>([]);
-  const [visionInput, setVisionInput] = useState('');
-  const [uploadedImage, setUploadedImage] = useState<string | null>(null);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [selectedVisionModel, setSelectedVisionModel] = useState<string>('gemini-2.0-flash-exp');
-  const [isFormMode, setIsFormMode] = useState(false);
+const CustomizationPanel: React.FC<CustomizationPanelProps> = ({
+    availableModels,
+    selectedModel,
+    setSelectedModel,
+    thinkingEnabled,
+    setThinkingEnabled,
+    thinkingLevel,
+    setThinkingLevel,
+    webSearchEnabled,
+    setWebSearchEnabled,
+    temperature,
+    setTemperature,
+    systemInstructions,
+    setSystemInstructions,
+    showSystemInstructions = false,
+    isExpanded,
+    setIsExpanded
+}) => {
+    const currentModel = availableModels.find(m => m.id === selectedModel) || ALL_MODELS.find(m => m.id === selectedModel);
 
-  // Access control
-  const hasAccess = currentUser?.can_customize_ai;
-  const canCustomize = !!currentUser?.can_customize_ai;
-  const unlockedModels = useMemo(() => {
-    if (currentUser?.isAdmin) {
-      return ['flash', 'pro', 'orbit-x', 'gemini-3-pro', 'gemini-3-image'];
-    }
-    return currentUser?.unlocked_models || ['flash'];
-  }, [currentUser?.unlocked_models, currentUser?.isAdmin]);
-  const conversationLength = intelMessages.length;
-
-  const intelModels = [
-    { id: 'flash' as const, name: 'Flash 2.5', color: 'from-cyan-500 to-blue-500', locked: false, tier: 1 },
-    { id: 'pro' as const, name: 'Pro 2.5', color: 'from-purple-500 to-pink-500', locked: !unlockedModels.includes('pro'), tier: 2 },
-    { id: 'orbit-x' as const, name: 'Orbit-X', color: 'from-violet-500 to-indigo-500', locked: !unlockedModels.includes('orbit-x'), tier: 3 },
-    { id: 'gemini-3-pro' as const, name: 'Gemini 3.0 Pro', color: 'from-emerald-500 to-teal-500', locked: !unlockedModels.includes('gemini-3-pro'), tier: 4 },
-    { id: 'gemini-3-image' as const, name: 'Gemini 3.0 Image', color: 'from-rose-500 to-orange-500', locked: !unlockedModels.includes('gemini-3-image'), tier: 4 }
-  ];
-
-  const availableVisionModels = VISION_MODELS.filter(model => {
-    if (model.requiredAccess === 'flash') return unlockedModels.includes('flash');
-    if (model.requiredAccess === 'pro') return unlockedModels.includes('pro');
-    return false;
-  });
-
-  const supportsThinkingLevel = ['gemini-3-pro', 'gemini-3-image'].includes(selectedIntelModel);
-
-  // If no access, show locked screen
-  if (!hasAccess) {
-    return <LockedResearchLab />;
-  }
-
-  // Auto-scroll for vision chat
-  useEffect(() => {
-    if (activeTab === 'vision') {
-      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [visionMessages, activeTab]);
-
-  // Intel Engine handlers
-  const handleIntelSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!intelQuery.trim() || isIntelLoading) return;
-
-    setCurrentQuery(intelQuery);
-    const queryToSend = intelQuery;
-    setIntelQuery('');
-    try {
-      const effectiveDepth = canCustomize ? depth : Math.min(depth, 3);
-      const effectiveModel = unlockedModels.includes(selectedIntelModel) ? selectedIntelModel : 'flash';
-      await sendIntelQuery(queryToSend, {
-        depthLevel: effectiveDepth,
-        modelUsed: effectiveModel,
-        researchMode,
-        customInstructions: customInstructions.trim() || undefined,
-        thinkingLevel
-      });
-    } catch (error) {
-      // Error already handled
-    }
-  };
-
-  const handleFollowUp = async (followUpQuery: string) => {
-    try {
-      const effectiveModel = unlockedModels.includes(selectedIntelModel) ? selectedIntelModel : 'flash';
-      await sendIntelQuery(followUpQuery, {
-        modelUsed: effectiveModel,
-        conversationMode: true
-      });
-    } catch (error) {
-      // Error already handled
-    }
-  };
-
-  const openSettings = () => {
-    setSelectedIntelModel(unlockedModels.includes(selectedIntelModel) ? selectedIntelModel : 'flash');
-    setDepth(canCustomize ? depth : Math.min(depth, 3));
-    setCustomInstructions(currentUser?.intel_instructions || '');
-    setResearchMode(false);
-    setShowCommandDeck(true);
-  };
-
-  const saveSettings = () => {
-    if (!canCustomize && depth > 3) {
-      setDepth(3);
-      toast.error('Depth above 3 requires AI+ access');
-      return;
-    }
-    if (!unlockedModels.includes(selectedIntelModel)) {
-      setSelectedIntelModel('flash');
-      toast.error('Model not unlocked; using Flash');
-      return;
-    }
-    setShowCommandDeck(false);
-    toast.success('Intel settings saved');
-  };
-
-  // Vision Lab handlers
-  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    if (!file.type.startsWith('image/')) {
-      toastManager.error('Invalid file type', { description: 'Please upload an image file' });
-      return;
-    }
-
-    if (file.size > 4 * 1024 * 1024) {
-      toastManager.error('File too large', { description: 'Max file size is 4MB' });
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const base64 = e.target?.result as string;
-      setUploadedImage(base64);
-      toastManager.success('Image uploaded', { description: file.name });
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleVisionSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if ((!visionInput.trim() && !uploadedImage) || isAnalyzing) return;
-    if (!uploadedImage) {
-      toastManager.error('No image uploaded', { description: 'Please upload or paste an image first' });
-      return;
-    }
-
-    const userMessage: VisionMessage = {
-      id: Date.now().toString(),
-      role: 'user',
-      text: visionInput || (isFormMode ? 'Analyze this Google Form' : 'What do you see in this image?'),
-      image: uploadedImage,
-      timestamp: new Date()
-    };
-
-    setVisionMessages(prev => [...prev, userMessage]);
-    setVisionInput('');
-    setIsAnalyzing(true);
-
-    try {
-      const history: VisionMessage[] = visionMessages.map(msg => ({
-        role: msg.role,
-        text: msg.text,
-        image: msg.image
-      }));
-
-      let response;
-
-      if (isFormMode) {
-        response = await analyzeGoogleForm(uploadedImage, selectedVisionModel);
-      } else {
-        response = await analyzeImageWithVision(
-          uploadedImage,
-          visionInput || 'What do you see in this image?',
-          selectedVisionModel,
-          history
-        );
-      }
-
-      const aiMessage: VisionMessage = {
-        id: (Date.now() + 1).toString(),
-        role: 'model',
-        text: response.text,
-        timestamp: new Date()
-      };
-
-      setVisionMessages(prev => [...prev, aiMessage]);
-      setUploadedImage(null);
-      setIsFormMode(false);
-
-      toastManager.success('Analysis complete', {
-        description: `Processed with ${VISION_MODELS.find(m => m.id === selectedVisionModel)?.name}`,
-        duration: 3000
-      });
-
-    } catch (error: any) {
-      toastManager.error('Analysis failed', {
-        description: error.message || 'Please try again',
-        duration: 5000
-      });
-      console.error('Vision analysis error:', error);
-    } finally {
-      setIsAnalyzing(false);
-    }
-  };
-
-  // Paste handler for vision
-  useEffect(() => {
-    if (activeTab !== 'vision') return;
-
-    const handlePaste = (e: ClipboardEvent) => {
-      const items = e.clipboardData?.items;
-      if (!items) return;
-
-      for (let i = 0; i < items.length; i++) {
-        if (items[i].type.indexOf('image') !== -1) {
-          const blob = items[i].getAsFile();
-          if (!blob) continue;
-
-          if (blob.size > 4 * 1024 * 1024) {
-            toastManager.error('Image too large', { description: 'Max file size is 4MB' });
-            return;
-          }
-
-          const reader = new FileReader();
-          reader.onload = (event) => {
-            const base64 = event.target?.result as string;
-            setUploadedImage(base64);
-            toastManager.success('Image pasted!', { description: 'Ready to analyze' });
-          };
-          reader.readAsDataURL(blob);
-          break;
-        }
-      }
-    };
-
-    document.addEventListener('paste', handlePaste);
-    return () => document.removeEventListener('paste', handlePaste);
-  }, [activeTab, toastManager]);
-
-  return (
-    <div className="h-full flex flex-col bg-gradient-to-br from-slate-950 via-black to-slate-950 relative overflow-hidden">
-      {/* Animated grid background */}
-      <div className="absolute inset-0 opacity-5 pointer-events-none">
-        <div className="absolute inset-0" style={{
-          backgroundImage: `
-            linear-gradient(rgba(6, 182, 212, 0.2) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(6, 182, 212, 0.2) 1px, transparent 1px)
-          `,
-          backgroundSize: '40px 40px',
-          animation: 'gridScroll 20s linear infinite'
-        }} />
-      </div>
-
-      {/* Header with tab switcher */}
-      <div className="flex-shrink-0 border-b-2 border-cyan-500/30 bg-black/40 backdrop-blur-sm relative z-10">
-        <div className="px-4 py-3">
-          {/* Status bar */}
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                <span className="text-green-400 font-mono text-xs tracking-wider font-bold">
-                  SYSTEM ONLINE
-                </span>
-              </div>
-              <div className="h-4 w-px bg-cyan-500/30" />
-              <span className="text-cyan-400 font-mono text-xs font-bold">
-                CLEARANCE: AI+
-              </span>
-            </div>
-            {activeTab === 'intel' && (
-              <div className="flex items-center gap-2">
-                {conversationLength > 0 && (
-                  <div className="flex items-center gap-2 mr-2">
-                    <span className="text-slate-600 text-xs font-mono">THREAD:</span>
-                    <span className="text-violet-400 flex items-center gap-1 text-xs font-mono">
-                      <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
-                      {Math.floor(conversationLength / 2)} msg{Math.floor(conversationLength / 2) !== 1 ? 's' : ''}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        clearIntelHistory();
-                        setCurrentQuery('');
-                      }}
-                      className="px-2 py-0.5 rounded border border-slate-700 text-[9px] uppercase tracking-wider text-slate-500 hover:text-red-400 hover:border-red-500/50 transition-colors font-mono"
-                    >
-                      Clear
-                    </button>
-                  </div>
-                )}
-                <button
-                  type="button"
-                  onClick={openSettings}
-                  className="flex items-center gap-1 px-2 py-1 rounded-md border border-slate-800 text-[10px] uppercase tracking-wider text-slate-400 hover:text-cyan-300 hover:border-cyan-500/50 transition-colors font-mono"
-                >
-                  <Settings className="w-3.5 h-3.5" />
-                  Settings
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Tab switcher */}
-          <div className="flex gap-2 relative">
-            <motion.div
-              className="absolute bottom-0 h-0.5 bg-gradient-to-r from-cyan-400 to-teal-400"
-              animate={{
-                left: activeTab === 'intel' ? '0%' : '50%',
-                width: '50%'
-              }}
-              transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-            />
+    return (
+        <div className="border-t border-slate-800 bg-slate-900/50">
+            {/* Toggle Header */}
             <button
-              onClick={() => setActiveTab('intel')}
-              className={clsx(
-                "flex-1 px-4 py-2 font-mono text-sm font-bold uppercase tracking-wider transition-all border-2 relative overflow-hidden",
-                activeTab === 'intel'
-                  ? 'bg-cyan-500/10 border-cyan-500/50 text-cyan-300'
-                  : 'bg-transparent border-slate-800 text-slate-500 hover:border-cyan-500/30 hover:text-slate-400'
-              )}
+                onClick={() => setIsExpanded(!isExpanded)}
+                className="w-full px-4 py-2 flex items-center justify-between text-slate-400 hover:text-slate-200 transition-colors"
             >
-              {activeTab === 'intel' && (
-                <motion.div
-                  className="absolute inset-0 bg-gradient-to-b from-transparent via-cyan-500/20 to-transparent"
-                  animate={{ top: ['-100%', '200%'] }}
-                  transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
-                />
-              )}
-              <span className="relative flex items-center justify-center gap-2">
-                <Database className="w-4 h-4" />
-                INTEL ENGINE
-              </span>
-            </button>
-            <button
-              onClick={() => setActiveTab('vision')}
-              className={clsx(
-                "flex-1 px-4 py-2 font-mono text-sm font-bold uppercase tracking-wider transition-all border-2 relative overflow-hidden",
-                activeTab === 'vision'
-                  ? 'bg-orange-500/10 border-orange-500/50 text-orange-300'
-                  : 'bg-transparent border-slate-800 text-slate-500 hover:border-orange-500/30 hover:text-slate-400'
-              )}
-            >
-              {activeTab === 'vision' && (
-                <motion.div
-                  className="absolute inset-0 bg-gradient-to-b from-transparent via-orange-500/20 to-transparent"
-                  animate={{ top: ['-100%', '200%'] }}
-                  transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
-                />
-              )}
-              <span className="relative flex items-center justify-center gap-2">
-                <ImageIcon className="w-4 h-4" />
-                VISION LAB
-              </span>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Content area */}
-      <AnimatePresence mode="wait">
-        {activeTab === 'intel' ? (
-          <motion.div
-            key="intel"
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 20 }}
-            transition={{ duration: 0.3 }}
-            className="flex-1 flex flex-col overflow-hidden"
-          >
-            {/* Intel search area */}
-            <div className="p-4 border-b border-slate-800 bg-slate-900/40 space-y-3 flex-shrink-0">
-              <form onSubmit={handleIntelSubmit} className="relative">
-                <div className="relative group">
-                  <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/20 to-violet-500/20 rounded-lg opacity-0 group-focus-within:opacity-100 blur transition-opacity" />
-                  <div className="relative flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg overflow-hidden group-focus-within:border-cyan-500/50 transition-colors">
-                    <Search className="w-4 h-4 text-slate-500 ml-3" />
-                    <input
-                      type="text"
-                      value={intelQuery}
-                      onChange={(e) => setIntelQuery(e.target.value)}
-                      placeholder="Enter research query..."
-                      disabled={isIntelLoading}
-                      className="flex-1 bg-transparent px-2 py-3 text-sm text-slate-200 focus:outline-none placeholder:text-slate-600 font-mono"
-                    />
-                    <button
-                      type="submit"
-                      disabled={!intelQuery.trim() || isIntelLoading}
-                      className="px-4 py-3 bg-gradient-to-r from-cyan-600 to-violet-600 text-white font-mono text-xs uppercase tracking-wider disabled:opacity-50 disabled:cursor-not-allowed hover:from-cyan-500 hover:to-violet-500 transition-all"
-                    >
-                      {isIntelLoading ? (
-                        <span className="flex items-center gap-2">
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          PROCESSING
-                        </span>
-                      ) : (
-                        'EXECUTE'
-                      )}
-                    </button>
-                  </div>
+                <div className="flex items-center gap-2">
+                    <Sliders className="w-4 h-4" />
+                    <span className="text-xs font-mono uppercase tracking-wider">Customize</span>
                 </div>
-              </form>
+                <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-600">{currentModel?.name}</span>
+                    <motion.div animate={{ rotate: isExpanded ? 180 : 0 }}>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                    </motion.div>
+                </div>
+            </button>
 
-              <div className="flex items-center justify-between">
-                <p className="text-[10px] text-slate-500 font-mono uppercase tracking-wide">
-                  Query structured intelligence from global sources
-                </p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setResearchMode(!researchMode);
-                  }}
-                  disabled={isIntelLoading}
-                  className={clsx(
-                    "flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all text-xs font-mono disabled:opacity-50",
-                    researchMode
-                      ? "bg-violet-500/10 border-violet-500 text-violet-300 shadow-[0_0_10px_rgba(139,92,246,0.3)]"
-                      : "bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500"
-                  )}
-                >
-                  <div className="relative">
-                    <BrainCircuit className={clsx("w-3.5 h-3.5", researchMode && "animate-pulse")} />
-                    {researchMode && (
-                      <motion.div
-                        layoutId="sparkles"
-                        className="absolute -top-1 -right-1"
-                      >
-                        <Sparkles className="w-2 h-2 text-yellow-400" />
-                      </motion.div>
-                    )}
-                  </div>
-                  <span>DEEP THINKING</span>
-                  {researchMode && <span className="px-1 bg-violet-600 text-white text-[9px] rounded ml-1">ACTIVE</span>}
-                </button>
-              </div>
-            </div>
-
-            {/* Intel results area */}
-            <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
-              <AnimatePresence mode="wait">
-                {isIntelLoading && (
-                  <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    className="flex flex-col items-center justify-center h-full gap-6"
-                  >
-                    <div className="relative">
-                      <div className="w-20 h-20 border-4 border-slate-800 rounded-full" />
-                      <div className="absolute inset-0 w-20 h-20 border-4 border-transparent rounded-full animate-spin border-t-cyan-500 border-r-violet-500" />
-                    </div>
-                    <div className="text-center max-w-xs">
-                      <p className="font-mono text-sm uppercase tracking-widest mb-2 text-slate-400">
-                        Analyzing Query
-                      </p>
-                      <div className="flex gap-1 justify-center mt-2">
-                        <span className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-pulse" style={{ animationDelay: '0ms' }} />
-                        <span className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-pulse" style={{ animationDelay: '150ms' }} />
-                        <span className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-pulse" style={{ animationDelay: '300ms' }} />
-                      </div>
-                    </div>
-                  </motion.div>
-                )}
-
-                {!isIntelLoading && currentIntelResult && (
-                  <IntelResults
-                    result={currentIntelResult}
-                    query={currentQuery}
-                    onSave={() => setShowSaveModal(true)}
-                    onFollowUp={handleFollowUp}
-                    isLoading={isIntelLoading}
-                  />
-                )}
-
-                {!isIntelLoading && !currentIntelResult && (
-                  <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    className="flex flex-col items-center justify-center h-full text-center gap-4"
-                  >
-                    <div className="w-20 h-20 rounded-full bg-slate-800/50 flex items-center justify-center border border-slate-700">
-                      <Database className="w-10 h-10 text-slate-600" />
-                    </div>
-                    <div>
-                      <p className="text-slate-400 font-mono text-sm uppercase tracking-widest mb-1">No Active Query</p>
-                      <p className="text-slate-600 text-xs max-w-xs">
-                        Execute a research query to generate structured intelligence dossiers
-                      </p>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          </motion.div>
-        ) : (
-          <motion.div
-            key="vision"
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            transition={{ duration: 0.3 }}
-            className="flex-1 flex flex-col overflow-hidden"
-          >
-            {/* Vision model selector */}
-            <div className="px-4 py-3 border-b border-slate-800 bg-slate-900/40 flex-shrink-0">
-              <div className="flex items-center gap-3">
-                <label className="text-slate-400 text-xs font-mono">VISION MODEL:</label>
-                <select
-                  value={selectedVisionModel}
-                  onChange={(e) => setSelectedVisionModel(e.target.value)}
-                  className="bg-slate-900/50 border border-orange-500/30 text-orange-300 px-3 py-1 text-xs font-mono focus:outline-none focus:border-orange-500 transition-colors"
-                >
-                  {availableVisionModels.map(model => (
-                    <option key={model.id} value={model.id}>
-                      {model.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {/* Vision chat messages */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 relative z-10">
-              <AnimatePresence>
-                {visionMessages.map((message, index) => (
-                  <motion.div
-                    key={message.id}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.3, delay: index * 0.05 }}
-                    className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                  >
-                    <div className={`max-w-[80%] ${message.role === 'user' ? 'bg-orange-950/50 border-orange-500/50' : 'bg-slate-900/50 border-slate-700/50'} border-2 p-4 relative`}>
-                      {/* Corner brackets */}
-                      <div className="absolute top-0 left-0 w-3 h-3 border-t-2 border-l-2 border-current opacity-50" />
-                      <div className="absolute top-0 right-0 w-3 h-3 border-t-2 border-r-2 border-current opacity-50" />
-                      <div className="absolute bottom-0 left-0 w-3 h-3 border-b-2 border-l-2 border-current opacity-50" />
-                      <div className="absolute bottom-0 right-0 w-3 h-3 border-b-2 border-r-2 border-current opacity-50" />
-
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className={`text-xs font-mono font-bold ${message.role === 'user' ? 'text-orange-400' : 'text-slate-400'}`}>
-                          {message.role === 'user' ? 'OPERATOR' : 'AI ANALYSIS'}
-                        </span>
-                        <span className="text-[10px] text-slate-600 font-mono">
-                          {message.timestamp.toLocaleTimeString()}
-                        </span>
-                      </div>
-
-                      {message.image && (
-                        <div className="mb-3">
-                          <img
-                            src={message.image}
-                            alt="Uploaded"
-                            className="max-w-full h-auto border border-orange-500/30 rounded"
-                          />
-                        </div>
-                      )}
-
-                      <div className="text-slate-300 text-sm font-mono leading-relaxed">
-                        <MarkdownRenderer content={message.text} />
-                      </div>
-                    </div>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
-
-              {isAnalyzing && (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="flex justify-start"
-                >
-                  <div className="bg-slate-900/50 border-2 border-orange-500/50 p-4 relative">
-                    <div className="absolute top-0 left-0 w-3 h-3 border-t-2 border-l-2 border-orange-500" />
-                    <div className="absolute top-0 right-0 w-3 h-3 border-t-2 border-r-2 border-orange-500" />
-
-                    <div className="flex items-center gap-3">
-                      <Loader2 className="w-5 h-5 text-orange-400 animate-spin" />
-                      <span className="text-orange-400 font-mono text-sm font-bold">
-                        ANALYZING...
-                      </span>
-                    </div>
-
-                    <motion.div
-                      className="absolute inset-0 bg-gradient-to-b from-transparent via-orange-500/20 to-transparent"
-                      animate={{ top: ['-100%', '200%'] }}
-                      transition={{ duration: 1.5, repeat: Infinity, ease: 'linear' }}
-                    />
-                  </div>
-                </motion.div>
-              )}
-
-              <div ref={chatEndRef} />
-            </div>
-
-            {/* Image preview */}
+            {/* Expanded Panel */}
             <AnimatePresence>
-              {uploadedImage && !isAnalyzing && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  className="flex-shrink-0 border-t-2 border-orange-500/30 bg-black/60 backdrop-blur-sm p-4 relative z-10"
-                >
-                  <div className="flex items-start gap-4">
-                    <div className="relative flex-shrink-0">
-                      <img
-                        src={uploadedImage}
-                        alt="Preview"
-                        className="w-32 h-32 object-cover border-2 border-orange-500/50"
-                      />
-                      <motion.div
-                        className="absolute inset-0 bg-gradient-to-b from-transparent via-orange-500/30 to-transparent"
-                        animate={{ top: ['-100%', '100%'] }}
-                        transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
-                      />
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-2">
-                        <CheckCircle2 className="w-4 h-4 text-green-400" />
-                        <span className="text-green-400 font-mono text-xs font-bold">
-                          IMAGE LOADED
-                        </span>
-                      </div>
-                      <p className="text-slate-400 text-xs font-mono mb-3">
-                        Ready for analysis. Choose mode below:
-                      </p>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => setIsFormMode(false)}
-                          className={`px-3 py-1 text-xs font-mono font-bold border-2 transition-all ${!isFormMode
-                            ? 'bg-orange-500/20 border-orange-500 text-orange-300'
-                            : 'bg-transparent border-slate-700 text-slate-500 hover:border-orange-500/50'
-                            }`}
-                        >
-                          <ImageIcon className="w-3 h-3 inline mr-1" />
-                          GENERAL
-                        </button>
-                        <button
-                          onClick={() => setIsFormMode(true)}
-                          className={`px-3 py-1 text-xs font-mono font-bold border-2 transition-all ${isFormMode
-                            ? 'bg-amber-500/20 border-amber-500 text-amber-300'
-                            : 'bg-transparent border-slate-700 text-slate-500 hover:border-amber-500/50'
-                            }`}
-                        >
-                          <FileText className="w-3 h-3 inline mr-1" />
-                          GOOGLE FORM
-                        </button>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => setUploadedImage(null)}
-                      className="flex-shrink-0 p-2 bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20 transition-colors"
+                {isExpanded && (
+                    <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        className="overflow-hidden"
                     >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-                </motion.div>
-              )}
+                        <div className="p-4 space-y-4 border-t border-slate-800">
+                            {/* Model Selection */}
+                            <div>
+                                <label className="text-xs text-cyan-400 font-mono uppercase mb-2 block">Model</label>
+                                {availableModels.length === 0 ? (
+                                    <div className="p-3 bg-slate-800/50 border border-slate-700 rounded-lg text-center">
+                                        <p className="text-xs text-slate-500 font-mono">No models unlocked</p>
+                                        <p className="text-[10px] text-slate-600 mt-1">Contact an admin to unlock models</p>
+                                    </div>
+                                ) : (
+                                    <div className="grid grid-cols-2 gap-2">
+                                        {availableModels.map(model => (
+                                            <button
+                                                key={model.id}
+                                                onClick={() => setSelectedModel(model.id)}
+                                                className={clsx(
+                                                    "p-2 rounded-lg border-2 transition-all text-left text-xs",
+                                                    selectedModel === model.id
+                                                        ? `bg-${model.color}-500/20 border-${model.color}-500 text-${model.color}-300`
+                                                        : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-500'
+                                                )}
+                                            >
+                                                <div className="font-bold font-mono">{model.name}</div>
+                                                <div className="opacity-70 mt-0.5">{model.badge}</div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Thinking Toggle + Level */}
+                            {currentModel?.capabilities.thinking && (
+                                <div className="flex items-center gap-4">
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            onClick={() => setThinkingEnabled(!thinkingEnabled)}
+                                            className={clsx(
+                                                "w-10 h-5 rounded-full transition-colors relative",
+                                                thinkingEnabled ? 'bg-emerald-500' : 'bg-slate-700'
+                                            )}
+                                        >
+                                            <div className={clsx(
+                                                "absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform",
+                                                thinkingEnabled ? 'left-5' : 'left-0.5'
+                                            )} />
+                                        </button>
+                                        <span className="text-xs text-slate-400 font-mono flex items-center gap-1">
+                                            <BrainCircuit className="w-3 h-3" /> Thinking
+                                        </span>
+                                    </div>
+                                    {thinkingEnabled && (
+                                        <div className="flex gap-1">
+                                            {(['low', 'medium', 'high'] as const).map(level => (
+                                                <button
+                                                    key={level}
+                                                    onClick={() => setThinkingLevel(level)}
+                                                    className={clsx(
+                                                        "px-2 py-1 rounded text-[10px] font-mono uppercase",
+                                                        thinkingLevel === level
+                                                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500'
+                                                            : 'bg-slate-800 text-slate-500 border border-slate-700'
+                                                    )}
+                                                >
+                                                    {level}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Web Search Toggle */}
+                            {currentModel?.capabilities.web && (
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => setWebSearchEnabled(!webSearchEnabled)}
+                                        className={clsx(
+                                            "w-10 h-5 rounded-full transition-colors relative",
+                                            webSearchEnabled ? 'bg-blue-500' : 'bg-slate-700'
+                                        )}
+                                    >
+                                        <div className={clsx(
+                                            "absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform",
+                                            webSearchEnabled ? 'left-5' : 'left-0.5'
+                                        )} />
+                                    </button>
+                                    <span className="text-xs text-slate-400 font-mono flex items-center gap-1">
+                                        <Globe className="w-3 h-3" /> Web Search
+                                    </span>
+                                </div>
+                            )}
+
+                            {/* Temperature */}
+                            <div>
+                                <div className="flex items-center justify-between mb-1">
+                                    <label className="text-xs text-slate-400 font-mono">Temperature: {temperature.toFixed(1)}</label>
+                                    <span className="text-[10px] text-slate-600">
+                                        {temperature < 0.4 ? 'Precise' : temperature < 0.8 ? 'Balanced' : 'Creative'}
+                                    </span>
+                                </div>
+                                <input
+                                    type="range"
+                                    min="0"
+                                    max="2"
+                                    step="0.1"
+                                    value={temperature}
+                                    onChange={(e) => setTemperature(parseFloat(e.target.value))}
+                                    className="w-full accent-cyan-500"
+                                />
+                            </div>
+
+                            {/* System Instructions (optional) */}
+                            {showSystemInstructions && setSystemInstructions && (
+                                <div>
+                                    <label className="text-xs text-cyan-400 font-mono uppercase mb-1 block">System Instructions</label>
+                                    <textarea
+                                        value={systemInstructions}
+                                        onChange={(e) => setSystemInstructions(e.target.value)}
+                                        placeholder="E.g., 'Always respond in simple terms'..."
+                                        className="w-full h-16 bg-slate-950/50 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-300 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500/50 font-mono resize-none"
+                                    />
+                                </div>
+                            )}
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+        </div>
+    );
+};
+
+// ============================================================================
+// MAIN COMPONENT
+// ============================================================================
+export const UnifiedResearchLab: React.FC = () => {
+    const { currentUser } = useOrbitStore();
+    const toastManager = useToast();
+    const chatEndRef = useRef<HTMLDivElement>(null);
+
+    // Tab state
+    const [activeTab, setActiveTab] = useState<ResearchTab>('quick-chat');
+
+    // Quick Chat state
+    const [quickChatMessages, setQuickChatMessages] = useState<ChatMessage[]>([]);
+    const [quickChatInput, setQuickChatInput] = useState('');
+    const [quickChatLoading, setQuickChatLoading] = useState(false);
+    const [quickChatExpanded, setQuickChatExpanded] = useState(false);
+    const [quickChatModel, setQuickChatModel] = useState('gemini-2.5-flash');
+    const [quickChatThinking, setQuickChatThinking] = useState(false);
+    const [quickChatThinkingLevel, setQuickChatThinkingLevel] = useState<'low' | 'medium' | 'high'>('medium');
+    const [quickChatWebSearch, setQuickChatWebSearch] = useState(false);
+    const [quickChatTemp, setQuickChatTemp] = useState(1.0);
+
+    // Deep Research state
+    const [topics, setTopics] = useState<ResearchTopic[]>([]);
+    const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
+    const [deepResearchInput, setDeepResearchInput] = useState('');
+    const [deepResearchLoading, setDeepResearchLoading] = useState(false);
+    const [deepResearchExpanded, setDeepResearchExpanded] = useState(false);
+    const [deepResearchModel, setDeepResearchModel] = useState('gemini-3-pro-preview');
+    const [deepResearchThinking, setDeepResearchThinking] = useState(true);
+    const [deepResearchThinkingLevel, setDeepResearchThinkingLevel] = useState<'low' | 'medium' | 'high'>('high');
+    const [deepResearchWebSearch, setDeepResearchWebSearch] = useState(true);
+    const [deepResearchTemp, setDeepResearchTemp] = useState(1.0);
+    const [deepResearchSystemInstructions, setDeepResearchSystemInstructions] = useState('');
+
+    // Intel Research state
+    const [intelReports, setIntelReports] = useState<IntelReport[]>([]);
+    const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
+    const [intelQuery, setIntelQuery] = useState('');
+    const [intelDepth, setIntelDepth] = useState<'light' | 'standard' | 'deep' | 'max'>('standard');
+    const [intelEssayEnabled, setIntelEssayEnabled] = useState(false);
+    const [intelModel, setIntelModel] = useState('gemini-3-pro-preview');
+    const [intelLoading, setIntelLoading] = useState(false);
+    const [intelWebSearch, setIntelWebSearch] = useState(true);
+
+    // Delete confirmation state
+    const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean; type: 'topic' | 'report'; id: string | null; name: string }>({ isOpen: false, type: 'topic', id: null, name: '' });
+
+    // Edit Topic Modal state
+    const [editingTopic, setEditingTopic] = useState<ResearchTopic | null>(null);
+    const [editTopicName, setEditTopicName] = useState('');
+
+    // Default Settings state (persisted)
+    const [defaultQuickChatModel, setDefaultQuickChatModel] = useState('gemini-2.5-flash');
+    const [defaultDeepResearchModel, setDefaultDeepResearchModel] = useState('gemini-3-pro-preview');
+
+    // Access control
+    const hasAccess = currentUser?.can_customize_ai;
+
+    // Compute available models based on user permissions
+    const availableModels = getAvailableModels(currentUser?.unlocked_models);
+    const hasMaxMode = currentUser?.unlocked_models?.includes('max-mode') || currentUser?.is_admin;
+
+    // Load topics from localStorage on mount
+    useEffect(() => {
+        const saved = localStorage.getItem('research-topics');
+        if (saved) {
+            try {
+                const parsed = JSON.parse(saved);
+                setTopics(parsed.map((t: any) => ({
+                    ...t,
+                    createdAt: new Date(t.createdAt),
+                    updatedAt: new Date(t.updatedAt),
+                    messages: t.messages.map((m: any) => ({ ...m, timestamp: new Date(m.timestamp) }))
+                })));
+            } catch (e) {
+                console.error('Failed to load topics:', e);
+            }
+        }
+        // Load default models
+        const savedDefaults = localStorage.getItem('research-defaults');
+        if (savedDefaults) {
+            try {
+                const defaults = JSON.parse(savedDefaults);
+                if (defaults.quickChatModel) {
+                    setDefaultQuickChatModel(defaults.quickChatModel);
+                    setQuickChatModel(defaults.quickChatModel);
+                }
+                if (defaults.deepResearchModel) {
+                    setDefaultDeepResearchModel(defaults.deepResearchModel);
+                    setDeepResearchModel(defaults.deepResearchModel);
+                }
+            } catch (e) {
+                console.error('Failed to load defaults:', e);
+            }
+        }
+    }, []);
+
+    // Save topics to localStorage
+    useEffect(() => {
+        if (topics.length > 0) {
+            localStorage.setItem('research-topics', JSON.stringify(topics));
+        }
+    }, [topics]);
+
+    // Auto-scroll
+    useEffect(() => {
+        chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [quickChatMessages, topics]);
+
+    if (!hasAccess) {
+        return <LockedResearchLab />;
+    }
+
+    // ============================================================================
+    // HANDLERS
+    // ============================================================================
+    const handleQuickChatSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!quickChatInput.trim() || quickChatLoading) return;
+
+        const userMessage: ChatMessage = {
+            id: Date.now().toString(),
+            role: 'user',
+            text: quickChatInput,
+            timestamp: new Date()
+        };
+
+        setQuickChatMessages(prev => [...prev, userMessage]);
+        setQuickChatInput('');
+        setQuickChatLoading(true);
+
+        try {
+            const request: ChatRequest = {
+                message: quickChatInput,
+                model: quickChatModel,
+                thinkingLevel: quickChatThinking ? quickChatThinkingLevel : undefined,
+                temperature: quickChatTemp,
+                webSearchEnabled: quickChatWebSearch, // ✨ Pass web search flag
+                conversationHistory: quickChatMessages.map(msg => ({ role: msg.role, text: msg.text }))
+            };
+
+            const response = await sendChatMessage(request);
+
+            const aiMessage: ChatMessage = {
+                id: (Date.now() + 1).toString(),
+                role: 'model',
+                text: response.text,
+                thinking: response.thinking,
+                timestamp: new Date()
+            };
+
+            setQuickChatMessages(prev => [...prev, aiMessage]);
+            toastManager.success('Response received');
+        } catch (error: any) {
+            toastManager.error('Chat failed', { description: error.message });
+        } finally {
+            setQuickChatLoading(false);
+        }
+    };
+
+    const createNewTopic = () => {
+        const newTopic: ResearchTopic = {
+            id: Date.now().toString(),
+            name: `Research ${topics.length + 1}`,
+            messages: [],
+            createdAt: new Date(),
+            updatedAt: new Date()
+        };
+        setTopics(prev => [newTopic, ...prev]);
+        setSelectedTopicId(newTopic.id);
+    };
+
+    const openEditTopic = (topic: ResearchTopic) => {
+        setEditingTopic(topic);
+        setEditTopicName(topic.name);
+    };
+
+    const saveTopicName = () => {
+        if (!editingTopic || !editTopicName.trim()) return;
+        setTopics(prev => prev.map(t =>
+            t.id === editingTopic.id ? { ...t, name: editTopicName.trim(), updatedAt: new Date() } : t
+        ));
+        setEditingTopic(null);
+        toastManager.success('Topic renamed');
+    };
+
+    const moveTopicUp = (index: number) => {
+        if (index === 0) return;
+        setTopics(prev => {
+            const newTopics = [...prev];
+            [newTopics[index - 1], newTopics[index]] = [newTopics[index], newTopics[index - 1]];
+            return newTopics;
+        });
+    };
+
+    const moveTopicDown = (index: number) => {
+        if (index >= topics.length - 1) return;
+        setTopics(prev => {
+            const newTopics = [...prev];
+            [newTopics[index], newTopics[index + 1]] = [newTopics[index + 1], newTopics[index]];
+            return newTopics;
+        });
+    };
+
+    const selectedTopic = topics.find(t => t.id === selectedTopicId);
+
+    const handleDeepResearchSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!deepResearchInput.trim() || deepResearchLoading || !selectedTopicId) return;
+
+        const userMessage: ChatMessage = {
+            id: Date.now().toString(),
+            role: 'user',
+            text: deepResearchInput,
+            timestamp: new Date()
+        };
+
+        // Update topic with new message
+        setTopics(prev => prev.map(t =>
+            t.id === selectedTopicId
+                ? { ...t, messages: [...t.messages, userMessage], updatedAt: new Date() }
+                : t
+        ));
+        setDeepResearchInput('');
+        setDeepResearchLoading(true);
+
+        try {
+            const request: ChatRequest = {
+                message: deepResearchInput,
+                model: deepResearchModel,
+                thinkingLevel: deepResearchThinking ? deepResearchThinkingLevel : undefined,
+                systemInstructions: deepResearchSystemInstructions || undefined,
+                temperature: deepResearchTemp,
+                webSearchEnabled: deepResearchWebSearch, // ✨ Pass web search flag
+                conversationHistory: selectedTopic?.messages.map(msg => ({ role: msg.role, text: msg.text })) || []
+            };
+
+            const response = await sendChatMessage(request);
+
+            const aiMessage: ChatMessage = {
+                id: (Date.now() + 1).toString(),
+                role: 'model',
+                text: response.text,
+                thinking: response.thinking,
+                timestamp: new Date()
+            };
+
+            setTopics(prev => prev.map(t =>
+                t.id === selectedTopicId
+                    ? { ...t, messages: [...t.messages, aiMessage], updatedAt: new Date() }
+                    : t
+            ));
+            toastManager.success('Research updated');
+        } catch (error: any) {
+            toastManager.error('Research failed', { description: error.message });
+        } finally {
+            setDeepResearchLoading(false);
+        }
+    };
+
+    // Intel Research handler
+    const handleIntelSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!intelQuery.trim() || intelLoading) return;
+
+        // Check MAX/GOD MODE restriction - requires 'max-mode' permission
+        const hasMaxMode = currentUser?.unlocked_models?.includes('max-mode') || currentUser?.is_admin;
+        if (intelDepth === 'max' && !hasMaxMode) {
+            toastManager.error('Access Denied', { description: 'MAX/GOD MODE requires special permission.' });
+            return;
+        }
+
+        setIntelLoading(true);
+
+        try {
+            const depthBullets = { light: 5, standard: 12, deep: 20, max: 30 };
+
+            const result = await runIntelQuery({
+                prompt: intelQuery,
+                instructions: `Generate a comprehensive research report with ${depthBullets[intelDepth]} bullet points. ${intelEssayEnabled ? 'Also generate a well-structured MLA-formatted essay.' : ''} Use proper MLA citations for all sources.`,
+                model: intelModel.includes('3-pro') ? 'gemini-3-pro' : 'pro',
+                researchMode: true,
+                depth: depthBullets[intelDepth],
+                thinkingEnabled: true,
+                thinkingLevel: intelDepth === 'max' ? 'high' : 'medium'
+            });
+
+            const newReport: IntelReport = {
+                id: Date.now().toString(),
+                title: intelQuery,
+                bullets: result.summary_bullets.map((text, i) => ({ text, sourceIndex: i < result.sources.length ? i : undefined })),
+                sources: result.sources,
+                relatedConcepts: result.related_concepts,
+                essay: intelEssayEnabled ? result.essay : undefined,
+                depth: intelDepth,
+                essayEnabled: intelEssayEnabled,
+                createdAt: new Date()
+            };
+
+            setIntelReports(prev => [newReport, ...prev]);
+            setSelectedReportId(newReport.id);
+            setIntelQuery('');
+            toastManager.success('Research complete!');
+        } catch (error: any) {
+            toastManager.error('Research failed', { description: error.message });
+        } finally {
+            setIntelLoading(false);
+        }
+    };
+
+    const selectedReport = intelReports.find(r => r.id === selectedReportId);
+
+    const copyToClipboard = (text: string) => {
+        navigator.clipboard.writeText(text);
+        toastManager.success('Copied to clipboard');
+    };
+
+    // ============================================================================
+    // RENDER
+    // ============================================================================
+    return (
+        <div className="h-full flex flex-col bg-gradient-to-br from-slate-950 via-black to-slate-950 relative overflow-hidden">
+            {/* Background Grid */}
+            <div className="absolute inset-0 opacity-5 pointer-events-none">
+                <div className="absolute inset-0" style={{
+                    backgroundImage: `linear-gradient(rgba(6, 182, 212, 0.2) 1px, transparent 1px), linear-gradient(90deg, rgba(6, 182, 212, 0.2) 1px, transparent 1px)`,
+                    backgroundSize: '40px 40px'
+                }} />
+            </div>
+
+            {/* Header with Tabs */}
+            <div className="flex-shrink-0 border-b-2 border-cyan-500/30 bg-black/40 backdrop-blur-sm relative z-10">
+                <div className="px-4 py-3">
+                    {/* Status Bar */}
+                    <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-2">
+                                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                                <span className="text-green-400 font-mono text-xs tracking-wider font-bold">RESEARCH LAB 2.0</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Tab Switcher */}
+                    <div className="flex gap-1">
+                        {[
+                            { id: 'quick-chat' as const, label: 'Quick', icon: <Zap className="w-4 h-4" /> },
+                            { id: 'deep-research' as const, label: 'Deep', icon: <FolderOpen className="w-4 h-4" /> },
+                            { id: 'intel-research' as const, label: 'Intel', icon: <BookOpen className="w-4 h-4" /> },
+                            { id: 'settings' as const, label: 'Settings', icon: <SettingsIcon className="w-4 h-4" /> }
+                        ].map(tab => (
+                            <button
+                                key={tab.id}
+                                onClick={() => setActiveTab(tab.id)}
+                                className={clsx(
+                                    "flex-1 px-3 py-2 font-mono text-xs font-bold uppercase tracking-wider transition-all border-2 flex items-center justify-center gap-2",
+                                    activeTab === tab.id
+                                        ? 'bg-cyan-500/10 border-cyan-500/50 text-cyan-300'
+                                        : 'bg-transparent border-slate-800 text-slate-500 hover:border-cyan-500/30'
+                                )}
+                            >
+                                {tab.icon}
+                                {tab.label}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            </div>
+
+            {/* Content Area */}
+            <div className="flex-1 flex overflow-hidden">
+                <AnimatePresence mode="wait">
+                    {/* ========== QUICK CHAT TAB ========== */}
+                    {activeTab === 'quick-chat' && (
+                        <motion.div
+                            key="quick-chat"
+                            initial={{ opacity: 0, x: -20 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: 20 }}
+                            className="flex-1 flex flex-col overflow-hidden"
+                        >
+                            {/* Messages */}
+                            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                                {quickChatMessages.length === 0 && (
+                                    <div className="flex flex-col items-center justify-center h-full text-center gap-4">
+                                        <div className="w-20 h-20 rounded-full bg-slate-800/50 flex items-center justify-center border border-slate-700">
+                                            <Zap className="w-10 h-10 text-cyan-500/50" />
+                                        </div>
+                                        <div>
+                                            <p className="text-slate-400 font-mono text-sm uppercase tracking-widest mb-1">Quick Chat Ready</p>
+                                            <p className="text-slate-600 text-xs max-w-xs">Fast answers without persistence. Great for quick questions.</p>
+                                        </div>
+                                    </div>
+                                )}
+                                {quickChatMessages.map(msg => (
+                                    <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                        <div className={clsx(
+                                            "max-w-[80%] p-4 rounded-lg border-2",
+                                            msg.role === 'user' ? 'bg-cyan-950/50 border-cyan-500/50' : 'bg-slate-900/50 border-slate-700/50'
+                                        )}>
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <span className={clsx("text-xs font-mono font-bold", msg.role === 'user' ? 'text-cyan-400' : 'text-slate-400')}>
+                                                    {msg.role === 'user' ? 'YOU' : 'AI'}
+                                                </span>
+                                                <span className="text-[10px] text-slate-600 font-mono">{msg.timestamp.toLocaleTimeString()}</span>
+                                            </div>
+                                            {msg.thinking && (
+                                                <details className="bg-slate-800/50 rounded p-2 border border-emerald-500/30 mb-2">
+                                                    <summary className="cursor-pointer text-xs font-mono text-emerald-400 font-bold flex items-center gap-2">
+                                                        <BrainCircuit className="w-3 h-3" /> View Thinking
+                                                    </summary>
+                                                    <div className="mt-2 text-xs text-slate-400 font-mono leading-relaxed whitespace-pre-wrap max-h-32 overflow-y-auto">
+                                                        {msg.thinking}
+                                                    </div>
+                                                </details>
+                                            )}
+                                            <div className="text-slate-300 text-sm font-mono leading-relaxed">
+                                                <MarkdownRenderer content={msg.text} />
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                                {quickChatLoading && (
+                                    <div className="flex justify-start">
+                                        <div className="bg-slate-900/50 border-2 border-cyan-500/50 p-4 rounded-lg flex items-center gap-3">
+                                            <Loader2 className="w-5 h-5 text-cyan-400 animate-spin" />
+                                            <span className="text-cyan-400 font-mono text-sm font-bold">THINKING...</span>
+                                        </div>
+                                    </div>
+                                )}
+                                <div ref={chatEndRef} />
+                            </div>
+
+                            {/* Customization Panel */}
+                            <CustomizationPanel
+                                availableModels={availableModels}
+                                selectedModel={quickChatModel}
+                                setSelectedModel={setQuickChatModel}
+                                thinkingEnabled={quickChatThinking}
+                                setThinkingEnabled={setQuickChatThinking}
+                                thinkingLevel={quickChatThinkingLevel}
+                                setThinkingLevel={setQuickChatThinkingLevel}
+                                webSearchEnabled={quickChatWebSearch}
+                                setWebSearchEnabled={setQuickChatWebSearch}
+                                temperature={quickChatTemp}
+                                setTemperature={setQuickChatTemp}
+                                isExpanded={quickChatExpanded}
+                                setIsExpanded={setQuickChatExpanded}
+                            />
+
+                            {/* Input */}
+                            <div className="flex-shrink-0 border-t-2 border-cyan-500/30 bg-black/40 backdrop-blur-sm p-4">
+                                <form onSubmit={handleQuickChatSubmit} className="flex gap-3">
+                                    <input
+                                        type="text"
+                                        value={quickChatInput}
+                                        onChange={(e) => setQuickChatInput(e.target.value)}
+                                        placeholder="Ask me anything..."
+                                        disabled={quickChatLoading}
+                                        className="flex-1 px-4 py-3 bg-slate-900/50 border-2 border-cyan-500/30 text-slate-300 font-mono text-sm focus:outline-none focus:border-cyan-500 disabled:opacity-50 placeholder:text-slate-600 rounded-lg"
+                                    />
+                                    <button
+                                        type="submit"
+                                        disabled={quickChatLoading || !quickChatInput.trim()}
+                                        className="px-6 py-3 bg-cyan-600 border-2 border-cyan-500 text-black hover:bg-cyan-500 disabled:opacity-50 font-mono font-bold text-sm flex items-center gap-2 rounded-lg"
+                                    >
+                                        {quickChatLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+                                        SEND
+                                    </button>
+                                </form>
+                            </div>
+                        </motion.div>
+                    )}
+
+                    {/* ========== DEEP RESEARCH TAB ========== */}
+                    {activeTab === 'deep-research' && (
+                        <motion.div
+                            key="deep-research"
+                            initial={{ opacity: 0, x: -20 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: 20 }}
+                            className="flex-1 flex overflow-hidden"
+                        >
+                            {/* Sidebar */}
+                            <div className="w-64 border-r border-slate-800 bg-slate-900/30 flex flex-col">
+                                <div className="p-3 border-b border-slate-800">
+                                    <button
+                                        onClick={createNewTopic}
+                                        className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-mono font-bold uppercase rounded-lg flex items-center justify-center gap-2"
+                                    >
+                                        <Plus className="w-4 h-4" /> New Topic
+                                    </button>
+                                </div>
+                                <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                                    {topics.length === 0 && (
+                                        <p className="text-slate-600 text-xs text-center py-4 font-mono">No topics yet</p>
+                                    )}
+                                    {topics.map((topic, index) => (
+                                        <div
+                                            key={topic.id}
+                                            className={clsx(
+                                                "w-full p-2 rounded-lg text-left text-xs font-mono transition-colors flex items-start gap-1 group",
+                                                selectedTopicId === topic.id
+                                                    ? 'bg-emerald-500/20 border border-emerald-500/50 text-emerald-300'
+                                                    : 'bg-slate-800/50 border border-transparent text-slate-400 hover:border-slate-700'
+                                            )}
+                                        >
+                                            {/* Reorder Buttons */}
+                                            <div className="flex flex-col opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <button
+                                                    onClick={() => moveTopicUp(index)}
+                                                    disabled={index === 0}
+                                                    className="p-0.5 text-slate-500 hover:text-emerald-400 disabled:opacity-30"
+                                                    title="Move up"
+                                                >
+                                                    <ChevronUp className="w-3 h-3" />
+                                                </button>
+                                                <button
+                                                    onClick={() => moveTopicDown(index)}
+                                                    disabled={index === topics.length - 1}
+                                                    className="p-0.5 text-slate-500 hover:text-emerald-400 disabled:opacity-30"
+                                                    title="Move down"
+                                                >
+                                                    <ChevronDown className="w-3 h-3" />
+                                                </button>
+                                            </div>
+
+                                            {/* Topic Name */}
+                                            <button
+                                                onClick={() => setSelectedTopicId(topic.id)}
+                                                className="flex-1 text-left"
+                                            >
+                                                <div className="font-bold truncate">{topic.name}</div>
+                                                <div className="text-[10px] text-slate-600 mt-0.5">{topic.messages.length} messages</div>
+                                            </button>
+
+                                            {/* Action Buttons */}
+                                            <div className="flex opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        openEditTopic(topic);
+                                                    }}
+                                                    className="p-1 text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/20 rounded"
+                                                    title="Rename topic"
+                                                >
+                                                    <Pencil className="w-3 h-3" />
+                                                </button>
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setDeleteConfirm({ isOpen: true, type: 'topic', id: topic.id, name: topic.name });
+                                                    }}
+                                                    className="p-1 text-red-400 hover:text-red-300 hover:bg-red-500/20 rounded"
+                                                    title="Delete topic"
+                                                >
+                                                    <Trash2 className="w-3 h-3" />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Main Chat Area */}
+                            <div className="flex-1 flex flex-col">
+                                {!selectedTopicId ? (
+                                    <div className="flex-1 flex items-center justify-center">
+                                        <div className="text-center">
+                                            <FolderOpen className="w-16 h-16 text-slate-700 mx-auto mb-4" />
+                                            <p className="text-slate-500 font-mono text-sm">Select or create a topic to start</p>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <>
+                                        {/* Messages */}
+                                        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                                            {selectedTopic?.messages.map(msg => (
+                                                <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                                    <div className={clsx(
+                                                        "max-w-[80%] p-4 rounded-lg border-2",
+                                                        msg.role === 'user' ? 'bg-emerald-950/50 border-emerald-500/50' : 'bg-slate-900/50 border-slate-700/50'
+                                                    )}>
+                                                        <div className="flex items-center gap-2 mb-2">
+                                                            <span className={clsx("text-xs font-mono font-bold", msg.role === 'user' ? 'text-emerald-400' : 'text-slate-400')}>
+                                                                {msg.role === 'user' ? 'YOU' : 'AI'}
+                                                            </span>
+                                                        </div>
+                                                        {msg.thinking && (
+                                                            <details className="bg-slate-800/50 rounded p-2 border border-emerald-500/30 mb-2">
+                                                                <summary className="cursor-pointer text-xs font-mono text-emerald-400">View Thinking</summary>
+                                                                <div className="mt-2 text-xs text-slate-400 font-mono whitespace-pre-wrap max-h-32 overflow-y-auto">{msg.thinking}</div>
+                                                            </details>
+                                                        )}
+                                                        <div className="text-slate-300 text-sm font-mono">
+                                                            <MarkdownRenderer content={msg.text} />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                            {deepResearchLoading && (
+                                                <div className="flex justify-start">
+                                                    <div className="bg-slate-900/50 border-2 border-emerald-500/50 p-4 rounded-lg flex items-center gap-3">
+                                                        <Loader2 className="w-5 h-5 text-emerald-400 animate-spin" />
+                                                        <span className="text-emerald-400 font-mono text-sm font-bold">RESEARCHING...</span>
+                                                    </div>
+                                                </div>
+                                            )}
+                                            <div ref={chatEndRef} />
+                                        </div>
+
+                                        {/* Customization Panel */}
+                                        <CustomizationPanel
+                                            availableModels={availableModels}
+                                            selectedModel={deepResearchModel}
+                                            setSelectedModel={setDeepResearchModel}
+                                            thinkingEnabled={deepResearchThinking}
+                                            setThinkingEnabled={setDeepResearchThinking}
+                                            thinkingLevel={deepResearchThinkingLevel}
+                                            setThinkingLevel={setDeepResearchThinkingLevel}
+                                            webSearchEnabled={deepResearchWebSearch}
+                                            setWebSearchEnabled={setDeepResearchWebSearch}
+                                            temperature={deepResearchTemp}
+                                            setTemperature={setDeepResearchTemp}
+                                            systemInstructions={deepResearchSystemInstructions}
+                                            setSystemInstructions={setDeepResearchSystemInstructions}
+                                            showSystemInstructions={true}
+                                            isExpanded={deepResearchExpanded}
+                                            setIsExpanded={setDeepResearchExpanded}
+                                        />
+
+                                        {/* Input */}
+                                        <div className="flex-shrink-0 border-t-2 border-emerald-500/30 bg-black/40 backdrop-blur-sm p-4">
+                                            <form onSubmit={handleDeepResearchSubmit} className="flex gap-3">
+                                                <input
+                                                    type="text"
+                                                    value={deepResearchInput}
+                                                    onChange={(e) => setDeepResearchInput(e.target.value)}
+                                                    placeholder="Continue your research..."
+                                                    disabled={deepResearchLoading}
+                                                    className="flex-1 px-4 py-3 bg-slate-900/50 border-2 border-emerald-500/30 text-slate-300 font-mono text-sm focus:outline-none focus:border-emerald-500 disabled:opacity-50 placeholder:text-slate-600 rounded-lg"
+                                                />
+                                                <button
+                                                    type="submit"
+                                                    disabled={deepResearchLoading || !deepResearchInput.trim()}
+                                                    className="px-6 py-3 bg-emerald-600 border-2 border-emerald-500 text-black hover:bg-emerald-500 disabled:opacity-50 font-mono font-bold text-sm flex items-center gap-2 rounded-lg"
+                                                >
+                                                    {deepResearchLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+                                                    SEND
+                                                </button>
+                                            </form>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        </motion.div>
+                    )}
+
+                    {/* ========== INTEL RESEARCH TAB ========== */}
+                    {activeTab === 'intel-research' && (
+                        <motion.div
+                            key="intel-research"
+                            initial={{ opacity: 0, x: -20 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: 20 }}
+                            className="flex-1 flex overflow-hidden"
+                        >
+                            {/* Sidebar - Saved Reports */}
+                            <div className="w-64 border-r border-slate-800 bg-slate-900/30 flex flex-col">
+                                <div className="p-3 border-b border-slate-800">
+                                    <div className="text-xs text-amber-400 font-mono uppercase font-bold flex items-center gap-2">
+                                        <BookOpen className="w-4 h-4" /> Saved Reports
+                                    </div>
+                                </div>
+                                <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                                    {intelReports.length === 0 && (
+                                        <p className="text-slate-600 text-xs text-center py-4 font-mono">No reports yet</p>
+                                    )}
+                                    {intelReports.map(report => (
+                                        <div
+                                            key={report.id}
+                                            className={clsx(
+                                                "w-full p-2 rounded-lg text-left text-xs font-mono transition-colors flex items-start gap-2 group cursor-pointer",
+                                                selectedReportId === report.id
+                                                    ? 'bg-amber-500/20 border border-amber-500/50 text-amber-300'
+                                                    : 'bg-slate-800/50 border border-transparent text-slate-400 hover:border-slate-700'
+                                            )}
+                                            onClick={() => setSelectedReportId(report.id)}
+                                        >
+                                            <div className="flex-1">
+                                                <div className="font-bold truncate">{report.title}</div>
+                                                <div className="text-[10px] text-slate-600 mt-0.5">{report.bullets.length} points • {report.depth}</div>
+                                            </div>
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setDeleteConfirm({ isOpen: true, type: 'report', id: report.id, name: report.title });
+                                                }}
+                                                className="opacity-0 group-hover:opacity-100 p-1 text-red-400 hover:text-red-300 rounded"
+                                            >
+                                                <Trash2 className="w-3 h-3" />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Main Panel */}
+                            <div className="flex-1 flex flex-col">
+                                {/* Input Form */}
+                                <div className="p-4 border-b border-slate-800 bg-slate-900/30">
+                                    <form onSubmit={handleIntelSubmit} className="space-y-4">
+                                        <div>
+                                            <label className="text-xs text-amber-400 font-mono uppercase mb-1 block">Research Topic</label>
+                                            <textarea
+                                                value={intelQuery}
+                                                onChange={(e) => setIntelQuery(e.target.value)}
+                                                placeholder="Enter a topic or question for structured research..."
+                                                disabled={intelLoading}
+                                                className="w-full h-20 px-4 py-3 bg-slate-900/50 border-2 border-amber-500/30 text-slate-300 font-mono text-sm focus:outline-none focus:border-amber-500 disabled:opacity-50 placeholder:text-slate-600 rounded-lg resize-none"
+                                            />
+                                        </div>
+
+                                        {/* Options Row */}
+                                        <div className="flex flex-wrap gap-4 items-center">
+                                            {/* Depth Selector */}
+                                            <div className="flex gap-1">
+                                                {DEPTH_OPTIONS.map(opt => {
+                                                    const isDisabled = opt.restricted && !hasMaxMode;
+                                                    return (
+                                                        <button
+                                                            key={opt.id}
+                                                            type="button"
+                                                            onClick={() => !isDisabled && setIntelDepth(opt.id)}
+                                                            disabled={isDisabled}
+                                                            className={clsx(
+                                                                "px-3 py-1.5 rounded text-xs font-mono transition-all",
+                                                                intelDepth === opt.id
+                                                                    ? `bg-${opt.color}-500/20 text-${opt.color}-300 border border-${opt.color}-500`
+                                                                    : 'bg-slate-800 text-slate-500 border border-slate-700 hover:border-slate-500',
+                                                                isDisabled && 'opacity-50 cursor-not-allowed'
+                                                            )}
+                                                            title={opt.restricted ? 'Admin only' : `${opt.bullets} bullets`}
+                                                        >
+                                                            {opt.restricted && <Crown className="w-3 h-3 inline mr-1" />}
+                                                            {opt.label}
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+
+                                            {/* Essay Toggle */}
+                                            <div className="flex items-center gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setIntelEssayEnabled(!intelEssayEnabled)}
+                                                    className={clsx(
+                                                        "w-10 h-5 rounded-full transition-colors relative",
+                                                        intelEssayEnabled ? 'bg-purple-500' : 'bg-slate-700'
+                                                    )}
+                                                >
+                                                    <div className={clsx(
+                                                        "absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform",
+                                                        intelEssayEnabled ? 'left-5' : 'left-0.5'
+                                                    )} />
+                                                </button>
+                                                <span className="text-xs text-slate-400 font-mono flex items-center gap-1">
+                                                    <FileText className="w-3 h-3" /> MLA Essay
+                                                </span>
+                                            </div>
+
+                                            {/* Submit */}
+                                            <button
+                                                type="submit"
+                                                disabled={intelLoading || !intelQuery.trim()}
+                                                className="ml-auto px-6 py-2 bg-amber-600 border-2 border-amber-500 text-black hover:bg-amber-500 disabled:opacity-50 font-mono font-bold text-sm flex items-center gap-2 rounded-lg"
+                                            >
+                                                {intelLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                                                RESEARCH
+                                            </button>
+                                        </div>
+                                    </form>
+                                </div>
+
+                                {/* Results */}
+                                <div className="flex-1 overflow-y-auto p-4">
+                                    {!selectedReport && !intelLoading && (
+                                        <div className="flex flex-col items-center justify-center h-full text-center gap-4">
+                                            <div className="w-20 h-20 rounded-full bg-slate-800/50 flex items-center justify-center border border-slate-700">
+                                                <BookOpen className="w-10 h-10 text-amber-500/50" />
+                                            </div>
+                                            <div>
+                                                <p className="text-slate-400 font-mono text-sm">Enter a topic above to generate structured research</p>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {intelLoading && (
+                                        <div className="flex flex-col items-center justify-center h-full gap-4">
+                                            <Loader2 className="w-12 h-12 text-amber-400 animate-spin" />
+                                            <p className="text-amber-400 font-mono text-sm">Researching...</p>
+                                        </div>
+                                    )}
+
+                                    {selectedReport && !intelLoading && (
+                                        <div className="space-y-6">
+                                            {/* Title */}
+                                            <div className="flex items-start justify-between">
+                                                <h2 className="text-lg font-bold text-white font-mono">{selectedReport.title}</h2>
+                                                <span className={`text-xs px-2 py-1 rounded font-mono bg-${DEPTH_OPTIONS.find(d => d.id === selectedReport.depth)?.color || 'slate'}-500/20 text-${DEPTH_OPTIONS.find(d => d.id === selectedReport.depth)?.color || 'slate'}-300`}>
+                                                    {selectedReport.depth.toUpperCase()}
+                                                </span>
+                                            </div>
+
+                                            {/* Bullets */}
+                                            <div className="bg-slate-900/50 border border-slate-700 rounded-lg p-4">
+                                                <h3 className="text-sm font-mono font-bold text-amber-400 mb-3">Key Findings</h3>
+                                                <ul className="space-y-2">
+                                                    {selectedReport.bullets.map((bullet, i) => (
+                                                        <li key={i} className="flex gap-2 text-sm text-slate-300 font-mono">
+                                                            <span className="text-amber-500">•</span>
+                                                            <span>{bullet.text}</span>
+                                                            {bullet.sourceIndex !== undefined && (
+                                                                <span className="text-cyan-400 text-xs">[{bullet.sourceIndex + 1}]</span>
+                                                            )}
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            </div>
+
+                                            {/* Sources */}
+                                            {selectedReport.sources.length > 0 && (
+                                                <div className="bg-slate-900/50 border border-slate-700 rounded-lg p-4">
+                                                    <h3 className="text-sm font-mono font-bold text-cyan-400 mb-3">📚 Sources (MLA)</h3>
+                                                    <div className="space-y-2">
+                                                        {selectedReport.sources.map((source, i) => (
+                                                            <div key={i} className="flex items-start gap-2 text-xs font-mono p-2 bg-slate-800/50 rounded">
+                                                                <span className="text-cyan-400 font-bold">[{i + 1}]</span>
+                                                                <div className="flex-1">
+                                                                    <p className="text-slate-300 font-medium">{source.title}</p>
+                                                                    <p className="text-slate-500 text-[10px] mt-0.5">{source.snippet}</p>
+                                                                </div>
+                                                                <div className="flex gap-1">
+                                                                    <a
+                                                                        href={source.url}
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                        className="p-1 text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/20 rounded"
+                                                                        title="Open link"
+                                                                    >
+                                                                        <ExternalLink className="w-3 h-3" />
+                                                                    </a>
+                                                                    <button
+                                                                        onClick={() => copyToClipboard(source.url)}
+                                                                        className="p-1 text-slate-400 hover:text-white hover:bg-slate-700 rounded"
+                                                                        title="Copy URL"
+                                                                    >
+                                                                        <Copy className="w-3 h-3" />
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Essay */}
+                                            {selectedReport.essay && (
+                                                <div className="bg-slate-900/50 border border-purple-700/50 rounded-lg p-4">
+                                                    <div className="flex items-center justify-between mb-3">
+                                                        <h3 className="text-sm font-mono font-bold text-purple-400">📝 MLA Essay</h3>
+                                                        <button
+                                                            onClick={() => copyToClipboard(selectedReport.essay || '')}
+                                                            className="text-xs text-purple-400 hover:text-purple-300 font-mono flex items-center gap-1"
+                                                        >
+                                                            <Copy className="w-3 h-3" /> Copy
+                                                        </button>
+                                                    </div>
+                                                    <div className="prose prose-invert prose-sm max-w-none font-mono text-slate-300">
+                                                        <MarkdownRenderer content={selectedReport.essay} />
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Related Concepts */}
+                                            {selectedReport.relatedConcepts.length > 0 && (
+                                                <div className="flex flex-wrap gap-2">
+                                                    {selectedReport.relatedConcepts.map((concept, i) => (
+                                                        <span key={i} className="px-2 py-1 bg-slate-800 text-slate-400 text-xs font-mono rounded">
+                                                            {concept}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </motion.div>
+                    )}
+
+                    {/* ========== SETTINGS TAB ========== */}
+                    {activeTab === 'settings' && (
+                        <motion.div
+                            key="settings"
+                            initial={{ opacity: 0, x: -20 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: 20 }}
+                            className="flex-1 overflow-y-auto p-6"
+                        >
+                            <h2 className="text-lg font-mono font-bold text-white mb-6">Default Model Settings</h2>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+                                {/* Quick Chat Default */}
+                                <div className="p-4 bg-slate-900/50 border border-slate-700 rounded-lg">
+                                    <label className="text-xs text-cyan-400 font-mono uppercase mb-2 block">Quick Chat Default</label>
+                                    <select
+                                        value={defaultQuickChatModel}
+                                        onChange={(e) => {
+                                            setDefaultQuickChatModel(e.target.value);
+                                            localStorage.setItem('research-defaults', JSON.stringify({
+                                                quickChatModel: e.target.value,
+                                                deepResearchModel: defaultDeepResearchModel
+                                            }));
+                                        }}
+                                        className="w-full bg-slate-800 border border-cyan-500/30 text-slate-200 px-3 py-2 text-sm font-mono rounded focus:outline-none focus:border-cyan-500"
+                                    >
+                                        {ALL_MODELS.map(m => (
+                                            <option key={m.id} value={m.id}>{m.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                {/* Deep Research Default */}
+                                <div className="p-4 bg-slate-900/50 border border-slate-700 rounded-lg">
+                                    <label className="text-xs text-emerald-400 font-mono uppercase mb-2 block">Deep Research Default</label>
+                                    <select
+                                        value={defaultDeepResearchModel}
+                                        onChange={(e) => {
+                                            setDefaultDeepResearchModel(e.target.value);
+                                            localStorage.setItem('research-defaults', JSON.stringify({
+                                                quickChatModel: defaultQuickChatModel,
+                                                deepResearchModel: e.target.value
+                                            }));
+                                        }}
+                                        className="w-full bg-slate-800 border border-emerald-500/30 text-slate-200 px-3 py-2 text-sm font-mono rounded focus:outline-none focus:border-emerald-500"
+                                    >
+                                        {ALL_MODELS.map(m => (
+                                            <option key={m.id} value={m.id}>{m.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </div>
+
+                            <h2 className="text-lg font-mono font-bold text-white mb-6">Model Capabilities Matrix</h2>
+
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm font-mono">
+                                    <thead>
+                                        <tr className="border-b border-slate-700">
+                                            <th className="text-left py-3 px-4 text-slate-400">Model</th>
+                                            <th className="text-center py-3 px-2 text-slate-400">Chat</th>
+                                            <th className="text-center py-3 px-2 text-slate-400">Vision</th>
+                                            <th className="text-center py-3 px-2 text-slate-400">Web</th>
+                                            <th className="text-center py-3 px-2 text-slate-400">Thinking</th>
+                                            <th className="text-center py-3 px-2 text-slate-400" title="Thinking enabled by default">Think Auto</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {ALL_MODELS.map(model => (
+                                            <tr key={model.id} className="border-b border-slate-800 hover:bg-slate-900/50">
+                                                <td className="py-3 px-4">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className={`text-${model.color}-400 font-bold`}>{model.name}</span>
+                                                        <span className={`text-[10px] px-1.5 py-0.5 rounded bg-${model.color}-500/20 text-${model.color}-300`}>{model.badge}</span>
+                                                    </div>
+                                                </td>
+                                                <td className="text-center py-3 px-2">
+                                                    {model.capabilities.chat ? <span className="text-green-400">✓</span> : <span className="text-slate-600">—</span>}
+                                                </td>
+                                                <td className="text-center py-3 px-2">
+                                                    {model.capabilities.vision ? <span className="text-green-400">✓</span> : <span className="text-slate-600">—</span>}
+                                                </td>
+                                                <td className="text-center py-3 px-2">
+                                                    {model.capabilities.web ? <span className="text-green-400">✓</span> : <span className="text-slate-600">—</span>}
+                                                </td>
+                                                <td className="text-center py-3 px-2">
+                                                    {model.capabilities.thinking ? <span className="text-green-400">✓</span> : <span className="text-slate-600">—</span>}
+                                                </td>
+                                                <td className="text-center py-3 px-2">
+                                                    {model.capabilities.thinkingDefault ? <span className="text-amber-400">ON</span> : <span className="text-slate-600">OFF</span>}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div className="mt-8 p-4 bg-slate-900/50 border border-slate-700 rounded-lg">
+                                <h3 className="text-sm font-mono font-bold text-cyan-400 mb-2">Notes</h3>
+                                <ul className="text-xs text-slate-400 space-y-1 font-mono">
+                                    <li>• <strong className="text-emerald-300">Gemini 3.0 Pro Preview</strong> has Thinking enabled by default.</li>
+                                    <li>• Web Search is only available on models with the <span className="text-green-400">✓</span> in the Web column.</li>
+                                    <li>• Temperature is clamped at 1.0 for Gemini 3.0 models.</li>
+                                </ul>
+                            </div>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+            </div>
+
+
+            {/* Edit Topic Modal */}
+            <AnimatePresence>
+                {editingTopic && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        onClick={() => setEditingTopic(null)}
+                        className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+                    >
+                        <motion.div
+                            initial={{ scale: 0.9, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.9, opacity: 0 }}
+                            onClick={(e) => e.stopPropagation()}
+                            className="bg-slate-900 border-2 border-emerald-500/50 rounded-xl p-6 w-full max-w-md"
+                        >
+                            <div className="flex items-center justify-between mb-4">
+                                <h3 className="text-lg font-bold text-emerald-400 font-mono flex items-center gap-2">
+                                    <Pencil className="w-5 h-5" /> Rename Topic
+                                </h3>
+                                <button
+                                    onClick={() => setEditingTopic(null)}
+                                    className="p-1 text-slate-400 hover:text-white rounded"
+                                >
+                                    <X className="w-5 h-5" />
+                                </button>
+                            </div>
+                            <input
+                                type="text"
+                                value={editTopicName}
+                                onChange={(e) => setEditTopicName(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && saveTopicName()}
+                                placeholder="Enter topic name..."
+                                autoFocus
+                                className="w-full px-4 py-3 bg-slate-800 border-2 border-emerald-500/30 text-slate-200 font-mono text-sm rounded-lg focus:outline-none focus:border-emerald-500 mb-4"
+                            />
+                            <div className="flex gap-2 justify-end">
+                                <button
+                                    onClick={() => setEditingTopic(null)}
+                                    className="px-4 py-2 text-slate-400 hover:text-white font-mono text-sm"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={saveTopicName}
+                                    disabled={!editTopicName.trim()}
+                                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-sm font-bold rounded-lg disabled:opacity-50"
+                                >
+                                    Save
+                                </button>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
             </AnimatePresence>
 
-            {/* Vision input area */}
-            <div className="flex-shrink-0 border-t-2 border-orange-500/30 bg-black/40 backdrop-blur-sm p-4 relative z-10">
-              <form onSubmit={handleVisionSubmit} className="flex gap-3">
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleImageUpload}
-                  accept="image/*"
-                  className="hidden"
-                />
-
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={isAnalyzing}
-                  className="px-4 py-3 bg-slate-900 border-2 border-orange-500/30 text-orange-400 hover:border-orange-500 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-mono text-sm font-bold"
-                >
-                  <Upload className="w-5 h-5" />
-                </button>
-
-                <input
-                  type="text"
-                  value={visionInput}
-                  onChange={(e) => setVisionInput(e.target.value)}
-                  placeholder={uploadedImage ? "Enter your question... (optional)" : "Upload or paste an image first (Ctrl+V)"}
-                  disabled={isAnalyzing || !uploadedImage}
-                  className="flex-1 px-4 py-3 bg-slate-900/50 border-2 border-orange-500/30 text-slate-300 font-mono text-sm focus:outline-none focus:border-orange-500 disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-slate-600 transition-all"
-                />
-
-                <button
-                  type="submit"
-                  disabled={isAnalyzing || !uploadedImage}
-                  className="px-6 py-3 bg-orange-600 border-2 border-orange-500 text-black hover:bg-orange-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-mono font-bold text-sm flex items-center gap-2"
-                >
-                  {isAnalyzing ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      ANALYZING
-                    </>
-                  ) : (
-                    <>
-                      <Send className="w-5 h-5" />
-                      ANALYZE
-                    </>
-                  )}
-                </button>
-              </form>
-
-              <div className="mt-2 flex items-center justify-between text-[10px] font-mono text-slate-600">
-                <span>TIP: Paste images with Ctrl+V</span>
-                <span>MAX SIZE: 4MB</span>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Command Deck Modal */}
-      <AnimatePresence>
-        {showCommandDeck && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-xl flex items-center justify-center p-4"
-            onClick={() => setShowCommandDeck(false)}
-          >
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-4xl bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden"
-            >
-              <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/70">
-                <div className="text-sm font-mono text-slate-400 uppercase tracking-wider">Intel Command Deck</div>
-                <button
-                  onClick={() => setShowCommandDeck(false)}
-                  className="flex items-center gap-1 px-2 py-1 rounded-md border border-slate-700 text-slate-400 hover:text-cyan-300 hover:border-cyan-500/50 transition-colors"
-                >
-                  <X className="w-3.5 h-3.5" />
-                  Close
-                </button>
-              </div>
-
-              <div className="p-4 space-y-6">
-                {/* Model Selection */}
-                <div>
-                  <label className="text-xs text-blue-400 font-mono uppercase mb-2 block">AI Model</label>
-                  <div className="grid grid-cols-3 gap-3">
-                    {intelModels.map(model => (
-                      <button
-                        key={model.id}
-                        onClick={() => {
-                          if (model.locked) {
-                            toast.error('Model not unlocked. Ask owner for access.');
-                            return;
-                          }
-                          setSelectedIntelModel(model.id);
-                        }}
-                        className={`relative p-4 rounded-xl border-2 transition-all ${selectedIntelModel === model.id
-                          ? `bg-gradient-to-br ${model.color} border-transparent text-white shadow-[0_0_20px_rgba(59,130,246,0.5)]`
-                          : model.locked
-                            ? 'bg-slate-800/30 border-slate-700 text-slate-600 cursor-not-allowed'
-                            : 'bg-slate-800/50 border-blue-500/30 text-slate-300 hover:border-blue-500/50'
-                          }`}
-                      >
-                        {model.locked && (
-                          <div className="absolute top-2 right-2">
-                            <Lock className="w-4 h-4 text-red-400" />
-                          </div>
-                        )}
-                        <div className="text-sm font-bold">{model.name}</div>
-                        <div className="text-xs opacity-70 mt-1">Tier {model.tier}</div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Thinking Level */}
-                {supportsThinkingLevel && (
-                  <div>
-                    <label className="text-xs text-emerald-400 font-mono uppercase mb-2 block flex items-center gap-2">
-                      <BrainCircuit className="w-3 h-3" />
-                      Thinking Level
-                    </label>
-                    <div className="grid grid-cols-3 gap-2">
-                      {['low', 'medium', 'high'].map((level) => (
-                        <button
-                          key={level}
-                          onClick={() => setThinkingLevel(level as typeof thinkingLevel)}
-                          className={`px-4 py-2 rounded-lg border-2 transition-all text-sm font-mono uppercase ${thinkingLevel === level
-                            ? 'bg-emerald-500 border-emerald-400 text-white'
-                            : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-500'
-                            }`}
-                        >
-                          {level}
-                        </button>
-                      ))}
-                    </div>
-                    <p className="text-xs text-slate-500 mt-1 font-mono">
-                      {thinkingLevel === 'low' ? 'Fast, simple reasoning' : thinkingLevel === 'medium' ? 'Balanced thinking' : 'Deep, complex analysis'}
-                    </p>
-                  </div>
-                )}
-
-                {/* Depth */}
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-xs text-blue-400 font-mono uppercase flex items-center gap-2">
-                      Depth (1-9)
-                    </label>
-                    {!canCustomize && <span className="text-[11px] text-red-400 font-mono">AI+ required for 4-9</span>}
-                  </div>
-                  <input
-                    type="range"
-                    min={1}
-                    max={9}
-                    value={depth}
-                    onChange={(e) => {
-                      const next = parseInt(e.target.value);
-                      if (!canCustomize && next > 3) {
-                        setDepth(3);
-                        toast.error('Depth above 3 requires AI+ access.');
-                        return;
-                      }
-                      setDepth(next);
-                    }}
-                    className="w-full h-3 bg-slate-800 rounded-full appearance-none cursor-pointer"
-                    style={{
-                      background: `linear-gradient(to right, rgb(6 182 212) 0%, rgb(147 51 234) ${((depth - 1) / 8) * 100}%, rgb(239 68 68) 100%)`
-                    }}
-                  />
-                  <p className="text-xs text-slate-500 mt-1 font-mono">
-                    {depth <= 3 ? 'Surface (fast, bullet points)' : depth <= 6 ? 'Standard (academic, citations)' : 'Abyss (slow, deep analysis)'}
-                  </p>
-                </div>
-
-                {/* Research Mode */}
-                <div className="flex items-center justify-between bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-3">
-                  <div>
-                    <p className="text-sm text-slate-200 font-medium">Research Mode</p>
-                    <p className="text-xs text-slate-500">Forces structured JSON output</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setResearchMode(!researchMode)}
-                    className={`relative w-14 h-7 rounded-full transition-all ${researchMode ? 'bg-blue-500' : 'bg-slate-700'}`}
-                  >
-                    <motion.div
-                      animate={{ x: researchMode ? 28 : 2 }}
-                      className="absolute top-1 w-5 h-5 bg-white rounded-full shadow-lg"
-                    />
-                  </button>
-                </div>
-
-                {/* Custom Instructions */}
-                <div>
-                  <label className="text-xs text-blue-400 font-mono uppercase mb-2 block flex items-center gap-2">
-                    <Settings className="w-3 h-3" />
-                    Custom Instructions
-                  </label>
-                  <textarea
-                    value={customInstructions}
-                    onChange={(e) => setCustomInstructions(e.target.value)}
-                    placeholder={canCustomize ? 'Provide comprehensive, factual research with credible sources.' : 'AI+ required for custom instructions.'}
-                    disabled={!canCustomize}
-                    className="w-full h-24 bg-slate-950/50 border border-blue-500/30 rounded-lg px-4 py-3 text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-blue-500/50 font-mono resize-none disabled:opacity-50"
-                  />
-                  {!canCustomize && (
-                    <p className="text-[11px] text-red-400 font-mono mt-1">Custom instructions require AI+ access.</p>
-                  )}
-                </div>
-
-                {/* Save button */}
-                <div className="flex justify-end gap-2">
-                  <button
-                    onClick={() => setShowCommandDeck(false)}
-                    className="px-4 py-2 bg-slate-800 text-slate-200 rounded-lg text-sm font-mono uppercase tracking-wider border border-slate-700 hover:border-slate-500 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={saveSettings}
-                    className="px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg text-sm font-mono uppercase tracking-wider shadow-[0_0_14px_rgba(59,130,246,0.3)]"
-                  >
-                    Save Settings
-                  </button>
-                </div>
-
-                {/* Debug Info */}
-                <div className="mt-4 p-4 bg-slate-950/50 border border-slate-800 rounded-lg">
-                  <h4 className="text-xs text-slate-500 font-mono uppercase mb-2">Debug Info</h4>
-                  <div className="grid grid-cols-2 gap-2 text-[10px] font-mono text-slate-400">
-                    <div>User ID: <span className="text-slate-200">{currentUser?.id}</span></div>
-                    <div>Is Admin: <span className={currentUser?.isAdmin ? "text-green-400" : "text-red-400"}>{currentUser?.isAdmin ? 'YES' : 'NO'}</span></div>
-                    <div className="col-span-2">Unlocked Models: <span className="text-slate-200">{unlockedModels.join(', ')}</span></div>
-                    <div>Selected Model: <span className="text-cyan-400">{selectedIntelModel}</span></div>
-                    <div>Thinking Level: <span className="text-emerald-400">{thinkingLevel}</span></div>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Save Modal */}
-      <AnimatePresence>
-        {showSaveModal && currentIntelResult && (
-          <SaveDropModal
-            query={currentQuery}
-            onClose={() => setShowSaveModal(false)}
-          />
-        )}
-      </AnimatePresence>
-
-      <style>{`
-        @keyframes gridScroll {
-          0% { transform: translateY(0); }
-          100% { transform: translateY(40px); }
-        }
-      `}</style>
-    </div>
-  );
+            {/* Delete Confirmation Modal */}
+            <ConfirmModal
+                isOpen={deleteConfirm.isOpen}
+                title={deleteConfirm.type === 'topic' ? 'DELETE TOPIC' : 'DELETE REPORT'}
+                message={`Delete "${deleteConfirm.name}"? This cannot be undone.`}
+                confirmText="Delete"
+                cancelText="Cancel"
+                variant="danger"
+                onConfirm={() => {
+                    if (deleteConfirm.id) {
+                        if (deleteConfirm.type === 'topic') {
+                            setTopics(prev => prev.filter(t => t.id !== deleteConfirm.id));
+                            if (selectedTopicId === deleteConfirm.id) setSelectedTopicId(null);
+                        } else {
+                            setIntelReports(prev => prev.filter(r => r.id !== deleteConfirm.id));
+                            if (selectedReportId === deleteConfirm.id) setSelectedReportId(null);
+                        }
+                    }
+                    setDeleteConfirm({ isOpen: false, type: 'topic', id: null, name: '' });
+                }}
+                onCancel={() => setDeleteConfirm({ isOpen: false, type: 'topic', id: null, name: '' })}
+            />
+        </div>
+    );
 };

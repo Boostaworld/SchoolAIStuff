@@ -20,10 +20,8 @@ export const IntelPanel: React.FC = () => {
   const [depth, setDepth] = useState(3);
   const [researchMode, setResearchMode] = useState(false);
   const [customInstructions, setCustomInstructions] = useState('');
-  const [mode, setMode] = useState<'chat' | 'image' | 'generation'>('chat');
+
   const [thinkingLevel, setThinkingLevel] = useState<'low' | 'medium' | 'high'>('medium');
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
-  const [imageResolution, setImageResolution] = useState<'1K' | '2K' | '3K' | '4K'>('4K');
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
   const [shareTarget, setShareTarget] = useState<'dm' | null>(null);
@@ -54,13 +52,8 @@ export const IntelPanel: React.FC = () => {
     { id: 'pro' as const, name: 'Pro 2.5', color: 'from-purple-500 to-pink-500', locked: !unlockedModels.includes('pro'), tier: 2 },
     { id: 'orbit-x' as const, name: 'Orbit-X', color: 'from-violet-500 to-indigo-500', locked: !unlockedModels.includes('orbit-x'), tier: 3 },
     { id: 'gemini-3-pro' as const, name: 'Gemini 3.0 Pro', color: 'from-emerald-500 to-teal-500', locked: !unlockedModels.includes('gemini-3-pro'), tier: 4 },
-    { id: 'gemini-3-image' as const, name: 'Gemini 3.0 Image', color: 'from-rose-500 to-orange-500', locked: !unlockedModels.includes('gemini-3-image'), tier: 4 }
-  ].filter(m => {
-    if (mode === 'generation') {
-      return ['gemini-3-image', 'flash'].includes(m.id);
-    }
-    return true;
-  });
+    { id: 'gemini-3-pro' as const, name: 'Gemini 3.0 Pro', color: 'from-emerald-500 to-teal-500', locked: !unlockedModels.includes('gemini-3-pro'), tier: 4 }
+  ];
 
   // Check if current model supports thinking
   const supportsThinking = ['pro', 'orbit-x', 'flash', 'gemini-3-pro', 'gemini-3-image'].includes(selectedModel);
@@ -165,12 +158,6 @@ export const IntelPanel: React.FC = () => {
     e.preventDefault();
     if (!query.trim() || isIntelLoading) return;
 
-    // Validate image mode
-    if (mode === 'image' && !selectedImage) {
-      toast.error('Please upload an image for image mode');
-      return;
-    }
-
     setCurrentQuery(query);
     const queryToSend = query;
     setQuery(''); // Clear the input after submitting
@@ -182,15 +169,9 @@ export const IntelPanel: React.FC = () => {
         modelUsed: effectiveModel,
         researchMode,
         customInstructions: customInstructions.trim() || undefined,
-        mode,
-        thinkingLevel,
-        image: selectedImage || undefined,
-        imageResolution: mode === 'generation' ? imageResolution : undefined
+        mode: 'chat',
+        thinkingLevel
       });
-      // Clear image after successful submission
-      if (mode === 'image') {
-        setSelectedImage(null);
-      }
     } catch (error) {
       // Error is already logged and toasted in the store
     }
@@ -245,34 +226,7 @@ export const IntelPanel: React.FC = () => {
     toast.success('Intel settings saved');
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
 
-    // Check file type
-    if (!file.type.startsWith('image/')) {
-      toast.error('Please upload a valid image file');
-      return;
-    }
-
-    // Check file size (max 4MB)
-    if (file.size > 4 * 1024 * 1024) {
-      toast.error('Image size must be less than 4MB');
-      return;
-    }
-
-    // Convert to base64
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const base64 = event.target?.result as string;
-      setSelectedImage(base64);
-      toast.success('Image uploaded successfully');
-    };
-    reader.onerror = () => {
-      toast.error('Failed to read image file');
-    };
-    reader.readAsDataURL(file);
-  };
 
   return (
     <div className="flex flex-col h-full bg-slate-900/50 backdrop-blur-md border border-slate-800 rounded-2xl overflow-hidden shadow-2xl relative">
@@ -356,7 +310,7 @@ export const IntelPanel: React.FC = () => {
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder={mode === 'image' ? 'Describe what you want to know about the image...' : mode === 'generation' ? 'Describe the image to generate...' : 'Enter research query...'}
+                placeholder={'Enter research query...'}
                 disabled={isIntelLoading}
                 className="flex-1 bg-transparent px-2 py-3 text-sm text-slate-200 focus:outline-none placeholder:text-slate-600 font-mono"
               />
@@ -377,36 +331,7 @@ export const IntelPanel: React.FC = () => {
             </div>
           </div>
 
-          {/* Image Upload (only in image mode) */}
-          {mode === 'image' && (
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 px-4 py-3 bg-slate-950 border-2 border-dashed border-slate-700 rounded-lg cursor-pointer hover:border-cyan-500/50 transition-all">
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleImageUpload}
-                  className="hidden"
-                  disabled={isIntelLoading}
-                />
-                <Database className="w-4 h-4 text-cyan-400" />
-                <span className="text-sm font-mono text-slate-400">
-                  {selectedImage ? 'Image uploaded - Click to change' : 'Click to upload image (max 4MB)'}
-                </span>
-              </label>
-              {selectedImage && (
-                <div className="relative rounded-lg overflow-hidden border border-slate-700">
-                  <img src={selectedImage} alt="Uploaded" className="w-full h-32 object-cover" />
-                  <button
-                    type="button"
-                    onClick={() => setSelectedImage(null)}
-                    className="absolute top-2 right-2 p-1 bg-red-500/80 hover:bg-red-500 rounded-full transition-colors"
-                  >
-                    <X className="w-4 h-4 text-white" />
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
+
         </form>
 
         {/* Deep Dive Toggle */}
@@ -741,24 +666,7 @@ export const IntelPanel: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Mode Toggle */}
-                <div>
-                  <label className="text-xs text-blue-400 font-mono uppercase mb-2 block">Mode</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {['chat', 'image', 'generation'].map((m) => (
-                      <button
-                        key={m}
-                        onClick={() => setMode(m as typeof mode)}
-                        className={`px-4 py-2 rounded-lg border-2 transition-all text-sm font-mono uppercase ${mode === m
-                          ? 'bg-blue-500 border-blue-400 text-white'
-                          : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-500'
-                          }`}
-                      >
-                        {m}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+
 
                 {/* Thinking Level (only for Gemini 3.0 models) */}
                 {supportsThinkingLevel && (
@@ -877,7 +785,6 @@ export const IntelPanel: React.FC = () => {
 
                     <div className="col-span-2 mt-2 mb-1 text-slate-500 font-bold">Model Parameters</div>
                     <div className="flex justify-between"><span>Model:</span> <span className="text-cyan-400">{selectedModel}</span></div>
-                    <div className="flex justify-between"><span>Mode:</span> <span className="text-blue-400">{mode}</span></div>
                     <div className="flex justify-between"><span>Thinking:</span> <span className="text-emerald-400">{supportsThinkingLevel ? thinkingLevel : 'N/A'}</span></div>
                     <div className="flex justify-between"><span>Depth:</span> <span className="text-purple-400">{depth}</span></div>
                     <div className="flex justify-between"><span>Research:</span> <span className={researchMode ? "text-green-400" : "text-slate-600"}>{researchMode ? 'ACTIVE' : 'OFF'}</span></div>

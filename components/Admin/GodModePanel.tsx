@@ -6,6 +6,7 @@ import { toast } from '@/lib/toast';
 import { Shield, Users, Edit, Trash2, Ban, Crown, Sparkles, Search, CheckCircle2, XCircle, Calendar, FlaskConical, Bell } from 'lucide-react';
 import { ScheduleEditor } from '../Schedule/ScheduleEditor';
 import { updateFaviconBadge, requestNotificationPermission } from '@/lib/utils/notifications';
+import { ConfirmModal } from '../Shared/ConfirmModal';
 
 interface UserProfile {
   id: string;
@@ -30,6 +31,7 @@ export function GodModePanel() {
   const [loading, setLoading] = useState(true);
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
   const [selectedUserOriginal, setSelectedUserOriginal] = useState<UserProfile | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean; userId: string | null; username: string }>({ isOpen: false, userId: null, username: '' });
 
   const isMissingAuditTable = (error: any) =>
     error?.code === 'PGRST205' && error?.message?.includes("table 'public.admin_audit_logs'");
@@ -107,6 +109,30 @@ export function GodModePanel() {
 
       toast.success('User updated successfully');
       await fetchUsers();
+
+      // If editing yourself, also refresh the global currentUser state
+      if (userId === currentUser?.id) {
+        const { data: refreshedProfile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', userId)
+          .single();
+
+        if (refreshedProfile) {
+          useOrbitStore.setState((state) => ({
+            currentUser: state.currentUser ? {
+              ...state.currentUser,
+              is_admin: refreshedProfile.is_admin || false,
+              isAdmin: refreshedProfile.is_admin || false,
+              can_customize_ai: refreshedProfile.can_customize_ai || false,
+              unlocked_models: refreshedProfile.unlocked_models || ['flash'],
+              orbit_points: refreshedProfile.orbit_points || 0,
+              points: refreshedProfile.orbit_points || 0,
+            } : null
+          }));
+        }
+      }
+
       setSelectedUser(null);
       setSelectedUserOriginal(null);
     } catch (error: any) {
@@ -259,8 +285,6 @@ export function GodModePanel() {
   };
 
   const deleteUser = async (userId: string) => {
-    if (!confirm('PERMANENTLY DELETE THIS USER?\n\nThis action cannot be undone.')) return;
-
     const targetUser = users.find(u => u.id === userId) || selectedUser || null;
 
     try {
@@ -480,7 +504,7 @@ export function GodModePanel() {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          deleteUser(user.id);
+                          setDeleteConfirm({ isOpen: true, userId: user.id, username: user.username });
                         }}
                         className="p-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 rounded-lg text-red-400 transition-all"
                         title="Delete"
@@ -673,15 +697,24 @@ export function GodModePanel() {
                 </div>
 
                 {/* AI Models */}
-                <div>
-                  <label className="text-xs text-red-400 font-mono uppercase mb-3 block">Unlocked AI Models</label>
+                <label className="text-xs text-red-400 font-mono uppercase mb-3 block">Unlocked Capabilities</label>
+
+                {/* Models */}
+                <div className="mb-4">
+                  <div className="text-[10px] text-slate-500 font-mono uppercase mb-2 ml-1">AI Models</div>
                   <div className="space-y-2">
-                    {['flash', 'pro', 'orbit-x'].map(model => {
-                      const isUnlocked = selectedUser.unlocked_models?.includes(model);
+                    {[
+                      { id: 'flash', label: 'Gemini 2.5 Flash', desc: 'Fast standard model' },
+                      { id: 'pro', label: 'Gemini 2.5 Pro', desc: 'Reasoning model' },
+                      { id: 'gemini-3-flash', label: 'Gemini 3.0 Flash', desc: 'Next-gen speed' },
+                      { id: 'gemini-3-pro', label: 'Gemini 3.0 Pro', desc: 'Next-gen reasoning' },
+                    ].map(perm => {
+                      const isUnlocked = selectedUser.unlocked_models?.includes(perm.id);
                       return (
                         <label
-                          key={model}
-                          className="flex items-center gap-3 p-3 bg-slate-800/50 border border-slate-700 rounded-lg cursor-pointer hover:border-purple-500/50 transition-all"
+                          key={perm.id}
+                          className={`flex items-center gap-3 p-3 bg-slate-800/50 border rounded-lg cursor-pointer transition-all ${isUnlocked ? 'border-blue-500/50 bg-blue-500/10' : 'border-slate-700 hover:border-slate-600'
+                            }`}
                         >
                           <input
                             type="checkbox"
@@ -689,21 +722,57 @@ export function GodModePanel() {
                             onChange={(e) => {
                               const models = selectedUser.unlocked_models || [];
                               if (e.target.checked) {
-                                setSelectedUser({ ...selectedUser, unlocked_models: [...models, model] });
+                                setSelectedUser({ ...selectedUser, unlocked_models: [...models, perm.id] });
                               } else {
-                                setSelectedUser({ ...selectedUser, unlocked_models: models.filter(m => m !== model) });
+                                setSelectedUser({ ...selectedUser, unlocked_models: models.filter(m => m !== perm.id) });
                               }
                             }}
-                            className="w-5 h-5"
+                            className="w-4 h-4 rounded border-slate-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-slate-900"
                           />
                           <div className="flex-1">
-                            <span className="text-sm text-slate-200 font-medium uppercase">{model}</span>
+                            <span className="text-sm text-slate-200 font-medium block">{perm.label}</span>
+                            <span className="text-xs text-slate-500 block">{perm.desc}</span>
                           </div>
-                          {isUnlocked ? (
-                            <CheckCircle2 className="w-5 h-5 text-green-400" />
-                          ) : (
-                            <XCircle className="w-5 h-5 text-slate-600" />
-                          )}
+                          {isUnlocked && <CheckCircle2 className="w-5 h-5 text-blue-400" />}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Special Features */}
+                <div>
+                  <div className="text-[10px] text-slate-500 font-mono uppercase mb-2 ml-1">Special Features</div>
+                  <div className="space-y-2">
+                    {[
+                      { id: 'image-gen', label: 'Image Generation', desc: 'Access to Synthesis Lab' },
+                      { id: 'max-mode', label: 'MAX / GOD MODE', desc: 'Unlimited Research Depth' },
+                    ].map(perm => {
+                      const isUnlocked = selectedUser.unlocked_models?.includes(perm.id);
+                      return (
+                        <label
+                          key={perm.id}
+                          className={`flex items-center gap-3 p-3 bg-slate-800/50 border rounded-lg cursor-pointer transition-all ${isUnlocked ? 'border-purple-500/50 bg-purple-500/10' : 'border-slate-700 hover:border-slate-600'
+                            }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isUnlocked}
+                            onChange={(e) => {
+                              const models = selectedUser.unlocked_models || [];
+                              if (e.target.checked) {
+                                setSelectedUser({ ...selectedUser, unlocked_models: [...models, perm.id] });
+                              } else {
+                                setSelectedUser({ ...selectedUser, unlocked_models: models.filter(m => m !== perm.id) });
+                              }
+                            }}
+                            className="w-4 h-4 rounded border-slate-600 text-purple-500 focus:ring-purple-500 focus:ring-offset-slate-900"
+                          />
+                          <div className="flex-1">
+                            <span className="text-sm text-slate-200 font-medium block">{perm.label}</span>
+                            <span className="text-xs text-slate-500 block">{perm.desc}</span>
+                          </div>
+                          {isUnlocked && <Sparkles className="w-5 h-5 text-purple-400" />}
                         </label>
                       );
                     })}
@@ -735,6 +804,23 @@ export function GodModePanel() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Delete User Confirmation Modal */}
+      <ConfirmModal
+        isOpen={deleteConfirm.isOpen}
+        title="DELETE OPERATIVE"
+        message={`Permanently delete ${deleteConfirm.username}? This action cannot be undone.`}
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="danger"
+        onConfirm={() => {
+          if (deleteConfirm.userId) {
+            deleteUser(deleteConfirm.userId);
+          }
+          setDeleteConfirm({ isOpen: false, userId: null, username: '' });
+        }}
+        onCancel={() => setDeleteConfirm({ isOpen: false, userId: null, username: '' })}
+      />
 
       {/* CSS */}
       <style>{`

@@ -177,14 +177,15 @@ export const CreateActionModal: React.FC<CreateActionModalProps> = ({ onClose, e
         }
     };
 
-    const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (file) {
             // Validate file type (images only)
             if (file.type.startsWith('image/')) {
                 setSelectedFile(file);
             } else {
-                alert('Please select an image file (PNG, JPG, GIF, etc.)');
+                const { toast } = await import('@/lib/toast');
+                toast.warning('Invalid file type', { description: 'Please select an image file (PNG, JPG, GIF, etc.)' });
             }
         }
     };

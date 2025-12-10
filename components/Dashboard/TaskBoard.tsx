@@ -6,6 +6,7 @@ import clsx from 'clsx';
 import { AnswerModal } from './AnswerModal';
 import { CreateActionModal } from './CreateActionModal';
 import { Task } from '../../types';
+import { ConfirmModal } from '../Shared/ConfirmModal';
 
 export const TaskBoard: React.FC = () => {
   const { tasks, currentUser, toggleTask, forfeitTask, deleteTask, claimTask } = useOrbitStore();
@@ -18,6 +19,9 @@ export const TaskBoard: React.FC = () => {
 
   // State for resource link popovers (track open task ID)
   const [openResourcePopoverId, setOpenResourcePopoverId] = useState<string | null>(null);
+
+  // State for delete confirmation
+  const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean; taskId: string | null }>({ isOpen: false, taskId: null });
 
   // ✅ FIX: Only show user's OWN tasks (not public tasks from others)
   const myTasks = tasks.filter(t => t.user_id === currentUser?.id);
@@ -249,15 +253,7 @@ export const TaskBoard: React.FC = () => {
                 {/* Admin Delete */}
                 {currentUser?.is_admin && (
                   <button
-                    onClick={async () => {
-                      if (confirm("⚠️ ADMIN DELETION PROTOCOL?\n\nThis will permanently remove this task.")) {
-                        try {
-                          await deleteTask(task.id);
-                        } catch (error) {
-                          console.error('Admin task deletion failed', error);
-                        }
-                      }
-                    }}
+                    onClick={() => setDeleteConfirm({ isOpen: true, taskId: task.id })}
                     className="p-1.5 text-red-500 hover:text-red-300 hover:bg-red-950/30 rounded-lg transition-all"
                     title="Admin: Force Delete Task"
                   >
@@ -289,6 +285,27 @@ export const TaskBoard: React.FC = () => {
           />
         )}
       </AnimatePresence>
+
+      {/* Delete Task Confirmation Modal */}
+      <ConfirmModal
+        isOpen={deleteConfirm.isOpen}
+        title="ADMIN DELETE TASK"
+        message="This will permanently remove this task. This action cannot be undone."
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="danger"
+        onConfirm={async () => {
+          if (deleteConfirm.taskId) {
+            try {
+              await deleteTask(deleteConfirm.taskId);
+            } catch (error) {
+              console.error('Admin task deletion failed', error);
+            }
+          }
+          setDeleteConfirm({ isOpen: false, taskId: null });
+        }}
+        onCancel={() => setDeleteConfirm({ isOpen: false, taskId: null })}
+      />
     </div>
   );
 };

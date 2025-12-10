@@ -7,12 +7,14 @@ import { useOrbitStore } from '../../store/useOrbitStore';
 import { Period } from '../../types';
 import { PeriodEditModal } from './PeriodEditModal';
 import { getPeriodColor } from '../../lib/utils/schedule';
+import { ConfirmModal } from '../Shared/ConfirmModal';
 
 export function ScheduleEditor() {
   const { schedule, fetchSchedule, updatePeriod, deletePeriod, addPeriod } = useOrbitStore();
   const [editingPeriod, setEditingPeriod] = useState<Period | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean; periodId: string | null; label: string }>({ isOpen: false, periodId: null, label: '' });
 
   useEffect(() => {
     fetchSchedule();
@@ -50,12 +52,16 @@ export function ScheduleEditor() {
     setEditingPeriod(null);
   };
 
-  const handleDelete = async (periodId: string) => {
-    if (window.confirm('Are you sure you want to delete this period? This cannot be undone.')) {
-      setDeletingId(periodId);
-      await deletePeriod(periodId);
-      setDeletingId(null);
-    }
+  const handleDelete = async (periodId: string, label: string) => {
+    setDeleteConfirm({ isOpen: true, periodId, label });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteConfirm.periodId) return;
+    setDeletingId(deleteConfirm.periodId);
+    await deletePeriod(deleteConfirm.periodId);
+    setDeletingId(null);
+    setDeleteConfirm({ isOpen: false, periodId: null, label: '' });
   };
 
   const handleClose = () => {
@@ -136,9 +142,8 @@ export function ScheduleEditor() {
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: 20, scale: 0.9 }}
                   transition={{ delay: index * 0.05 }}
-                  className={`relative p-4 bg-slate-800/50 border rounded-xl hover:border-cyan-500/30 transition-all group ${
-                    isDeleting ? 'opacity-50 pointer-events-none' : ''
-                  } ${period.is_enabled ? color.border : 'border-slate-700'}`}
+                  className={`relative p-4 bg-slate-800/50 border rounded-xl hover:border-cyan-500/30 transition-all group ${isDeleting ? 'opacity-50 pointer-events-none' : ''
+                    } ${period.is_enabled ? color.border : 'border-slate-700'}`}
                 >
                   {/* Period Info */}
                   <div className="flex items-center gap-4">
@@ -195,7 +200,7 @@ export function ScheduleEditor() {
                       <motion.button
                         whileHover={{ scale: 1.1 }}
                         whileTap={{ scale: 0.9 }}
-                        onClick={() => period.id && handleDelete(period.id)}
+                        onClick={() => period.id && handleDelete(period.id, period.period_label)}
                         className="p-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 rounded-lg text-red-400 transition-all"
                         title="Delete period"
                         disabled={isDeleting}
@@ -219,6 +224,18 @@ export function ScheduleEditor() {
           onClose={handleClose}
         />
       )}
+
+      {/* Delete Confirmation Modal */}
+      <ConfirmModal
+        isOpen={deleteConfirm.isOpen}
+        title="DELETE PERIOD"
+        message={`Delete "${deleteConfirm.label}"? This cannot be undone.`}
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="danger"
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteConfirm({ isOpen: false, periodId: null, label: '' })}
+      />
     </div>
   );
 }

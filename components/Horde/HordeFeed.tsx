@@ -9,6 +9,7 @@ import { ProfileModal } from '../Operative/ProfileModal';
 import { supabase } from '../../lib/supabase';
 import { toast } from '@/lib/toast';
 import { getUserBadgeStyle } from '../../lib/utils/badges';
+import { ConfirmModal } from '../Shared/ConfirmModal';
 
 export const HordeFeed: React.FC = () => {
   const { intelDrops, currentUser, deleteIntelDrop } = useOrbitStore();
@@ -16,6 +17,7 @@ export const HordeFeed: React.FC = () => {
   const [selectedProfile, setSelectedProfile] = useState<any | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(false);
   const [dropToEdit, setDropToEdit] = useState<IntelDrop | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean; dropId: string | null }>({ isOpen: false, dropId: null });
 
   const formatTimeAgo = (dateString: string) => {
     const date = new Date(dateString);
@@ -33,9 +35,14 @@ export const HordeFeed: React.FC = () => {
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    if (confirm("CONFIRM DELETION PROTOCOL? This item will be permanently purged.")) {
-      await deleteIntelDrop(id);
+    setDeleteConfirm({ isOpen: true, dropId: id });
+  };
+
+  const confirmDelete = async () => {
+    if (deleteConfirm.dropId) {
+      await deleteIntelDrop(deleteConfirm.dropId);
     }
+    setDeleteConfirm({ isOpen: false, dropId: null });
   };
 
   const handleEdit = (e: React.MouseEvent, drop: IntelDrop) => {
@@ -295,6 +302,18 @@ export const HordeFeed: React.FC = () => {
           />
         )}
       </AnimatePresence>
+
+      {/* Delete Confirmation Modal */}
+      <ConfirmModal
+        isOpen={deleteConfirm.isOpen}
+        title="PURGE INTEL DROP"
+        message="This transmission will be permanently deleted. This action cannot be undone."
+        confirmText="Purge"
+        cancelText="Cancel"
+        variant="danger"
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteConfirm({ isOpen: false, dropId: null })}
+      />
     </>
   );
 };

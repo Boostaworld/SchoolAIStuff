@@ -5,6 +5,7 @@ import { useOrbitStore } from '../../store/useOrbitStore';
 import { Task } from '../../types';
 import clsx from 'clsx';
 import { useToast } from '../Shared/ToastManager';
+import { ConfirmModal } from '../Shared/ConfirmModal';
 
 export const PublicTaskMarketplace: React.FC = () => {
   const { tasks, currentUser, claimTask, deleteTask } = useOrbitStore();
@@ -12,6 +13,7 @@ export const PublicTaskMarketplace: React.FC = () => {
   const [claimingIds, setClaimingIds] = useState<Set<string>>(new Set());
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
   const isAdmin = currentUser?.is_admin;
+  const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean; taskId: string; taskTitle: string }>({ isOpen: false, taskId: '', taskTitle: '' });
 
   // Filter to show ALL public tasks (including own, so users can verify)
   const publicTasks = useMemo(() => {
@@ -86,9 +88,12 @@ export const PublicTaskMarketplace: React.FC = () => {
   };
 
   const handleDelete = async (taskId: string, taskTitle: string) => {
-    if (!confirm(`⚠️ ADMIN OVERRIDE\n\nDelete contract "${taskTitle}" permanently?`)) {
-      return;
-    }
+    setDeleteConfirm({ isOpen: true, taskId, taskTitle });
+  };
+
+  const confirmDelete = async () => {
+    const { taskId, taskTitle } = deleteConfirm;
+    setDeleteConfirm({ isOpen: false, taskId: '', taskTitle: '' });
 
     setDeletingIds(prev => new Set(prev).add(taskId));
 
@@ -372,6 +377,18 @@ export const PublicTaskMarketplace: React.FC = () => {
           }
         }
       `}</style>
+
+      {/* Delete Confirmation Modal */}
+      <ConfirmModal
+        isOpen={deleteConfirm.isOpen}
+        title="ADMIN DELETE CONTRACT"
+        message={`Permanently delete "${deleteConfirm.taskTitle}" from the public board?`}
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="danger"
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteConfirm({ isOpen: false, taskId: '', taskTitle: '' })}
+      />
     </div>
   );
 };

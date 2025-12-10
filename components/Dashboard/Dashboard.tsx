@@ -1,4 +1,7 @@
 import React, { useEffect, useState } from 'react';
+import { ImageGenPanel } from '../ImageGen/ImageGenPanel';
+
+// ... existing imports ...
 import { Nebula } from '../Trails/Nebula';
 import { OracleWidget } from '../Oracle/OracleWidget';
 import { HordeFeed } from '../Horde/HordeFeed';
@@ -24,7 +27,7 @@ import { NotificationTray } from '../Notifications/NotificationTray';
 import { PassiveMiner } from '../Economy/PassiveMiner';
 import { TheVault } from '../Economy/TheVault';
 import { GodModePanel } from '../Admin/GodModePanel';
-import { ResearchLab } from '../Research/ResearchLab';
+import { UnifiedResearchLab } from '../Research/UnifiedResearchLab';
 import CommsPage from '../Social/CommsPage';
 import { ScheduleTimer } from '../Schedule/ScheduleTimer';
 import { ScheduleView } from '../Schedule/ScheduleView';
@@ -37,7 +40,7 @@ import { useToast } from '../Shared/ToastManager';
 import { CoinAnimation } from '../Shared/CoinAnimation';
 import { WRITING_FALLBACK_CHALLENGES } from '../Training/writingFallbacks';
 
-type ViewState = 'dashboard' | 'intel' | 'registry' | 'notifications' | 'comms' | 'constellation' | 'training' | 'race' | 'economy' | 'research' | 'admin' | 'marketplace' | 'schedule' | 'games';
+type ViewState = 'dashboard' | 'registry' | 'notifications' | 'comms' | 'constellation' | 'training' | 'race' | 'economy' | 'research' | 'admin' | 'marketplace' | 'schedule' | 'games' | 'imagegen';
 
 const defaultRaceChallenge: TypingChallenge = {
   id: 'race-demo',
@@ -99,10 +102,12 @@ export const Dashboard: React.FC = () => {
     const syncFromHash = () => {
       const hash = window.location.hash.slice(1); // Remove #
       const [view, param] = hash.split('/');
-      const shareableTabs: ViewState[] = ['comms', 'research', 'intel'];
+      // shareableTabs = views that support deep linking (e.g. #comms/123, #games/poker_game=123)
+      const shareableTabs: ViewState[] = ['comms', 'research', 'imagegen', 'games'];
 
       if (view && shareableTabs.includes(view as ViewState)) {
         setActiveView(view as ViewState);
+
 
         // Handle deep linking for comms
         if (view === 'comms' && param) {
@@ -126,7 +131,7 @@ export const Dashboard: React.FC = () => {
   // Update hash when activeView changes (for shareable tabs only)
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const shareableTabs: ViewState[] = ['comms', 'research', 'intel'];
+    const shareableTabs: ViewState[] = ['comms', 'research', 'imagegen', 'games'];
 
     if (shareableTabs.includes(activeView)) {
       if (activeView === 'comms') {
@@ -466,22 +471,7 @@ export const Dashboard: React.FC = () => {
               <span className="lg:hidden text-sm font-mono">Schedule</span>
             </button>
 
-            <button
-              onClick={() => {
-                setActiveView('intel');
-                setIsSidebarOpen(false);
-              }}
-              className={clsx(
-                "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 flex items-center gap-3 lg:justify-center",
-                activeView === 'intel'
-                  ? "bg-slate-800 text-cyan-400 border-slate-700 shadow-lg shadow-cyan-900/20"
-                  : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
-              )}
-              title="Intel Research"
-            >
-              <Database className="w-5 h-5 flex-shrink-0" />
-              <span className="lg:hidden text-sm font-mono">Intel</span>
-            </button>
+            {/* Intel tab removed - consolidated into ResearchLab */}
 
             <button
               onClick={() => {
@@ -584,6 +574,23 @@ export const Dashboard: React.FC = () => {
             >
               <Gamepad2 className="w-5 h-5 flex-shrink-0" />
               <span className="lg:hidden text-sm font-mono">Games</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setActiveView('imagegen');
+                setIsSidebarOpen(false);
+              }}
+              className={clsx(
+                "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 flex items-center gap-3 lg:justify-center",
+                activeView === 'imagegen'
+                  ? "bg-slate-800 text-pink-400 border-slate-700 shadow-lg shadow-pink-900/20"
+                  : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
+              )}
+              title="Image Generation"
+            >
+              <Sparkles className="w-5 h-5 flex-shrink-0" />
+              <span className="lg:hidden text-sm font-mono">ImageGen</span>
             </button>
 
             {isAdminUser && (
@@ -725,9 +732,9 @@ export const Dashboard: React.FC = () => {
             </div>
           )}
 
-          {activeView === 'intel' && (
+          {activeView === 'imagegen' && (
             <div className="absolute inset-0 p-3 md:p-6 overflow-hidden animate-in fade-in duration-300">
-              <IntelPanel />
+              <ImageGenPanel />
             </div>
           )}
 
@@ -893,7 +900,7 @@ export const Dashboard: React.FC = () => {
 
           {activeView === 'research' && (
             <div className="absolute inset-0 overflow-hidden animate-in fade-in duration-300">
-              <ResearchLab />
+              <UnifiedResearchLab />
             </div>
           )}
 

@@ -1,0 +1,68 @@
+# AI Architecture Restructure — Merged Plan
+
+## Completed ✅
+
+The following items from the original plan have been implemented:
+
+### API Fixes
+- ✅ **gemini.ts**: Fixed [analyzeImageWithVision](file:///c:/Users/kayla/OneDrive/Desktop/SchoolAIStuff/lib/ai/gemini.ts#228-319) Content/Parts structure.
+- ✅ **intel.ts**: Removed `thinkingConfig` for `gemini-3-image` and removed invalid `mediaResolution` field.
+
+### UI Changes
+- ✅ **Dashboard.tsx**: Removed Intel tab, added ImageGen tab, updated [ViewState](file:///c:/Users/kayla/OneDrive/Desktop/SchoolAIStuff/components/Dashboard/Dashboard.tsx#43-44).
+- ✅ **IntelPanel.tsx**: Removed Vision mode (image upload, resolution selector).
+- ✅ **ImageGenPanel.tsx**: Created new component with prompt input, style selector, aspect ratio options.
+
+---
+
+## Remaining Items 🔲
+
+> [!IMPORTANT]
+> The following items from the referenced plan have **not** been addressed yet.
+
+### 1. UnifiedResearchLab.tsx Enhancements
+- [ ] Verify vision mode is fully functional as the single source for image analysis.
+- [ ] Add **model capability badges** showing which features each model supports.
+
+### 2. Model Capability Matrix UI
+Display this matrix somewhere in the UI (possibly in a settings panel or tooltip):
+
+| Model | Chat | Vision | Image Gen | Web Search | Thinking |
+|-------|------|--------|-----------|------------|----------|
+| gemini-2.5-flash | ✅ | ✅ | ❌ | ❌ | ✅ |
+| gemini-2.5-pro | ✅ | ✅ | ❌ | ❌ | ✅ |
+| gemini-3.0-pro-preview | ✅ | ✅ | ❌ | ✅ | ✅ |
+| gemini-3-pro-image-preview | ❌ | ❌ | ✅ | ✅ | ❌ |
+
+### 3. Google Form Mode Fix
+- [ ] Investigate and fix timeout/empty response handling in `gemini.ts:393-396`.
+
+---
+
+## Verification Plan
+
+### Manual Testing
+1. ResearchLab Chat: Test with Flash, Pro, 2.5, 3.0 models.
+2. ResearchLab Vision: Upload image, test with all vision-capable models.
+3. ImageGen Tab: Generate images, verify resolution options work.
+4. Confirm Intel tab is removed from sidebar.
+5. Check model capability badges display correctly.
+
+### Console Checks
+- No 400 errors on API calls.
+- No "Thinking level not supported" errors.
+- No "mediaResolution" errors.
+- No "Mixing Content and Parts" errors.
+
+---
+
+## Questions for User
+
+1. **Model Capability UI**: Where should the capability matrix be displayed?
+   - Option A: Tooltip on model selector in each panel.
+   - Option B: Dedicated "Model Info" section in settings.
+   - Option C: Both. DO THIS ONE
+
+2. **Google Form Mode**: Should we prioritize fixing this now, or defer to backlog?
+
+3. **UnifiedResearchLab**: Should we continue to support both [ResearchLab.tsx](file:///c:/Users/kayla/OneDrive/Desktop/SchoolAIStuff/components/Research/ResearchLab.tsx) and `UnifiedResearchLab.tsx`, or deprecate one?

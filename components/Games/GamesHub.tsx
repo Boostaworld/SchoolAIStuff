@@ -7,7 +7,35 @@ import { PokerLobby } from './PokerLobby';
 
 export const GamesHub: React.FC = () => {
     const { currentUser, orbitPoints, activePokerGame } = useOrbitStore();
-    const [showPokerLobby, setShowPokerLobby] = React.useState(false);
+    const [view, setView] = React.useState<'hub' | 'lobby' | 'poker-table'>('hub');
+    const [activeGameId, setActiveGameId] = React.useState<string | null>(null);
+
+    // Hash-based routing for games
+    React.useEffect(() => {
+        const handleHashChange = () => {
+            const hash = window.location.hash.slice(1); // Remove #
+            const [section, param] = hash.split('/');
+
+            if (section === 'games') {
+                if (param && param.startsWith('poker_game=')) {
+                    const gameId = param.split('=')[1];
+                    setActiveGameId(gameId);
+                    setView('poker-table');
+                } else if (param === 'lobby') {
+                    setView('lobby');
+                } else {
+                    setView('hub');
+                }
+            }
+        };
+
+        // Initial check
+        handleHashChange();
+
+        // Listen for changes
+        window.addEventListener('hashchange', handleHashChange);
+        return () => window.removeEventListener('hashchange', handleHashChange);
+    }, []);
 
     // Mock stats - will be replaced with real data
     const stats = {
@@ -17,12 +45,12 @@ export const GamesHub: React.FC = () => {
         winRate: 0
     };
 
-    if (activePokerGame) {
-        return <PokerTable gameId={activePokerGame.game.id} onLeave={() => setShowPokerLobby(true)} />;
+    if (view === 'poker-table' && activeGameId) {
+        return <PokerTable gameId={activeGameId} onLeave={() => window.location.hash = 'games/lobby'} />;
     }
 
-    if (showPokerLobby) {
-        return <PokerLobby onBack={() => setShowPokerLobby(false)} />;
+    if (view === 'lobby') {
+        return <PokerLobby onBack={() => window.location.hash = 'games'} />;
     }
 
     return (
@@ -92,23 +120,10 @@ export const GamesHub: React.FC = () => {
                 </h2>
 
                 <motion.div
-                    className="relative overflow-hidden rounded-2xl border-2 border-purple-500/50 bg-gradient-to-br from-slate-900 via-purple-900/20 to-slate-900 p-6 md:p-8 group opacity-75 grayscale-[0.5]"
+                    whileHover={{ scale: 1.02 }}
+                    className="relative overflow-hidden rounded-2xl border-2 border-purple-500/50 bg-gradient-to-br from-slate-900 via-purple-900/20 to-slate-900 p-6 md:p-8 cursor-pointer group"
+                    onClick={() => window.location.hash = 'games/lobby'}
                 >
-                    {/* Work In Progress Overlay */}
-                    <div className="absolute inset-0 z-50 bg-black/60 backdrop-blur-[2px] flex flex-col items-center justify-center text-center p-4">
-                        <div className="bg-slate-900/90 border-2 border-purple-500/50 p-4 rounded-xl shadow-2xl max-w-sm mx-4">
-                            <Sparkles className="w-8 h-8 text-purple-400 mx-auto mb-3" />
-                            <h3 className="text-xl font-bold text-white mb-2 font-mono">COMING SOON</h3>
-                            <p className="text-slate-300 mb-4">
-                                The Texas Hold'em Poker tables are currently being polished. Check back tomorrow for the grand opening!
-                            </p>
-                            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-purple-500/20 border border-purple-500/40 text-purple-300 font-mono text-sm">
-                                <Clock className="w-4 h-4" />
-                                <span>ETA: 24 Hours</span>
-                            </div>
-                        </div>
-                    </div>
-
                     {/* Animated background glow */}
                     <div className="absolute inset-0 bg-gradient-to-r from-purple-500/10 via-pink-500/10 to-purple-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
 
@@ -171,12 +186,14 @@ export const GamesHub: React.FC = () => {
                             </div>
 
                             {/* CTA Button */}
-                            <div
-                                className="px-8 py-4 rounded-xl bg-slate-700 text-slate-400 font-bold text-lg flex items-center gap-2 justify-center cursor-not-allowed"
+                            <motion.button
+                                whileHover={{ scale: 1.05 }}
+                                whileTap={{ scale: 0.95 }}
+                                className="px-8 py-4 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 text-white font-bold text-lg shadow-lg shadow-purple-500/50 hover:shadow-purple-500/70 transition-shadow flex items-center gap-2 justify-center"
                             >
                                 <Gamepad2 className="w-6 h-6" />
-                                <span>LOCKED</span>
-                            </div>
+                                <span>PLAY NOW</span>
+                            </motion.button>
                         </div>
                     </div>
 
@@ -198,7 +215,7 @@ export const GamesHub: React.FC = () => {
                     <ComingSoonCard title="Tournaments" description="Compete for glory" />
                 </div>
             </div>
-        </div>
+        </div >
     );
 };
 

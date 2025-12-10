@@ -271,6 +271,15 @@ export const analyzeImageWithVision = async (
       // Add current message with image
       {
         role: 'user' as const,
+        parts: [
+          {
+            inlineData: {
+              mimeType,
+              data: cleanBase64
+            }
+          },
+          { text: prompt }
+        ]
       }
     ];
 
@@ -414,6 +423,7 @@ export interface ChatRequest {
   systemInstructions?: string;
   temperature?: number;
   maxTokens?: number;
+  webSearchEnabled?: boolean; // ✨ Enable Google Search grounding
   conversationHistory?: Array<{ role: 'user' | 'model', text: string }>;
 }
 
@@ -484,18 +494,26 @@ export const sendChatMessage = async (request: ChatRequest): Promise<ChatRespons
       };
     }
 
-    // Enable Google Search grounding for Gemini 3.0 models
+    // ✨ Google Search Grounding - Supported Models:
+    // Gemini 3.0 Pro, 2.5 Pro, 2.5 Flash, 2.5 Flash-Lite, 2.0 Flash, 1.5 Pro, 1.5 Flash
+    const supportsGoogleSearch =
+      request.model.includes('gemini-3') ||
+      request.model.includes('3.0') ||
+      request.model.includes('2.5') ||
+      request.model.includes('2.0') ||
+      request.model.includes('1.5');
+
+    // For Gemini 3.x: Always enable Google Search + URL Context
+    // For Gemini 2.x/1.5: Only enable when explicitly requested via webSearchEnabled
     if (request.model.includes('gemini-3') || request.model.includes('3.0')) {
       config.tools = [
         { googleSearch: {} },
         { urlContext: {} }
       ];
-      console.log('[Gemini 3.0] Config for', request.model, ':', {
-        hasTools: true,
-        tools: config.tools,
-        thinkingLevel: request.thinkingLevel,
-        maxOutputTokens: config.maxOutputTokens
-      });
+      console.log('[Gemini 3.0] Web Search + URL Context enabled for', request.model);
+    } else if (request.webSearchEnabled && supportsGoogleSearch) {
+      config.tools = [{ googleSearch: {} }];
+      console.log('[Gemini 2.x/1.5] Google Search enabled for', request.model);
     }
 
     // Use streaming to get live thoughts and response

@@ -7,6 +7,7 @@ import ReactionPicker from './ReactionPicker';
 import { getUserBadgeStyle } from '../../lib/utils/badges';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { MessageModal } from './MessageModal';
+import { ConfirmModal } from '../Shared/ConfirmModal';
 
 interface MessageBubbleProps {
   message: Message;
@@ -18,6 +19,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
   const [showModal, setShowModal] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const isSelf = message.sender_id === currentUser?.id;
   const messageReactions = reactions[message.id] || [];
@@ -59,8 +61,12 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
   const canDelete = isSelf && daysSinceSent <= 7;
 
   const handleDelete = async () => {
-    if (!confirm('Delete this message?')) return;
+    setShowDeleteConfirm(true);
+  };
+
+  const confirmDeleteMessage = async () => {
     await deleteMessage(message.id, message.channel_id);
+    setShowDeleteConfirm(false);
   };
 
   const handleEditSave = async () => {
@@ -357,6 +363,18 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
         senderUsername={message.senderUsername}
         senderAvatar={message.senderAvatar}
         isSelf={isSelf}
+      />
+
+      {/* Delete Message Confirmation */}
+      <ConfirmModal
+        isOpen={showDeleteConfirm}
+        title="DELETE MESSAGE"
+        message="Delete this message? This cannot be undone."
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="danger"
+        onConfirm={confirmDeleteMessage}
+        onCancel={() => setShowDeleteConfirm(false)}
       />
     </motion.div>
   );

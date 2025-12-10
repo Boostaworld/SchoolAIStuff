@@ -6,12 +6,15 @@ export interface IntelResult {
   sources: { title: string; url: string; snippet: string }[];
   related_concepts: string[];
   essay?: string;
+  generatedImage?: string; // Base64 image data for image generation mode
+  thinkingProcess?: string; // ✨ Thinking process text for image generation
+  thoughtImages?: string[]; // ✨ Array of thought images (intermediate reasoning visualizations)
 }
 
 export interface IntelQueryParams {
   prompt: string;
   instructions: string;
-  model: 'flash' | 'pro' | 'orbit-x' | 'gemini-3-pro' | 'gemini-3-image';
+  model: 'flash' | 'pro' | 'orbit-x' | 'gemini-3-pro' | 'gemini-3-image' | 'gemini-2.5-flash-image';
   researchMode?: boolean;
   depth?: number;
   conversationHistory?: Array<{ role: 'user' | 'model'; text: string }>;
@@ -21,6 +24,10 @@ export interface IntelQueryParams {
   mode?: 'chat' | 'image' | 'generation'; // Interaction mode
   image?: string; // Base64 encoded image data or file URI
   imageResolution?: '1K' | '2K' | '3K' | '4K'; // Resolution for generated images
+  aspectRatio?: '1:1' | '2:3' | '3:2' | '3:4' | '4:3' | '4:5' | '5:4' | '9:16' | '16:9' | '21:9'; // All supported aspect ratios
+  generatedImage?: string; // ✨ Field for storing generated image data
+  webSearch?: boolean; // ✨ Enable Google Search grounding for image generation (Gemini 3 Pro Image only)
+  includeThinking?: boolean; // ✨ Show thinking process for image generation
 }
 
 const getIntelApiKey = () => {
@@ -60,7 +67,10 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
     thinkingLevel = 'medium', // Default thinking level
     mode = 'chat',
     image,
-    imageResolution = '4K' // Default to 4K
+    imageResolution = '4K', // Default to 4K
+    aspectRatio = '1:1', // Default to square
+    webSearch = false, // ✨ Default web search off
+    includeThinking = false // ✨ Default thinking display off
   } = params;
 
   const modelMap: Record<IntelQueryParams['model'], string> = {
@@ -68,7 +78,8 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
     pro: 'gemini-2.5-pro', // Updated to 2.5 Pro with thinking
     'orbit-x': 'gemini-2.5-pro', // Use 2.5 Pro for premium queries
     'gemini-3-pro': 'gemini-3.0-pro-preview', // Gemini 3.0 Pro with advanced thinking
-    'gemini-3-image': 'gemini-3-pro-image-preview' // Gemini 3.0 Image Generation (Updated name)
+    'gemini-3-image': 'gemini-3-pro-image-preview', // Gemini 3.0 Image Generation (Updated name)
+    'gemini-2.5-flash-image': 'gemini-2.5-flash-image' // Fast image generation with Gemini 2.5 Flash
   };
 
   // Determine the actual model ID to use
@@ -119,10 +130,7 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
           }
         };
 
-        // For Gemini 3.0 models, add media_resolution for high-quality analysis
-        if (model === 'gemini-3-pro' || model === 'gemini-3-image') {
-          imagePart.mediaResolution = { level: 'media_resolution_high' };
-        }
+        // mediaResolution removed to fix API error "Unknown name mediaResolution"
 
         userParts.push(imagePart);
       }
@@ -156,10 +164,12 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
       // Only add thinking if enabled and model supports it
       if (thinkingEnabled) {
         // Gemini 3.0 uses thinkingLevel, 2.5 models use thinkingBudget
-        if (model === 'gemini-3-pro' || model === 'gemini-3-image') {
+        if (model === 'gemini-3-pro') {
           config.thinkingConfig = {
             thinkingLevel: thinkingLevel.toUpperCase() // "LOW", "MEDIUM", "HIGH"
           };
+        } else if (model === 'gemini-3-image') {
+          // gemini-3-image does not support thinkingConfig
         } else if (model === 'pro' || model === 'orbit-x' || model === 'flash') {
           // 2.5 models support thinkingBudget
           config.thinkingConfig = model === 'flash' ? {
@@ -173,11 +183,13 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
 
       const response = await ai.models.generateContent({
         model: modelMap[model] || modelMap.flash,
-        systemInstruction: thinkingEnabled
-          ? 'You are a highly intelligent AI assistant with advanced reasoning capabilities. Provide clear, well-thought-out answers using proper markdown formatting. Use **bold** for emphasis, *italic* for secondary emphasis, $$LaTeX$$ for math equations, and ```code blocks``` for code. Think through the problem step by step before responding. IMPORTANT: Use clean markdown syntax without escaping special characters like * _ $ # unless they need to be literal text.'
-          : 'You are a helpful AI assistant. Provide clear, concise answers using proper markdown formatting. Use **bold** for emphasis, *italic* for secondary emphasis, $$LaTeX$$ for math equations, and ```code blocks``` for code. IMPORTANT: Use clean markdown syntax without escaping special characters.',
-        contents,
-        config
+        config: {
+          ...config,
+          systemInstruction: thinkingEnabled
+            ? 'You are a highly intelligent AI assistant with advanced reasoning capabilities. Provide clear, well-thought-out answers using proper markdown formatting. Use **bold** for emphasis, *italic* for secondary emphasis, $$LaTeX$$ for math equations, and ```code blocks``` for code. Think through the problem step by step before responding. IMPORTANT: Use clean markdown syntax without escaping special characters like * _ $ # unless they need to be literal text.'
+            : 'You are a helpful AI assistant. Provide clear, concise answers using proper markdown formatting. Use **bold** for emphasis, *italic* for secondary emphasis, $$LaTeX$$ for math equations, and ```code blocks``` for code. IMPORTANT: Use clean markdown syntax without escaping special characters.'
+        },
+        contents
       });
 
       const text = response.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -286,14 +298,33 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
     if (mode === 'generation') {
       researchConfig = {
         maxOutputTokens,
-        temperature: 0.7,
+        temperature: model === 'gemini-3-image' ? 1.0 : 0.7, // Gemini 3 recommends temperature 1.0
         responseModalities: ['TEXT', 'IMAGE'],
-        tools: [{ googleSearch: {} }], // Enable web search for image generation
         imageConfig: {
-          aspectRatio: '16:9',
+          aspectRatio: aspectRatio, // ✨ Use user-selected aspect ratio
           imageSize: imageResolution // Use customizable resolution
         }
       };
+
+      // ✨ Compatibility fix for Gemini 2.5 Flash Image
+      if (model === 'gemini-2.5-flash-image') {
+        // Flash Image (Imagen) does not support imageSize/resolution, only aspectRatio
+        delete researchConfig.imageConfig.imageSize;
+      }
+
+      // ✨ Add Google Search grounding for Gemini 3 Pro Image when enabled
+      if (webSearch && model === 'gemini-3-image') {
+        researchConfig.tools = [{ googleSearch: {} }];
+        console.log('[Intel] Web search enabled for image generation');
+      }
+
+      // ✨ Enable thinking for Gemini 3 Pro Image
+      if (includeThinking && model === 'gemini-3-image') {
+        researchConfig.thinkingConfig = {
+          includeThoughts: true // Enable viewing thought process and thought images
+        };
+        console.log('[Intel] Thinking mode enabled for image generation');
+      }
     } else {
       researchConfig = {
         responseMimeType: 'application/json',
@@ -304,8 +335,9 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
     }
 
     // Only add thinking config if enabled and model supports it
-    if (thinkingEnabled) {
-      if (model === 'gemini-3-pro' || model === 'gemini-3-image') {
+    // ✨ SKIP for generation mode - it handles its own thinking config internally
+    if (thinkingEnabled && mode !== 'generation') {
+      if (model === 'gemini-3-pro') {
         // Gemini 3.0 uses thinkingLevel
         researchConfig.thinkingConfig = {
           thinkingLevel: thinkingLevel.toUpperCase()
@@ -318,13 +350,21 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
       }
     }
 
+    const finalConfig = {
+      ...researchConfig
+    };
+
+    // Only add system instruction if NOT gemini-2.5-flash-image (which rejects it)
+    if (model !== 'gemini-2.5-flash-image') {
+      finalConfig.systemInstruction = thinkingEnabled
+        ? 'You are an advanced research AI with deep analytical capabilities. Think critically and provide comprehensive, factual research.'
+        : 'You are a fast, efficient research AI. Provide comprehensive, factual research with high quality responses.';
+    }
+
     const response = await ai.models.generateContent({
       model: modelId,
-      systemInstruction: thinkingEnabled
-        ? 'You are an advanced research AI with deep analytical capabilities. Think critically and provide comprehensive, factual research.'
-        : 'You are a fast, efficient research AI. Provide comprehensive, factual research with high quality responses.',
-      contents,
-      config: researchConfig
+      config: finalConfig,
+      contents
     });
 
     const elapsed = Date.now() - start;
@@ -332,22 +372,60 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
       await new Promise(resolve => setTimeout(resolve, targetDelayMs - elapsed));
     }
 
+    // ✨ Handle image generation response with thinking support
+    if (mode === 'generation') {
+      const parts = response.candidates?.[0]?.content?.parts || [];
+
+      let mainImage: string | undefined;
+      let thinkingText = '';
+      let thoughtImages: string[] = [];
+      let descriptionText = '';
+
+      // Process all parts to extract images, text, and thinking
+      for (const part of parts) {
+        if (part.inlineData && part.inlineData.data) {
+          const base64Image = `data:${part.inlineData.mimeType || 'image/png'};base64,${part.inlineData.data}`;
+
+          // Check if this is a thought image or the final image
+          if ((part as any).thought) {
+            thoughtImages.push(base64Image);
+          } else {
+            mainImage = base64Image; // Final generated image
+          }
+        }
+
+        if (part.text) {
+          if ((part as any).thought) {
+            thinkingText += part.text; // Thinking process text
+          } else {
+            descriptionText += part.text; // Image description or web search context
+          }
+        }
+      }
+
+      if (mainImage) {
+        console.log(`✨ Image generation complete. Thought images: ${thoughtImages.length}, Thinking text: ${thinkingText.length} chars`);
+
+        return {
+          summary_bullets: ['Image generated successfully.'],
+          sources: [],
+          related_concepts: [],
+          essay: descriptionText || undefined,
+          generatedImage: mainImage,
+          thinkingProcess: thinkingText || undefined,
+          thoughtImages: thoughtImages.length > 0 ? thoughtImages : undefined
+        };
+      }
+
+      // If no image was generated but we have text, return that
+      if (descriptionText || thinkingText) {
+        throw new Error(descriptionText || thinkingText || 'No image generated');
+      }
+    }
+
     const firstPart = response.candidates?.[0]?.content?.parts?.[0];
     const text = firstPart?.text;
     const inlineData = firstPart?.inlineData;
-
-    // Handle image generation response
-    if (inlineData && inlineData.data) {
-      console.log("Received image generation response");
-      const base64Image = `data:${inlineData.mimeType || 'image/png'};base64,${inlineData.data}`;
-
-      return {
-        summary_bullets: ['Image generated successfully.'],
-        sources: [],
-        related_concepts: [],
-        essay: `![Generated Image](${base64Image})`
-      };
-    }
 
     if (!text) {
       console.error("No text or image in AI response. Full response:", JSON.stringify(response, null, 2));

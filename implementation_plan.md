@@ -1,7 +1,7 @@
 # Implementation Plan - Gemini 3.0 Integration & Profile Viewing
 
 ## Goal
-Integrate Gemini 3.0 Pro Preview capabilities into the Intel Engine, including Thinking Mode, Image Analysis, and Image Generation. Also, enable profile viewing from the Horde Feed.
+Integrate Gemini 3.0 Pro Preview capabilities into the Intel Engine, including Thinking Mode, Image Analysis, and Image Generation. Enable profile viewing from the Horde Feed. Implement a "Prompt Improver" for all modes. Finally, create a global "Announcer" system for critical updates and news.
 
 ## User Review Required
 > [!IMPORTANT]
@@ -10,7 +10,20 @@ Integrate Gemini 3.0 Pro Preview capabilities into the Intel Engine, including T
 
 ## Proposed Changes
 
-### 1. AI Logic Layer (`lib/ai`)
+### 1. Database (`sql`)
+
+#### [NEW] [announcements.sql](file:///c:/Users/kayla/OneDrive/Desktop/SchoolAIStuff/sql/announcements.sql)
+- **Table**: `announcements`
+    - `id`: uuid (PK)
+    - `title`: text
+    - `simple_description`: text (for the banner)
+    - `full_content`: text (markdown supported, for the modal)
+    - `type`: 'update' | 'announcement' | 'alert'
+    - `created_at`: timestamp
+    - `is_active`: boolean (defaults to true)
+    - `version`: string (e.g., "1.2.0")
+
+### 2. AI Logic Layer (`lib/ai`)
 
 #### [MODIFY] [intel.ts](file:///c:/Users/kayla/OneDrive/Desktop/SchoolAIStuff/lib/ai/intel.ts)
 - Update `IntelQueryParams` to include:
@@ -27,6 +40,15 @@ Integrate Gemini 3.0 Pro Preview capabilities into the Intel Engine, including T
 - Update `IntelQueryOptions` to pass through new parameters.
 - Update `sendIntelQueryWithPersistence` to handle the new options.
 
+#### [NEW] [promptImprover.ts](file:///c:/Users/kayla/OneDrive/Desktop/SchoolAIStuff/lib/ai/promptImprover.ts)
+- `improvePrompt(originalPrompt: string, mode: 'chat' | 'image' | 'vision', context?: string): Promise<string>`
+- **Logic**:
+    - **Web Search**: Query for "best prompt engineering practices for [mode] [context]".
+    - **Refinement**:
+        - **Vision**: Convert "Read this" -> "Analyze this image in detail, describing key elements, text, and visual style..."
+        - **Image Gen**: Enhance descriptive terms (e.g., "Cyberpunk city" -> "Futuristic cyberpunk city, neon lights, rain-slicked streets, high detail, cinematic lighting...").
+        - **Chat**: Structure the prompt for better reasoning or clarity based on the search results.
+
 ### 2. UI Components (`components/Intel`)
 
 #### [MODIFY] [IntelPanel.tsx](file:///c:/Users/kayla/OneDrive/Desktop/SchoolAIStuff/components/Intel/IntelPanel.tsx)
@@ -40,7 +62,48 @@ Integrate Gemini 3.0 Pro Preview capabilities into the Intel Engine, including T
     - Handle file selection and conversion to base64.
     - Pass new state to `sendIntelQuery`.
 
-### 3. Horde Feed (`components/Horde`)
+#### [MODIFY] [InputArea.tsx](file:///c:/Users/kayla/OneDrive/Desktop/SchoolAIStuff/components/Intel/InputArea.tsx)
+- Add "Magic Wand" / "Improve Prompt" button.
+- On click:
+    - Show loading state ("Refining prompt...").
+    - Call `improvePrompt`.
+    - Update input value with refined prompt.
+    - Show toast/notification of what changed (optional).
+
+
+
+### 3. Announcer System (`components/Announcer`)
+
+#### [NEW] [AnnouncementBanner.tsx](file:///c:/Users/kayla/OneDrive/Desktop/SchoolAIStuff/components/Announcer/AnnouncementBanner.tsx)
+- **Visuals**:
+    - Fixed top bar (dismissible).
+    - Vivid gradient background (based on `type`).
+    - Title + "View More" button + Close (X) icon.
+- **Logic**:
+    - Check `useOrbitStore` for `lastDismissedAnnouncementId`.
+    - If `latestAnnouncement.id` != `lastDismissedId`, show banner.
+    - On Close: Update `lastDismissedAnnouncementId`.
+    - On "View More": Open `AnnouncementModal`.
+
+#### [NEW] [AnnouncementModal.tsx](file:///c:/Users/kayla/OneDrive/Desktop/SchoolAIStuff/components/Announcer/AnnouncementModal.tsx)
+- **Visuals**:
+    - Standard Orbit Modal design.
+    - Pagination controls (< Prev | Next >) to browse historical updates.
+    - Markdown rendering for `full_content`.
+- **Logic**:
+    - Fetch all active announcements (ordered by date).
+    - Maintain `currentIndex` state.
+
+### 4. Admin Integration (`components/Admin`)
+
+#### [MODIFY] [GodModePanel.tsx](file:///c:/Users/kayla/OneDrive/Desktop/SchoolAIStuff/components/Admin/GodModePanel.tsx)
+- Add "Announcements" tab.
+- Form to create new announcement:
+    - Title, Banner Description, Full Content (Markdown Editor), Type.
+    - "Post Announcement" button.
+- List active announcements (Edit/Delete).
+
+### 5. Horde Feed (`components/Horde`)
 
 #### [MODIFY] [HordeFeed.tsx](file:///c:/Users/kayla/OneDrive/Desktop/SchoolAIStuff/components/Horde/HordeFeed.tsx)
 - Add `fetchProfile` function to get full profile data from Supabase by `author_id`.
@@ -72,3 +135,28 @@ Integrate Gemini 3.0 Pro Preview capabilities into the Intel Engine, including T
     - Go to Horde Feed.
     - Click on a user's avatar.
     - Verify `ProfileModal` opens with their stats.
+
+5.  **Prompt Improver**:
+    - **Vision Mode**:
+        - Type "Read this".
+        - Click "Improve Prompt".
+        - Verify it changes to a detailed analysis prompt.
+    - **Image Gen Mode**:
+        - Type a simple noun (e.g., "Cat").
+        - Click "Improve Prompt".
+        - Verify it expands to a detailed description.
+    - **General Chat**:
+        - Type a question.
+        - Click "Improve Prompt".
+        - Verify it adds structure or context based on web search best practices.
+
+6.  **Announcer System**:
+    - **Admin**:
+        - Create a new announcement ("Test Update 1.0").
+        - Verify it appears in the list.
+    - **User Experience**:
+        - Refresh page. Verify Top Banner appears.
+        - Click "View More". Verify Modal opens with details.
+        - Close Modal. Click "X" on Banner.
+        - Refresh page. Verify Banner does NOT reappear.
+        - Clear LocalStorage (or reset persistence logic). Verify Banner reappears.

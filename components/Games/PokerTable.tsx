@@ -45,7 +45,7 @@ export const PokerTable: React.FC<PokerTableProps> = ({ gameId, onLeave }) => {
         const hero = players.find(p => p.user_id === currentUser?.id);
 
         // Determine if it's hero's turn
-        const isHeroTurn = game.current_turn_player_id === currentUser?.id && game.status === 'in_progress';
+        const isHeroTurn = hero && game.current_turn_player_id === hero.id && game.status === 'in_progress';
 
         // Calculate min raise (simplified: current bet + big blind)
         const minRaise = currentTableBet + game.big_blind;
@@ -99,6 +99,7 @@ export const PokerTable: React.FC<PokerTableProps> = ({ gameId, onLeave }) => {
                     </h2>
                     <div className="flex items-center gap-4 text-xs text-slate-400 font-mono mt-1">
                         <span>Blinds: {game.small_blind}/{game.big_blind}</span>
+                        <span>Stage: {game.community_cards.length === 0 ? 'Pre-Flop' : game.community_cards.length === 3 ? 'Flop' : game.community_cards.length === 4 ? 'Turn' : 'River'}</span>
                         <span>ID: {game.id.slice(0, 8)}</span>
                     </div>
                 </div>
@@ -148,9 +149,9 @@ export const PokerTable: React.FC<PokerTableProps> = ({ gameId, onLeave }) => {
                     {/* Players */}
                     {players.map((player) => {
                         const displayPos = getDisplayPosition(player.position);
-                        const isTurn = game.current_turn_player_id === (player.user_id || `ai-${player.position}`) && game.status === 'in_progress'; // AI ID hack for now if needed, but ideally user_id is consistent
-                        // Better isTurn check:
-                        const isPlayerTurn = game.current_turn_player_id === player.user_id || (player.is_ai && game.current_turn_player_id === player.id); // Assuming player.id is used for turn tracking if user_id is null for AI
+
+                        // Strict ID Comparison for turn
+                        const isPlayerTurn = game.current_turn_player_id === player.id && game.status === 'in_progress';
 
                         const isWinner = game.winner_id === player.user_id;
 

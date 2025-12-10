@@ -21,16 +21,40 @@ export const PokerLobby: React.FC<PokerLobbyProps> = ({ onBack }) => {
     }, []);
 
     const handleCreateGame = async (buyIn: number, maxPlayers: number) => {
-        await createPokerGame(buyIn, maxPlayers, 'multiplayer');
-        setShowCreateModal(false);
+        const { gameId, error } = await createPokerGame(buyIn, maxPlayers, 'multiplayer');
+        if (gameId) {
+            window.location.hash = `games/poker_game=${gameId}`;
+            setShowCreateModal(false);
+        } else {
+            alert(`Failed to create game: ${error}`);
+        }
     };
 
     const handlePlayAI = async (difficulty: AIDifficulty) => {
-        await createPokerGame(50, 6, 'practice', difficulty);
+        const { gameId, error } = await createPokerGame(50, 6, 'practice', difficulty);
+        if (gameId) {
+            window.location.hash = `games/poker_game=${gameId}`;
+        } else {
+            // Show visible error for debugging
+            const errDiv = document.createElement('div');
+            errDiv.style.position = 'fixed';
+            errDiv.style.top = '50%';
+            errDiv.style.left = '50%';
+            errDiv.style.transform = 'translate(-50%, -50%)';
+            errDiv.style.background = 'red';
+            errDiv.style.color = 'white';
+            errDiv.style.padding = '20px';
+            errDiv.style.zIndex = '9999';
+            errDiv.innerText = `GAME CREATION FAILED: ${error}`;
+            document.body.appendChild(errDiv);
+        }
     };
 
     const handleJoinGame = async (gameId: string) => {
-        await joinPokerGame(gameId);
+        const success = await joinPokerGame(gameId);
+        if (success) {
+            window.location.hash = `games/poker_game=${gameId}`;
+        }
     };
 
     return (
@@ -40,7 +64,7 @@ export const PokerLobby: React.FC<PokerLobbyProps> = ({ onBack }) => {
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                         <button
-                            onClick={onBack}
+                            onClick={() => window.location.hash = 'games'}
                             className="p-2 hover:bg-slate-800 rounded-lg transition-colors"
                         >
                             <ArrowLeft className="w-5 h-5 text-slate-400" />
