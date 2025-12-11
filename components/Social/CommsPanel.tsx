@@ -115,6 +115,17 @@ export default function CommsPanel() {
     return `${userIds.length} operatives are transmitting...`;
   };
 
+  // When a user taps reply, pull them back to the composer so the context banner is visible
+  useEffect(() => {
+    if (!replyingTo) return;
+
+    // Focus the input to give immediate feedback
+    inputRef.current?.focus();
+
+    // Ensure the composer is visible even if the user is reading older messages
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [replyingTo]);
+
   if (!commsPanelOpen) return null;
 
   return (
