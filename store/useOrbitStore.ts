@@ -3544,10 +3544,10 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     const { game, players } = activePokerGame;
     console.log('👥 startNextHand: All players chips:', players.map(p => ({ name: p.ai_name || p.username, chips: p.chips })));
 
-    const activePlayers = players.filter(p => p.chips > 0);
+    const activePlayers = players;
 
     if (activePlayers.length < 2) {
-      console.log('🏁 Game Over: Not enough players with chips to continue.', { activePlayers: activePlayers.length });
+      console.log('🏁 Game Over: Not enough players to continue.', { activePlayers: activePlayers.length });
       return;
     }
 
@@ -3595,7 +3595,7 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       const { cards, remainingDeck } = dealCards(currentDeck, 2);
       currentDeck = remainingDeck;
 
-      let chips = p.chips;
+      let chips = game.buy_in;
       let currentBet = 0;
       let isAllIn = false;
 
@@ -3717,6 +3717,37 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
 
     const { game, players } = activePokerGame;
 
+    const creditOrbitPoints = async (userId: string | null, amount: number) => {
+      if (!userId || amount <= 0) return;
+
+      const { data: profile, error: fetchError } = await supabase
+        .from('profiles')
+        .select('orbit_points')
+        .eq('id', userId)
+        .single();
+
+      if (fetchError) {
+        console.error('❌ Failed to fetch orbit points for winner:', fetchError);
+        return;
+      }
+
+      const newTotal = (profile?.orbit_points ?? 0) + amount;
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ orbit_points: newTotal })
+        .eq('id', userId);
+
+      if (updateError) {
+        console.error('❌ Failed to credit orbit points to winner:', updateError);
+        return;
+      }
+
+      const { currentUser } = get();
+      if (currentUser?.id === userId) {
+        get().updateOrbitPoints(newTotal);
+      }
+    };
+
     // Use actual deck from game, or create fallback if missing
     let gameDeck = game.deck as any[] | null;
     if (!gameDeck || gameDeck.length === 0) {
@@ -3773,6 +3804,8 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
         const { payout } = calculatePayout(game.pot_amount);
 
         console.log(`🏆 Winner (last standing): ${winner.username || winner.ai_name} wins ${payout}!`);
+
+        await creditOrbitPoints(winner.user_id || null, payout);
 
         const { error: chipUpdateError } = await supabase.from('poker_game_players')
           .update({ chips: winner.chips + payout })
@@ -3880,6 +3913,8 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
         const { payout, rake } = calculatePayout(game.pot_amount);
 
         console.log(`🏆 Winner: ${winner.player.username || winner.player.ai_name} with ${winner.hand!.rankName}! Payout: ${payout} (Rake: ${rake})`);
+
+        await creditOrbitPoints(winner.player.user_id || null, payout);
 
         // Update winner's chips
         const { error: chipUpdateError } = await supabase.from('poker_game_players')
