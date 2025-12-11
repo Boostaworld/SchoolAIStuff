@@ -3774,9 +3774,12 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
 
         console.log(`🏆 Winner (last standing): ${winner.username || winner.ai_name} wins ${payout}!`);
 
-        await supabase.from('poker_game_players')
+        const { error: chipUpdateError } = await supabase.from('poker_game_players')
           .update({ chips: winner.chips + payout })
           .eq('id', winner.id);
+        if (chipUpdateError) {
+          console.error('❌ Failed to credit winner chips (last standing):', chipUpdateError);
+        }
 
         const winnerUserId = winner.user_id || null;
         const winnerPlayerId = winner.id;
@@ -3815,7 +3818,10 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
               winner_player_id: winnerPlayerId,
               winning_hand: 'Last Standing' as any,
               final_pot_amount: payout
-            }
+            },
+            players: activePokerGame.players.map(p =>
+              p.id === winnerPlayerId ? { ...p, chips: p.chips + payout } : p
+            )
           }
         });
 
@@ -3876,9 +3882,12 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
         console.log(`🏆 Winner: ${winner.player.username || winner.player.ai_name} with ${winner.hand!.rankName}! Payout: ${payout} (Rake: ${rake})`);
 
         // Update winner's chips
-        await supabase.from('poker_game_players')
+        const { error: chipUpdateError } = await supabase.from('poker_game_players')
           .update({ chips: winner.player.chips + payout })
           .eq('id', winner.player.id);
+        if (chipUpdateError) {
+          console.error('❌ Failed to credit winner chips:', chipUpdateError);
+        }
 
         const winnerUserId = winner.player.user_id || null;
         const winnerPlayerId = winner.player.id;
@@ -3896,7 +3905,10 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
                 winner_player_id: winnerPlayerId,
                 winning_hand: winner.hand!.rankName as any, // Cast to any to avoid mismatched string literal type
                 final_pot_amount: payout
-              }
+              },
+              players: activePokerGame.players.map(p =>
+                p.id === winnerPlayerId ? { ...p, chips: p.chips + payout } : p
+              )
             }
           });
         }
