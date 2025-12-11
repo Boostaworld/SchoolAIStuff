@@ -182,7 +182,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
           );
         })()}
 
-        {/* Message Content */}}
+        {/* Message Content */}
         <motion.div
           whileHover={{ scale: 1.01 }}
           className={`
