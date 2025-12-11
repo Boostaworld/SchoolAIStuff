@@ -328,7 +328,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
 
           <button
             onClick={() => setReplyingTo(message)}
-            className="opacity-0 hover:opacity-100 group-hover:opacity-100 transition-opacity p-1 hover:bg-slate-800 rounded"
+            className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 hover:opacity-100 transition-opacity p-1 hover:bg-slate-800 rounded"
             title="Reply"
           >
             <Reply className="w-4 h-4 text-cyan-400" />
