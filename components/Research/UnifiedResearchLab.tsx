@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Upload, Send, X, Loader2, Image as ImageIcon, MessageSquare, Settings as SettingsIcon, Trash2, BrainCircuit, Sparkles, Share2, FolderOpen, Plus, Search, Zap, Globe, Sliders, FileText, ExternalLink, Copy, BookOpen, Crown, Pencil, ChevronUp, ChevronDown } from 'lucide-react';
+import { DynamicTextarea } from '../Shared/DynamicTextarea';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useOrbitStore } from '../../store/useOrbitStore';
 import { LockedResearchLab } from './LockedResearchLab';
 import { useToast } from '../Shared/ToastManager';
-import { analyzeImageWithVision, VisionMessage, sendChatMessage, ChatRequest } from '../../lib/ai/gemini';
+import { analyzeImageWithVision, analyzeGoogleForm, VisionMessage, sendChatMessage, ChatRequest } from '../../lib/ai/gemini';
 import { runIntelQuery, IntelResult } from '../../lib/ai/intel';
+import { improvePrompt, PromptMode } from '../../lib/ai/promptImprover';
 import clsx from 'clsx';
 import { MarkdownRenderer } from '../Social/MarkdownRenderer';
 import { ConfirmModal } from '../Shared/ConfirmModal';
@@ -13,7 +15,7 @@ import { ConfirmModal } from '../Shared/ConfirmModal';
 // ============================================================================
 // TYPES
 // ============================================================================
-type ResearchTab = 'quick-chat' | 'deep-research' | 'intel-research' | 'settings';
+type ResearchTab = 'quick-chat' | 'deep-research' | 'intel-research' | 'vision-lab' | 'settings';
 
 interface ChatMessage {
     id: string;
@@ -41,6 +43,16 @@ interface IntelReport {
     depth: 'light' | 'standard' | 'deep' | 'max';
     essayEnabled: boolean;
     createdAt: Date;
+}
+
+interface VisionSession {
+    id: string;
+    name: string;
+    imageData: string | null; // Base64 image
+    messages: ChatMessage[];
+    modelUsed: string;
+    createdAt: Date;
+    updatedAt: Date;
 }
 
 const DEPTH_OPTIONS = [
@@ -331,6 +343,7 @@ export const UnifiedResearchLab: React.FC = () => {
     const [quickChatThinkingLevel, setQuickChatThinkingLevel] = useState<'low' | 'medium' | 'high'>('medium');
     const [quickChatWebSearch, setQuickChatWebSearch] = useState(false);
     const [quickChatTemp, setQuickChatTemp] = useState(1.0);
+    const [isImprovingPrompt, setIsImprovingPrompt] = useState(false);
 
     // Deep Research state
     const [topics, setTopics] = useState<ResearchTopic[]>([]);
@@ -354,6 +367,28 @@ export const UnifiedResearchLab: React.FC = () => {
     const [intelModel, setIntelModel] = useState('gemini-3-pro-preview');
     const [intelLoading, setIntelLoading] = useState(false);
     const [intelWebSearch, setIntelWebSearch] = useState(true);
+    const [intelThinking, setIntelThinking] = useState(true);
+    const [intelThinkingLevel, setIntelThinkingLevel] = useState<'low' | 'medium' | 'high'>('medium');
+    const [intelTemp, setIntelTemp] = useState(1.0);
+    const [intelExpanded, setIntelExpanded] = useState(false);
+
+    // Vision Lab state
+    const [visionMessages, setVisionMessages] = useState<ChatMessage[]>([]);
+    const [visionInput, setVisionInput] = useState('');
+    const [visionImage, setVisionImage] = useState<string | null>(null);
+    const [visionLoading, setVisionLoading] = useState(false);
+    const [visionModel, setVisionModel] = useState('gemini-3-pro-preview');
+    const [visionThinking, setVisionThinking] = useState(true);
+    const [visionThinkingLevel, setVisionThinkingLevel] = useState<'low' | 'medium' | 'high'>('medium');
+    const [visionExpanded, setVisionExpanded] = useState(false);
+    const [visionTemp, setVisionTemp] = useState(1.0);
+    const [isFormMode, setIsFormMode] = useState(false);
+
+    // Vision Session Persistence state
+    const [visionSessions, setVisionSessions] = useState<VisionSession[]>([]);
+    const [selectedVisionSessionId, setSelectedVisionSessionId] = useState<string | null>(null);
+    const [editingVisionSession, setEditingVisionSession] = useState<VisionSession | null>(null);
+    const [editVisionSessionName, setEditVisionSessionName] = useState('');
 
     // Delete confirmation state
     const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean; type: 'topic' | 'report'; id: string | null; name: string }>({ isOpen: false, type: 'topic', id: null, name: '' });
@@ -415,6 +450,44 @@ export const UnifiedResearchLab: React.FC = () => {
         }
     }, [topics]);
 
+    // Load vision sessions from Supabase
+    useEffect(() => {
+        const loadVisionSessions = async () => {
+            if (!currentUser?.id) return;
+            try {
+                const { supabase } = await import('../../lib/supabase');
+                const { data, error } = await supabase
+                    .from('vision_sessions')
+                    .select('*')
+                    .eq('user_id', currentUser.id)
+                    .order('updated_at', { ascending: false });
+
+                if (error) {
+                    console.error('Failed to load vision sessions:', error);
+                    return;
+                }
+
+                if (data) {
+                    setVisionSessions(data.map((s: any) => ({
+                        id: s.id,
+                        name: s.name,
+                        imageData: s.image_data,
+                        messages: (s.messages || []).map((m: any) => ({
+                            ...m,
+                            timestamp: new Date(m.timestamp)
+                        })),
+                        modelUsed: s.model_used,
+                        createdAt: new Date(s.created_at),
+                        updatedAt: new Date(s.updated_at)
+                    })));
+                }
+            } catch (e) {
+                console.error('Error loading vision sessions:', e);
+            }
+        };
+        loadVisionSessions();
+    }, [currentUser?.id]);
+
     // Auto-scroll
     useEffect(() => {
         chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -468,6 +541,32 @@ export const UnifiedResearchLab: React.FC = () => {
             toastManager.error('Chat failed', { description: error.message });
         } finally {
             setQuickChatLoading(false);
+        }
+    };
+
+    // Improve prompt using AI + web search
+    const handleImprovePrompt = async (
+        currentPrompt: string,
+        setPrompt: (v: string) => void,
+        mode: PromptMode,
+        model?: string
+    ) => {
+        if (!currentPrompt.trim() || isImprovingPrompt) return;
+
+        setIsImprovingPrompt(true);
+        try {
+            const result = await improvePrompt(currentPrompt, mode, model);
+            setPrompt(result.improvedPrompt);
+
+            if (result.changes.length > 0) {
+                toastManager.success('Prompt improved', {
+                    description: result.changes.join(', ')
+                });
+            }
+        } catch (error: any) {
+            toastManager.error('Failed to improve prompt');
+        } finally {
+            setIsImprovingPrompt(false);
         }
     };
 
@@ -594,8 +693,9 @@ export const UnifiedResearchLab: React.FC = () => {
                 model: intelModel.includes('3-pro') ? 'gemini-3-pro' : 'pro',
                 researchMode: true,
                 depth: depthBullets[intelDepth],
-                thinkingEnabled: true,
-                thinkingLevel: intelDepth === 'max' ? 'high' : 'medium'
+                thinkingEnabled: intelThinking,
+                thinkingLevel: intelThinkingLevel,
+                webSearch: intelWebSearch
             });
 
             const newReport: IntelReport = {
@@ -626,6 +726,182 @@ export const UnifiedResearchLab: React.FC = () => {
     const copyToClipboard = (text: string) => {
         navigator.clipboard.writeText(text);
         toastManager.success('Copied to clipboard');
+    };
+
+    // Vision Handlers
+    const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                setVisionImage(reader.result as string);
+                setVisionMessages([]); // Start fresh context
+                // Auto-set the prompt focus
+            };
+            reader.readAsDataURL(file);
+        }
+    };
+
+    const handleVisionSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        // Allow follow-up if we have messages (even without new image)
+        const hasExistingContext = visionMessages.length > 0;
+        if (!visionInput.trim() || visionLoading) return;
+        if (!visionImage && !hasExistingContext) {
+            toastManager.error('Please upload an image first');
+            return;
+        }
+
+        const userMessage: ChatMessage = {
+            id: Date.now().toString(),
+            role: 'user',
+            text: visionInput,
+            timestamp: new Date()
+        };
+
+        setVisionMessages(prev => [...prev, userMessage]);
+        setVisionInput('');
+        setVisionLoading(true);
+
+        try {
+            // Note: analyzeImageWithVision signature is (image, prompt, model, history)
+            // It doesn't support thinkingConfig directly in arguments currently unless updated.
+            // But gemini.ts analyzeImageWithVision DOES support thinkingConfig internally based on model name.
+
+            let response;
+            // Build history including images from previous messages
+            const historyWithImage = visionMessages.map(msg => ({ role: msg.role, text: msg.text }));
+
+            if (isFormMode && visionImage) {
+                response = await analyzeGoogleForm(visionImage, visionModel);
+            } else {
+                // Pass the current image for first message, or rely on history for follow-ups
+                response = await analyzeImageWithVision(
+                    visionImage, // Will be null on follow-ups, but history has context
+                    userMessage.text,
+                    visionModel,
+                    historyWithImage
+                );
+            }
+
+            const aiMessage: ChatMessage = {
+                id: (Date.now() + 1).toString(),
+                role: 'model',
+                text: response.text,
+                thinking: undefined, // vision response currently just returns { text }
+                timestamp: new Date()
+            };
+
+            const updatedMessages = [...visionMessages, userMessage, aiMessage];
+            setVisionMessages(updatedMessages);
+            if (isFormMode) setIsFormMode(false); // Reset form mode after analysis
+
+            // Auto-save to Supabase if we have a current user
+            if (currentUser?.id) {
+                try {
+                    const { supabase } = await import('../../lib/supabase');
+
+                    if (selectedVisionSessionId) {
+                        // Update existing session
+                        await supabase
+                            .from('vision_sessions')
+                            .update({
+                                messages: updatedMessages.map(m => ({ ...m, timestamp: m.timestamp.toISOString() })),
+                                updated_at: new Date().toISOString()
+                            })
+                            .eq('id', selectedVisionSessionId);
+                    } else if (visionImage) {
+                        // Create new session on first save
+                        const { data: newSession } = await supabase
+                            .from('vision_sessions')
+                            .insert({
+                                user_id: currentUser.id,
+                                name: `Analysis ${new Date().toLocaleDateString()}`,
+                                image_data: visionImage,
+                                messages: updatedMessages.map(m => ({ ...m, timestamp: m.timestamp.toISOString() })),
+                                model_used: visionModel
+                            })
+                            .select()
+                            .single();
+
+                        if (newSession) {
+                            setSelectedVisionSessionId(newSession.id);
+                            setVisionSessions(prev => [{
+                                id: newSession.id,
+                                name: newSession.name,
+                                imageData: newSession.image_data,
+                                messages: updatedMessages,
+                                modelUsed: newSession.model_used,
+                                createdAt: new Date(newSession.created_at),
+                                updatedAt: new Date(newSession.updated_at)
+                            }, ...prev]);
+                        }
+                    }
+                } catch (saveError) {
+                    console.error('Failed to save vision session:', saveError);
+                }
+            }
+
+            toastManager.success('Analysis complete');
+        } catch (error: any) {
+            toastManager.error('Vision analysis failed', { description: error.message });
+        } finally {
+            setVisionLoading(false);
+        }
+    };
+
+    const clearVision = () => {
+        setVisionImage(null);
+        setVisionMessages([]);
+        setVisionInput('');
+        setSelectedVisionSessionId(null);
+    };
+
+    // Load a saved vision session
+    const loadVisionSession = (session: VisionSession) => {
+        setSelectedVisionSessionId(session.id);
+        setVisionImage(session.imageData);
+        setVisionMessages(session.messages);
+        setVisionModel(session.modelUsed);
+        setVisionInput('');
+        toastManager.success(`Loaded "${session.name}"`);
+    };
+
+    // Delete a vision session
+    const deleteVisionSession = async (sessionId: string) => {
+        if (!currentUser?.id) return;
+        try {
+            const { supabase } = await import('../../lib/supabase');
+            await supabase.from('vision_sessions').delete().eq('id', sessionId);
+            setVisionSessions(prev => prev.filter(s => s.id !== sessionId));
+            if (selectedVisionSessionId === sessionId) {
+                clearVision();
+            }
+            toastManager.success('Session deleted');
+        } catch (error) {
+            console.error('Failed to delete session:', error);
+            toastManager.error('Failed to delete session');
+        }
+    };
+
+    // Rename a vision session
+    const saveVisionSessionName = async () => {
+        if (!editingVisionSession || !editVisionSessionName.trim()) return;
+        try {
+            const { supabase } = await import('../../lib/supabase');
+            await supabase
+                .from('vision_sessions')
+                .update({ name: editVisionSessionName.trim() })
+                .eq('id', editingVisionSession.id);
+            setVisionSessions(prev => prev.map(s =>
+                s.id === editingVisionSession.id ? { ...s, name: editVisionSessionName.trim() } : s
+            ));
+            setEditingVisionSession(null);
+            toastManager.success('Session renamed');
+        } catch (error) {
+            console.error('Failed to rename session:', error);
+            toastManager.error('Failed to rename session');
+        }
     };
 
     // ============================================================================
@@ -660,6 +936,7 @@ export const UnifiedResearchLab: React.FC = () => {
                             { id: 'quick-chat' as const, label: 'Quick', icon: <Zap className="w-4 h-4" /> },
                             { id: 'deep-research' as const, label: 'Deep', icon: <FolderOpen className="w-4 h-4" /> },
                             { id: 'intel-research' as const, label: 'Intel', icon: <BookOpen className="w-4 h-4" /> },
+                            { id: 'vision-lab' as const, label: 'VISION LAB', icon: <ImageIcon className="w-4 h-4" /> },
                             { id: 'settings' as const, label: 'Settings', icon: <SettingsIcon className="w-4 h-4" /> }
                         ].map(tab => (
                             <button
@@ -763,15 +1040,32 @@ export const UnifiedResearchLab: React.FC = () => {
 
                             {/* Input */}
                             <div className="flex-shrink-0 border-t-2 border-cyan-500/30 bg-black/40 backdrop-blur-sm p-4">
-                                <form onSubmit={handleQuickChatSubmit} className="flex gap-3">
-                                    <input
-                                        type="text"
-                                        value={quickChatInput}
-                                        onChange={(e) => setQuickChatInput(e.target.value)}
-                                        placeholder="Ask me anything..."
-                                        disabled={quickChatLoading}
-                                        className="flex-1 px-4 py-3 bg-slate-900/50 border-2 border-cyan-500/30 text-slate-300 font-mono text-sm focus:outline-none focus:border-cyan-500 disabled:opacity-50 placeholder:text-slate-600 rounded-lg"
-                                    />
+                                <form onSubmit={handleQuickChatSubmit} className="flex gap-3 items-end">
+                                    <div className="flex-1 bg-slate-900/50 border-2 border-cyan-500/30 rounded-lg focus-within:border-cyan-500 transition-colors">
+                                        <DynamicTextarea
+                                            value={quickChatInput}
+                                            onChange={(e) => setQuickChatInput(e.target.value)}
+                                            onSubmit={() => handleQuickChatSubmit({ preventDefault: () => { } } as any)}
+                                            placeholder="Ask me anything..."
+                                            disabled={quickChatLoading}
+                                            className="w-full px-4 py-3 bg-transparent border-none text-slate-300 font-mono text-sm focus:outline-none disabled:opacity-50 placeholder:text-slate-600"
+                                            maxHeight={200}
+                                        />
+                                    </div>
+                                    {/* Magic Wand - Improve Prompt */}
+                                    <button
+                                        type="button"
+                                        onClick={() => handleImprovePrompt(quickChatInput, setQuickChatInput, 'chat', quickChatModel)}
+                                        disabled={isImprovingPrompt || !quickChatInput.trim() || quickChatLoading}
+                                        title="Enhance your prompt using AI best practices (uses credits)"
+                                        className="px-3 py-3 bg-purple-600/80 border-2 border-purple-500/50 text-white hover:bg-purple-500 disabled:opacity-30 font-mono font-bold text-sm flex items-center gap-1 rounded-lg transition-colors group relative"
+                                    >
+                                        {isImprovingPrompt ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
+                                        {/* Subtle tooltip */}
+                                        <span className="absolute -top-8 left-1/2 -translate-x-1/2 bg-black/90 text-[10px] text-purple-300 px-2 py-1 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                                            ✨ Uses Flash credits
+                                        </span>
+                                    </button>
                                     <button
                                         type="submit"
                                         disabled={quickChatLoading || !quickChatInput.trim()}
@@ -944,15 +1238,18 @@ export const UnifiedResearchLab: React.FC = () => {
 
                                         {/* Input */}
                                         <div className="flex-shrink-0 border-t-2 border-emerald-500/30 bg-black/40 backdrop-blur-sm p-4">
-                                            <form onSubmit={handleDeepResearchSubmit} className="flex gap-3">
-                                                <input
-                                                    type="text"
-                                                    value={deepResearchInput}
-                                                    onChange={(e) => setDeepResearchInput(e.target.value)}
-                                                    placeholder="Continue your research..."
-                                                    disabled={deepResearchLoading}
-                                                    className="flex-1 px-4 py-3 bg-slate-900/50 border-2 border-emerald-500/30 text-slate-300 font-mono text-sm focus:outline-none focus:border-emerald-500 disabled:opacity-50 placeholder:text-slate-600 rounded-lg"
-                                                />
+                                            <form onSubmit={handleDeepResearchSubmit} className="flex gap-3 items-end">
+                                                <div className="flex-1 bg-slate-900/50 border-2 border-emerald-500/30 rounded-lg focus-within:border-emerald-500 transition-colors">
+                                                    <DynamicTextarea
+                                                        value={deepResearchInput}
+                                                        onChange={(e) => setDeepResearchInput(e.target.value)}
+                                                        onSubmit={() => handleDeepResearchSubmit({ preventDefault: () => { } } as any)}
+                                                        placeholder="Continue your research..."
+                                                        disabled={deepResearchLoading}
+                                                        className="w-full px-4 py-3 bg-transparent border-none text-slate-300 font-mono text-sm focus:outline-none disabled:opacity-50 placeholder:text-slate-600"
+                                                        maxHeight={200}
+                                                    />
+                                                </div>
                                                 <button
                                                     type="submit"
                                                     disabled={deepResearchLoading || !deepResearchInput.trim()}
@@ -1023,6 +1320,24 @@ export const UnifiedResearchLab: React.FC = () => {
                                 {/* Input Form */}
                                 <div className="p-4 border-b border-slate-800 bg-slate-900/30">
                                     <form onSubmit={handleIntelSubmit} className="space-y-4">
+                                        {/* Customization Panel */}
+                                        <div className="mb-4 rounded-lg overflow-hidden border border-slate-800">
+                                            <CustomizationPanel
+                                                availableModels={availableModels}
+                                                selectedModel={intelModel}
+                                                setSelectedModel={setIntelModel}
+                                                thinkingEnabled={intelThinking}
+                                                setThinkingEnabled={setIntelThinking}
+                                                thinkingLevel={intelThinkingLevel}
+                                                setThinkingLevel={setIntelThinkingLevel}
+                                                webSearchEnabled={intelWebSearch}
+                                                setWebSearchEnabled={setIntelWebSearch}
+                                                temperature={intelTemp}
+                                                setTemperature={setIntelTemp}
+                                                isExpanded={intelExpanded}
+                                                setIsExpanded={setIntelExpanded}
+                                            />
+                                        </div>
                                         <div>
                                             <label className="text-xs text-amber-400 font-mono uppercase mb-1 block">Research Topic</label>
                                             <textarea
@@ -1212,6 +1527,170 @@ export const UnifiedResearchLab: React.FC = () => {
                         </motion.div>
                     )}
 
+                    {/* ========== VISION LAB TAB ========== */}
+                    {activeTab === 'vision-lab' && (
+                        <motion.div
+                            key="vision-lab"
+                            initial={{ opacity: 0, x: -20 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: 20 }}
+                            className="flex-1 flex flex-col overflow-hidden"
+                        >
+                            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                                {!visionImage && visionMessages.length === 0 ? (
+                                    <div className="flex h-full gap-4">
+                                        {/* Saved Sessions Sidebar */}
+                                        {visionSessions.length > 0 && (
+                                            <div className="w-64 flex-shrink-0 border-r border-slate-800 pr-4">
+                                                <div className="flex items-center justify-between mb-3">
+                                                    <h4 className="text-xs font-mono font-bold text-slate-400 uppercase tracking-wider">Saved Sessions</h4>
+                                                </div>
+                                                <div className="space-y-2 max-h-96 overflow-y-auto">
+                                                    {visionSessions.map(session => (
+                                                        <div
+                                                            key={session.id}
+                                                            className="p-3 bg-slate-900/50 border border-slate-800 rounded-lg hover:border-cyan-500/30 transition-colors cursor-pointer group"
+                                                            onClick={() => loadVisionSession(session)}
+                                                        >
+                                                            <div className="flex items-start justify-between">
+                                                                <div className="flex-1 min-w-0">
+                                                                    <p className="text-sm font-mono text-slate-300 truncate">{session.name}</p>
+                                                                    <p className="text-[10px] text-slate-500 font-mono mt-1">{session.messages.length} messages</p>
+                                                                </div>
+                                                                <button
+                                                                    onClick={(e) => { e.stopPropagation(); deleteVisionSession(session.id); }}
+                                                                    className="p-1 text-slate-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                                >
+                                                                    <Trash2 className="w-3 h-3" />
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Upload Area */}
+                                        <div className="flex-1 flex flex-col items-center justify-center border-2 border-dashed border-slate-800 rounded-2xl bg-slate-900/30">
+                                            <div className="w-20 h-20 rounded-full bg-slate-800/50 flex items-center justify-center border border-slate-700 mb-4">
+                                                <ImageIcon className="w-10 h-10 text-slate-500" />
+                                            </div>
+                                            <h3 className="text-slate-300 font-bold font-mono text-lg mb-2">UPLOAD SOURCE IMAGE</h3>
+                                            <p className="text-slate-500 text-sm font-mono mb-6">Analyze images with Gemini 3 Vision</p>
+                                            <label className="cursor-pointer px-6 py-3 bg-cyan-600 hover:bg-cyan-500 text-black font-mono font-bold rounded-lg transition-colors flex items-center gap-2">
+                                                <Upload className="w-5 h-5" />
+                                                SELECT IMAGE
+                                                <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+                                            </label>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="flex flex-col h-full gap-4">
+                                        {/* Image Preview & Chat */}
+                                        <div className="flex-1 overflow-y-auto space-y-4">
+                                            <div className="relative group rounded-xl overflow-hidden border border-slate-700 bg-slate-900/50 p-2">
+                                                <img src={visionImage} alt="Analysis Target" className="max-h-64 object-contain rounded-lg mx-auto" />
+                                                <button
+                                                    onClick={clearVision}
+                                                    className="absolute top-4 right-4 p-2 bg-black/50 hover:bg-red-500/80 text-white rounded-full transition-colors backdrop-blur-sm"
+                                                >
+                                                    <X className="w-4 h-4" />
+                                                </button>
+                                            </div>
+
+                                            {/* Messages */}
+                                            {visionMessages.map(msg => (
+                                                <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                                    <div className={clsx(
+                                                        "max-w-[80%] p-4 rounded-lg border-2",
+                                                        msg.role === 'user' ? 'bg-cyan-950/50 border-cyan-500/50' : 'bg-slate-900/50 border-slate-700/50'
+                                                    )}>
+                                                        <div className="flex items-center gap-2 mb-2">
+                                                            <span className={clsx("text-xs font-mono font-bold", msg.role === 'user' ? 'text-cyan-400' : 'text-slate-400')}>
+                                                                {msg.role === 'user' ? 'YOU' : 'AI'}
+                                                            </span>
+                                                        </div>
+                                                        <div className="text-slate-300 text-sm font-mono leading-relaxed">
+                                                            <MarkdownRenderer content={msg.text} />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                            {visionLoading && (
+                                                <div className="flex justify-start">
+                                                    <div className="bg-slate-900/50 border-2 border-cyan-500/50 p-4 rounded-lg flex items-center gap-3">
+                                                        <Loader2 className="w-5 h-5 text-cyan-400 animate-spin" />
+                                                        <span className="text-cyan-400 font-mono text-sm font-bold">ANALYZING VISUAL DATA...</span>
+                                                    </div>
+                                                </div>
+                                            )}
+                                            <div ref={chatEndRef} />
+                                        </div>
+
+                                        {/* Controls */}
+                                        <div className="flex-shrink-0 space-y-4">
+                                            <CustomizationPanel
+                                                availableModels={availableModels.filter(m => m.capabilities.vision)}
+                                                selectedModel={visionModel}
+                                                setSelectedModel={setVisionModel}
+                                                thinkingEnabled={visionThinking}
+                                                setThinkingEnabled={setVisionThinking}
+                                                thinkingLevel={visionThinkingLevel}
+                                                setThinkingLevel={setVisionThinkingLevel}
+                                                webSearchEnabled={false}
+                                                setWebSearchEnabled={() => { }}
+                                                temperature={visionTemp}
+                                                setTemperature={setVisionTemp}
+                                                isExpanded={visionExpanded}
+                                                setIsExpanded={setVisionExpanded}
+                                            />
+
+                                            {/* Google Form Toggle */}
+                                            <div className="flex items-center gap-2 px-2">
+                                                <button
+                                                    onClick={() => setIsFormMode(!isFormMode)}
+                                                    className={clsx(
+                                                        "text-xs font-mono font-bold uppercase flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all",
+                                                        isFormMode
+                                                            ? "bg-purple-500/20 border-purple-500 text-purple-300"
+                                                            : "bg-slate-900/50 border-slate-700 text-slate-500 hover:border-slate-500"
+                                                    )}
+                                                >
+                                                    <FileText className={clsx("w-3 h-3", isFormMode && "text-purple-400")} />
+                                                    Google Form Mode
+                                                </button>
+                                                {isFormMode && <span className="text-[10px] text-purple-400 font-mono animate-pulse">Specialized for Q&A extraction</span>}
+                                            </div>
+
+                                            <div className="p-4 border-t-2 border-cyan-500/30 bg-black/40 backdrop-blur-sm rounded-t-xl">
+                                                <form onSubmit={handleVisionSubmit} className="flex gap-3 items-end">
+                                                    <div className="flex-1 bg-slate-900/50 border-2 border-cyan-500/30 rounded-lg focus-within:border-cyan-500 transition-colors">
+                                                        <DynamicTextarea
+                                                            value={visionInput}
+                                                            onChange={(e) => setVisionInput(e.target.value)}
+                                                            onSubmit={() => handleVisionSubmit({ preventDefault: () => { } } as any)}
+                                                            placeholder={visionMessages.length > 0 ? "Ask a follow-up question..." : "Ask something about this image..."}
+                                                            disabled={visionLoading}
+                                                            className="w-full px-4 py-3 bg-transparent border-none text-slate-300 font-mono text-sm focus:outline-none disabled:opacity-50 placeholder:text-slate-600"
+                                                        />
+                                                    </div>
+                                                    <button
+                                                        type="submit"
+                                                        disabled={visionLoading || !visionInput.trim()}
+                                                        className="px-6 py-3 bg-cyan-600 border-2 border-cyan-500 text-black hover:bg-cyan-500 disabled:opacity-50 font-mono font-bold text-sm flex items-center gap-2 rounded-lg"
+                                                    >
+                                                        {visionLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+                                                        ANALYZE
+                                                    </button>
+                                                </form>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </motion.div>
+                    )}
+
                     {/* ========== SETTINGS TAB ========== */}
                     {activeTab === 'settings' && (
                         <motion.div
@@ -1316,6 +1795,65 @@ export const UnifiedResearchLab: React.FC = () => {
                                     <li>• Web Search is only available on models with the <span className="text-green-400">✓</span> in the Web column.</li>
                                     <li>• Temperature is clamped at 1.0 for Gemini 3.0 models.</li>
                                 </ul>
+                            </div>
+
+                            {/* Thinking Best Practices */}
+                            <div className="mt-8">
+                                <h2 className="text-lg font-mono font-bold text-white mb-4 flex items-center gap-2">
+                                    <BrainCircuit className="w-5 h-5 text-purple-400" />
+                                    Thinking Mode Best Practices
+                                </h2>
+
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                    {/* Easy Tasks */}
+                                    <div className="p-4 bg-slate-900/50 border border-green-700/50 rounded-lg">
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <span className="text-xs px-2 py-1 bg-green-500/20 text-green-300 font-mono rounded">EASY</span>
+                                            <span className="text-xs text-green-400 font-mono">Thinking OFF</span>
+                                        </div>
+                                        <p className="text-xs text-slate-400 font-mono mb-2">Simple tasks that don't need complex reasoning:</p>
+                                        <ul className="text-[10px] text-slate-500 space-y-1 font-mono">
+                                            <li>• "Where was DeepMind founded?"</li>
+                                            <li>• "Is this email asking for a meeting?"</li>
+                                            <li>• Simple fact retrieval or classification</li>
+                                        </ul>
+                                    </div>
+
+                                    {/* Medium Tasks */}
+                                    <div className="p-4 bg-slate-900/50 border border-amber-700/50 rounded-lg">
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <span className="text-xs px-2 py-1 bg-amber-500/20 text-amber-300 font-mono rounded">MEDIUM</span>
+                                            <span className="text-xs text-amber-400 font-mono">Default Thinking</span>
+                                        </div>
+                                        <p className="text-xs text-slate-400 font-mono mb-2">Tasks requiring step-by-step processing:</p>
+                                        <ul className="text-[10px] text-slate-500 space-y-1 font-mono">
+                                            <li>• "Analogize photosynthesis to growing up"</li>
+                                            <li>• "Compare electric vs hybrid cars"</li>
+                                            <li>• Deeper understanding and analysis</li>
+                                        </ul>
+                                    </div>
+
+                                    {/* Hard Tasks */}
+                                    <div className="p-4 bg-slate-900/50 border border-red-700/50 rounded-lg">
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <span className="text-xs px-2 py-1 bg-red-500/20 text-red-300 font-mono rounded">HARD</span>
+                                            <span className="text-xs text-red-400 font-mono">Max Thinking</span>
+                                        </div>
+                                        <p className="text-xs text-slate-400 font-mono mb-2">Complex challenges requiring full reasoning:</p>
+                                        <ul className="text-[10px] text-slate-500 space-y-1 font-mono">
+                                            <li>• Complex math problems (AIME level)</li>
+                                            <li>• Full web app with auth + real-time data</li>
+                                            <li>• Multi-step planning and logic</li>
+                                        </ul>
+                                    </div>
+                                </div>
+
+                                <div className="mt-4 p-3 bg-purple-950/30 border border-purple-500/30 rounded-lg">
+                                    <p className="text-xs text-purple-300 font-mono">
+                                        <strong>💡 Tip:</strong> Review the AI's thought summaries when results aren't as expected.
+                                        For lengthy outputs, provide guidance to limit thinking and reserve tokens for your response.
+                                    </p>
+                                </div>
                             </div>
                         </motion.div>
                     )}

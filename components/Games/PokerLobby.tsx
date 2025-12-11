@@ -4,13 +4,14 @@ import { ArrowLeft, Plus, Users, Coins, Bot, Zap, Trophy, Info } from 'lucide-re
 import { useOrbitStore } from '@/store/useOrbitStore';
 import type { AIDifficulty } from '@/lib/poker/types';
 import { POKER_CONSTANTS, AI_COIN_MODIFIERS } from '@/lib/poker/types';
+import { toast } from '@/lib/toast';
 
 interface PokerLobbyProps {
     onBack: () => void;
 }
 
 export const PokerLobby: React.FC<PokerLobbyProps> = ({ onBack }) => {
-    const { currentUser, orbitPoints, fetchPokerLobbyGames, pokerLobbyGames, isPokerLoading, createPokerGame, joinPokerGame } = useOrbitStore();
+    const { currentUser, orbitPoints, fetchPokerLobbyGames, pokerLobbyGames, isPokerLoading, createPokerGame, joinPokerGame, adminDeletePokerGame } = useOrbitStore();
     const [showCreateModal, setShowCreateModal] = useState(false);
 
     useEffect(() => {
@@ -26,7 +27,10 @@ export const PokerLobby: React.FC<PokerLobbyProps> = ({ onBack }) => {
             window.location.hash = `games/poker_game=${gameId}`;
             setShowCreateModal(false);
         } else {
-            alert(`Failed to create game: ${error}`);
+            toast.error('Failed to create game', {
+                description: error || 'Unknown error',
+                duration: 6000
+            });
         }
     };
 
@@ -35,18 +39,10 @@ export const PokerLobby: React.FC<PokerLobbyProps> = ({ onBack }) => {
         if (gameId) {
             window.location.hash = `games/poker_game=${gameId}`;
         } else {
-            // Show visible error for debugging
-            const errDiv = document.createElement('div');
-            errDiv.style.position = 'fixed';
-            errDiv.style.top = '50%';
-            errDiv.style.left = '50%';
-            errDiv.style.transform = 'translate(-50%, -50%)';
-            errDiv.style.background = 'red';
-            errDiv.style.color = 'white';
-            errDiv.style.padding = '20px';
-            errDiv.style.zIndex = '9999';
-            errDiv.innerText = `GAME CREATION FAILED: ${error}`;
-            document.body.appendChild(errDiv);
+            toast.error('Failed to start AI game', {
+                description: error || 'Unknown error',
+                duration: 6000
+            });
         }
     };
 
@@ -54,6 +50,11 @@ export const PokerLobby: React.FC<PokerLobbyProps> = ({ onBack }) => {
         const success = await joinPokerGame(gameId);
         if (success) {
             window.location.hash = `games/poker_game=${gameId}`;
+        } else {
+            toast.error('Failed to join game', {
+                description: 'You may not have enough Orbit Points (minimum balance: -200)',
+                duration: 6000
+            });
         }
     };
 
@@ -107,10 +108,14 @@ export const PokerLobby: React.FC<PokerLobbyProps> = ({ onBack }) => {
                         QUICK PLAY - Practice vs AI
                     </h3>
 
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
                         <AIQuickPlayCard difficulty="novice" orbitPoints={orbitPoints} onPlay={handlePlayAI} />
                         <AIQuickPlayCard difficulty="intermediate" orbitPoints={orbitPoints} onPlay={handlePlayAI} />
                         <AIQuickPlayCard difficulty="expert" orbitPoints={orbitPoints} onPlay={handlePlayAI} />
+                        {/* God Mode: Only visible to users with gemini-3-pro permission */}
+                        {currentUser?.unlocked_models?.includes('gemini-3-pro') && (
+                            <AIQuickPlayCard difficulty="expert_god" orbitPoints={orbitPoints} onPlay={handlePlayAI} />
+                        )}
                     </div>
                 </div>
 
@@ -135,7 +140,13 @@ export const PokerLobby: React.FC<PokerLobbyProps> = ({ onBack }) => {
                     ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             {pokerLobbyGames.map((game) => (
-                                <GameCard key={game.id} game={game} onClick={() => handleJoinGame(game.id)} />
+                                <GameCard
+                                    key={game.id}
+                                    game={game}
+                                    onClick={() => handleJoinGame(game.id)}
+                                    isAdmin={currentUser?.is_admin}
+                                    onDelete={adminDeletePokerGame}
+                                />
                             ))}
                         </div>
                     )}
@@ -148,6 +159,7 @@ export const PokerLobby: React.FC<PokerLobbyProps> = ({ onBack }) => {
                     <CreateGameModal
                         onClose={() => setShowCreateModal(false)}
                         onCreateGame={handleCreateGame}
+                        orbitPoints={orbitPoints}
                     />
                 )}
             </AnimatePresence>
@@ -157,13 +169,13 @@ export const PokerLobby: React.FC<PokerLobbyProps> = ({ onBack }) => {
 
 // AI Quick Play Card
 interface AIQuickPlayCardProps {
-    difficulty: AIDifficulty;
+    difficulty: AIDifficulty | 'expert_god';
     orbitPoints: number;
     onPlay: (difficulty: AIDifficulty) => void;
 }
 
 const AIQuickPlayCard: React.FC<AIQuickPlayCardProps> = ({ difficulty, orbitPoints, onPlay }) => {
-    const difficultyConfig = {
+    const difficultyConfig: Record<AIDifficulty | 'expert_god', any> = {
         novice: {
             title: 'Novice',
             description: 'Perfect for beginners',
@@ -190,6 +202,15 @@ const AIQuickPlayCard: React.FC<AIQuickPlayCardProps> = ({ difficulty, orbitPoin
             bgGradient: 'from-red-500/10 to-orange-500/10',
             borderColor: 'border-red-500/30',
             textColor: 'text-red-400'
+        },
+        expert_god: {
+            title: '⚡ GOD MODE',
+            description: 'Gemini 3 Pro - Unbeatable',
+            color: 'purple',
+            icon: '👑',
+            bgGradient: 'from-purple-500/20 to-amber-500/20',
+            borderColor: 'border-amber-400/50',
+            textColor: 'text-amber-300'
         }
     };
 
@@ -240,9 +261,11 @@ const AIQuickPlayCard: React.FC<AIQuickPlayCardProps> = ({ difficulty, orbitPoin
 interface GameCardProps {
     game: any; // TODO: Type properly
     onClick: () => void;
+    isAdmin?: boolean;
+    onDelete?: (gameId: string) => void;
 }
 
-const GameCard: React.FC<GameCardProps> = ({ game, onClick }) => {
+const GameCard: React.FC<GameCardProps> = ({ game, onClick, isAdmin, onDelete }) => {
     return (
         <motion.div
             whileHover={{ scale: 1.02 }}
@@ -270,6 +293,14 @@ const GameCard: React.FC<GameCardProps> = ({ game, onClick }) => {
                 <button className="ml-auto px-4 py-1 rounded-lg bg-purple-500 hover:bg-purple-600 text-white text-sm font-bold transition-colors">
                     JOIN
                 </button>
+                {isAdmin && onDelete && (
+                    <button
+                        onClick={(e) => { e.stopPropagation(); onDelete(game.id); }}
+                        className="px-3 py-1 rounded-lg bg-red-500/20 hover:bg-red-500/40 text-red-400 text-xs font-bold transition-colors border border-red-500/40"
+                    >
+                        DELETE
+                    </button>
+                )}
             </div>
         </motion.div>
     );
@@ -279,10 +310,13 @@ const GameCard: React.FC<GameCardProps> = ({ game, onClick }) => {
 interface CreateGameModalProps {
     onClose: () => void;
     onCreateGame: (buyIn: number, maxPlayers: number) => void;
+    orbitPoints: number;
 }
 
-const CreateGameModal: React.FC<CreateGameModalProps> = ({ onClose, onCreateGame }) => {
-    const [buyIn, setBuyIn] = useState(100);
+const CreateGameModal: React.FC<CreateGameModalProps> = ({ onClose, onCreateGame, orbitPoints }) => {
+    const MIN_BALANCE = -200;
+    const maxAffordableBuyIn = orbitPoints - MIN_BALANCE; // Max buy-in that keeps balance >= -200
+    const [buyIn, setBuyIn] = useState(Math.min(100, maxAffordableBuyIn));
     const [maxPlayers, setMaxPlayers] = useState(6);
 
     const handleCreate = () => {
@@ -310,18 +344,25 @@ const CreateGameModal: React.FC<CreateGameModalProps> = ({ onClose, onCreateGame
                 <div className="mb-6">
                     <label className="block text-sm font-mono text-slate-400 mb-3">BUY-IN AMOUNT</label>
                     <div className="grid grid-cols-5 gap-2">
-                        {POKER_CONSTANTS.AVAILABLE_BUY_INS.map((amount) => (
-                            <button
-                                key={amount}
-                                onClick={() => setBuyIn(amount)}
-                                className={`px-3 py-2 rounded-lg font-mono font-bold transition-all ${buyIn === amount
-                                    ? 'bg-purple-500 text-white scale-110'
-                                    : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
-                                    }`}
-                            >
-                                {amount}
-                            </button>
-                        ))}
+                        {POKER_CONSTANTS.AVAILABLE_BUY_INS.map((amount) => {
+                            const canAfford = amount <= maxAffordableBuyIn;
+                            return (
+                                <button
+                                    key={amount}
+                                    onClick={() => canAfford && setBuyIn(amount)}
+                                    disabled={!canAfford}
+                                    className={`px-3 py-2 rounded-lg font-mono font-bold transition-all ${!canAfford
+                                            ? 'bg-slate-800/50 text-slate-600 cursor-not-allowed opacity-50'
+                                            : buyIn === amount
+                                                ? 'bg-purple-500 text-white scale-110'
+                                                : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                                        }`}
+                                    title={!canAfford ? `Need ${amount - maxAffordableBuyIn} more coins` : undefined}
+                                >
+                                    {amount}
+                                </button>
+                            );
+                        })}
                     </div>
                 </div>
 

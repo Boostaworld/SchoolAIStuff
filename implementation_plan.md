@@ -8,6 +8,51 @@ Integrate Gemini 3.0 Pro Preview capabilities into the Intel Engine, including T
 > **Gemini 3.0 Access**: Ensure your API key has access to `gemini-3.0-pro-preview` and `gemini-3.0-pro-image-preview`. If not, these features will fail or fallback.
 > **Image Upload**: We will use base64 encoding for image analysis for now, as `media.upload` requires a more complex backend setup or specific client configuration not fully visible here.
 
+## School Notes Integration (Priority)
+These items take precedence based on recent feedback.
+
+~~### 1. Fix Model IDs & Customization
+- **Issue**: Intel is currently locked to correct ID `gemini-3-pro-preview` (codebase might use `3.0-preo`) and lacks customization options.
+- **Action**:
+    - Update `lib/ai/gemini.ts` (or relevant constants) with correct IDs:
+        - `gemini-3-pro-preview` (Reasoning/Agentic)
+        - `gemini-3-pro-image-preview` (Image Gen/Edit)
+        - `gemini-2.5-pro` (Complex Reasoning)
+        - `gemini-2.5-flash` (Fast)
+    - **ResearchLab Customization**:
+        - Unlock model selection in the Intel/Chat tab.
+        - Add "Thinking" toggle/visibility controls if "shows way too low" implies UI issues.~~
+
+~~### 2. Restore Vision Mode (Image Analysis)
+- **Issue**: Vision mode was removed but is needed for deep analysis with customization.
+- **Action**:
+    - Create a **New Tab** in ResearchLab specifically for "Image Analysis" (Vision).
+    - Features:
+        - Image Upload/Paste.
+        - Customization: Model Selection (`gemini-2.5-pro` vs `gemini-2.0-flash` etc), Prompt/Instruction styling.~~
+
+### 3. Image Gen Thinking Display (Fix Scroll/Layout)
+- **Issue**: "The thinking for image shows way too low" — content renders out of view (below fold) and the container is **not scrollable**, making it impossible to read.
+- **Action**:
+    - Fix CSS `overflow` and `height` properties for the Thinking container in `ImageGenPanel` (or `IntelPanel`).
+    - Ensure the thinking block is visible above the fold or has its own scrollable area.
+    - Verify markdown formatting for "Crafting a Scene" / "Analyzing Image Compliance" logs.
+
+~~### 4. Dynamic Input Textareas
+- **Issue**: Input boxes are currently single-line and don't expand, making it hard to write long prompts.
+- **Action**:
+    - Refactor `InputArea.tsx` (and other chat inputs) to use a dynamic textarea (auto-growing height).
+    - Ensure it expands up to a max-height before scrolling.
+    - Maintain "Shift+Enter" for new lines and "Enter" for submit.~~
+
+~~### 5. Google Form Fix
+- **Issue**: Google Form analysis was failing/timing out. This feature relies on Vision capabilities.
+- **Dependency**: **Vision Mode** (Previously missing, now Restored).
+- **Action**:
+    - With Vision Mode restored, debug the `analyzeGoogleForm` function in `gemini.ts`.
+    - Fix timeout/empty response handling.~~
+
+
 ## Proposed Changes
 
 ### 1. Database (`sql`)
@@ -28,39 +73,13 @@ Integrate Gemini 3.0 Pro Preview capabilities into the Intel Engine, including T
 #### [MODIFY] [intel.ts](file:///c:/Users/kayla/OneDrive/Desktop/SchoolAIStuff/lib/ai/intel.ts)
 - Update `IntelQueryParams` to include:
     - `thinkingLevel`: 'low' | 'medium' | 'high'
-    - `image`: string (base64 data)
-    - `mode`: 'chat' | 'image' | 'generation'
+    - `mode`: 'chat' | 'research'
+- **Note**: Image Generation and Image Analysis will be handled by separate services/tabs, keeping Intel focused purely on text-based deep reasoning/research.
 - Update `runIntelQuery` to:
-    - Map `gemini-3.0-pro-preview` and `gemini-3.0-pro-image-preview`.
+    - Map `gemini-3.0-pro-preview`
     - Construct `thinkingConfig` based on `thinkingLevel`.
     - Handle image input in `contents`.
     - Handle image generation response processing.
-
-#### [MODIFY] [IntelService.ts](file:///c:/Users/kayla/OneDrive/Desktop/SchoolAIStuff/lib/ai/IntelService.ts)
-- Update `IntelQueryOptions` to pass through new parameters.
-- Update `sendIntelQueryWithPersistence` to handle the new options.
-
-#### [NEW] [promptImprover.ts](file:///c:/Users/kayla/OneDrive/Desktop/SchoolAIStuff/lib/ai/promptImprover.ts)
-- `improvePrompt(originalPrompt: string, mode: 'chat' | 'image' | 'vision', context?: string): Promise<string>`
-- **Logic**:
-    - **Web Search**: Query for "best prompt engineering practices for [mode] [context]".
-    - **Refinement**:
-        - **Vision**: Convert "Read this" -> "Analyze this image in detail, describing key elements, text, and visual style..."
-        - **Image Gen**: Enhance descriptive terms (e.g., "Cyberpunk city" -> "Futuristic cyberpunk city, neon lights, rain-slicked streets, high detail, cinematic lighting...").
-        - **Chat**: Structure the prompt for better reasoning or clarity based on the search results.
-
-### 2. UI Components (`components/Intel`)
-
-#### [MODIFY] [IntelPanel.tsx](file:///c:/Users/kayla/OneDrive/Desktop/SchoolAIStuff/components/Intel/IntelPanel.tsx)
-- **Command Deck Updates**:
-    - Add **Mode Toggle**: Chat / Image Analysis / Image Generation.
-    - Add **Model Selector**: Add "Gemini 3.0 Pro" and "Gemini 3.0 Image".
-    - Add **Thinking Level**: Slider/Selector (Low, Medium, High) - visible only for supported models.
-- **Input Area Updates**:
-    - Add **Image Upload**: Button/Dropzone for image mode.
-- **Logic**:
-    - Handle file selection and conversion to base64.
-    - Pass new state to `sendIntelQuery`.
 
 #### [MODIFY] [InputArea.tsx](file:///c:/Users/kayla/OneDrive/Desktop/SchoolAIStuff/components/Intel/InputArea.tsx)
 - Add "Magic Wand" / "Improve Prompt" button.
@@ -69,8 +88,6 @@ Integrate Gemini 3.0 Pro Preview capabilities into the Intel Engine, including T
     - Call `improvePrompt`.
     - Update input value with refined prompt.
     - Show toast/notification of what changed (optional).
-
-
 
 ### 3. Announcer System (`components/Announcer`)
 
@@ -103,7 +120,20 @@ Integrate Gemini 3.0 Pro Preview capabilities into the Intel Engine, including T
     - "Post Announcement" button.
 - List active announcements (Edit/Delete).
 
-### 5. Horde Feed (`components/Horde`)
+### 5. ImageGen Enhancements (`components/ImageGen`)
+
+#### [MODIFY] [ImageGenPanel.tsx](file:///c:/Users/kayla/OneDrive/Desktop/SchoolAIStuff/components/ImageGen/ImageGenPanel.tsx)
+- **Thinking View Fix**:
+    - Make the thinking process panel scrollable within viewport
+    - Add proper max-height and overflow handling
+    - Ensure modal doesn't extend beyond screen bounds
+- **Advanced Split View Editor**:
+    - Add toggle for split view mode
+    - Left panel: Original generated image
+    - Right panel: Edit controls / AI enhancement prompts
+    - Support iterative editing with image-to-image refinement
+
+### 6. Horde Feed (`components/Horde`)
 
 #### [MODIFY] [HordeFeed.tsx](file:///c:/Users/kayla/OneDrive/Desktop/SchoolAIStuff/components/Horde/HordeFeed.tsx)
 - Add `fetchProfile` function to get full profile data from Supabase by `author_id`.

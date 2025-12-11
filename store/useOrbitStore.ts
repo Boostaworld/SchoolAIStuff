@@ -1,7 +1,8 @@
 
 import { create } from 'zustand';
 import { Task, ChatMessage, UserProfile, IntelDrop, DMChannel, Message, MessageReaction, TypingChallenge, TypingSession, KeyStat, Period } from '../types';
-import { PokerGame, PokerGamePlayer, PokerAction, PokerLobbyGame, AIDifficulty, PokerActionType } from '../lib/poker/types';
+import { PokerGame, PokerGamePlayer, PokerAction, PokerLobbyGame, AIDifficulty, PokerActionType, PokerAnimation } from '../lib/poker/types';
+import { createDeck, dealCards, evaluateHand, compareHands } from '../lib/poker/PokerEngine';
 import { generateOracleRoast, assessTaskDifficulty } from '../lib/ai/gemini';
 import { IntelResult } from '../lib/ai/intel';
 import { fetchIntelHistory, IntelChatMessage, sendIntelQueryWithPersistence } from '../lib/ai/IntelService';
@@ -59,6 +60,9 @@ interface OrbitState {
     channelId: string;
   }>;
 
+  // DM Replying State
+  replyingTo: Message | null;
+
   // Phase 3: Training State
   typingChallenges: TypingChallenge[];
   activeChallenge: TypingChallenge | null;
@@ -78,6 +82,12 @@ interface OrbitState {
     actions: PokerAction[];
   } | null;
   isPokerLoading: boolean;
+
+  // Poker Animation State
+  pokerAnimationQueue: PokerAnimation[];
+  isAnimationLocked: boolean;
+  currentAnimatingAction: string | null;
+  currentPokerAnimation: PokerAnimation | null;
 
   // Initialization
   initialize: () => Promise<void>;
@@ -128,7 +138,7 @@ interface OrbitState {
   fetchDMChannels: () => Promise<void>;
   createOrGetChannel: (otherUserId: string) => Promise<string>;
   fetchMessages: (channelId: string) => Promise<void>;
-  sendMessage: (channelId: string, content: string, attachmentFile?: File) => Promise<void>;
+  sendMessage: (channelId: string, content: string, attachmentFile?: File, replyToId?: string) => Promise<void>;
   deleteMessage: (messageId: string, channelId: string) => Promise<void>;
   editMessage: (messageId: string, channelId: string, newContent: string) => Promise<void>;
   hideChannel: (channelId: string) => Promise<void>;
@@ -140,6 +150,7 @@ interface OrbitState {
   toggleCommsPanel: () => void;
   dismissMessageToast: () => void;
   dismissPersistentBanner: (bannerId: string) => void;
+  setReplyingTo: (message: Message | null) => void;
 
   // Phase 3: Training Actions
   fetchChallenges: () => Promise<void>;
@@ -160,13 +171,21 @@ interface OrbitState {
   createPokerGame: (buyIn: number, maxPlayers: number, gameType?: 'practice' | 'multiplayer', aiDifficulty?: AIDifficulty) => Promise<{ gameId: string | null; error: string | null }>;
   joinPokerGame: (gameId: string) => Promise<boolean>;
   leavePokerGame: (gameId: string) => Promise<void>;
-  performPokerAction: (gameId: string, action: PokerActionType, amount?: number) => Promise<boolean>;
+
+  // Poker Animation Actions
+  addPokerAnimation: (animation: PokerAnimation) => void;
+  processAnimationQueue: () => void;
+  skipCurrentAnimation: () => void;
+  clearAnimationQueue: () => void;
+  performPokerAction: (gameId: string, action: PokerActionType, amount?: number, playerId?: string) => Promise<boolean>;
+  adminDeletePokerGame: (gameId: string) => Promise<void>;
   subscribeToPokerGame: (gameId: string) => void;
   unsubscribeFromPokerGame: (gameId: string) => void;
   getNextActivePlayerId: (gameId: string, currentPosition: number) => string | null;
   processAITurn: (gameId: string, aiPlayerId: string) => Promise<void>;
   checkRoundComplete: (gameId: string) => boolean;
   advanceGameStage: (gameId: string) => Promise<void>;
+  startNextHand: (gameId: string) => Promise<void>;
 
   // Economy
   orbitPoints: number;
@@ -237,6 +256,9 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
   messageToast: null,
   persistentBanners: [],
 
+  // DM Replying State
+  replyingTo: null,
+
   // Phase 3: Training State
   typingChallenges: [],
   activeChallenge: null,
@@ -252,6 +274,12 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
   pokerLobbyGames: [],
   activePokerGame: null,
   isPokerLoading: false,
+
+  // Poker Animation State
+  pokerAnimationQueue: [],
+  isAnimationLocked: false,
+  currentAnimatingAction: null,
+  currentPokerAnimation: null,
 
   // --- INITIALIZATION & REALTIME ---
   initialize: async () => {
@@ -1734,7 +1762,7 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     }
   },
 
-  sendMessage: async (channelId: string, content: string, attachmentFile?: File) => {
+  sendMessage: async (channelId: string, content: string, attachmentFile?: File, replyToId?: string) => {
     const { currentUser } = get();
     if (!currentUser) return;
 
@@ -1771,7 +1799,8 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       attachment_url: attachmentUrl,
       attachment_type: attachmentType,
       read: false,
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      reply_to_id: replyToId || undefined
     };
 
     set(state => ({
@@ -1789,7 +1818,8 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
         sender_id: currentUser.id,
         content,
         attachment_url: attachmentUrl,
-        attachment_type: attachmentType
+        attachment_type: attachmentType,
+        reply_to_id: replyToId || null
       })
       .select()
       .single();
@@ -2255,6 +2285,10 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     set(state => ({
       persistentBanners: state.persistentBanners.filter(b => b.id !== bannerId)
     }));
+  },
+
+  setReplyingTo: (message: Message | null) => {
+    set({ replyingTo: message });
   },
 
 
@@ -2736,13 +2770,25 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     const { currentUser, orbitPoints } = get();
     if (!currentUser) return { gameId: null, error: 'Not authenticated' };
 
-    // Check funds
-    // if (orbitPoints < buyIn) {
-    //   console.error('Insufficient funds');
-    //   return { gameId: null, error: `Insufficient funds (${orbitPoints} < ${buyIn})` };
-    // }
+    // Check funds with -200 minimum balance
+    const MIN_BALANCE = -200;
+    const balanceAfterBuyIn = orbitPoints - buyIn;
+
+    if (balanceAfterBuyIn < MIN_BALANCE) {
+      const maxAllowedBuyIn = orbitPoints - MIN_BALANCE;
+      console.error(`❌ Insufficient funds: Balance would be ${balanceAfterBuyIn} (min: ${MIN_BALANCE})`);
+      return {
+        gameId: null,
+        error: `Insufficient funds. Your balance would drop to ${balanceAfterBuyIn} (minimum: ${MIN_BALANCE}). Maximum buy-in: ${maxAllowedBuyIn}`
+      };
+    }
 
     try {
+      // 1. Initialize Deck & Deal to Host
+      let deck = createDeck();
+      const { cards: hostCards, remainingDeck: deckAfterHost } = dealCards(deck, 2);
+      deck = deckAfterHost; // Update tracking deck
+
       // Create game
       const { data: game, error: gameError } = await supabase
         .from('poker_games')
@@ -2757,14 +2803,15 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
           pot_amount: 0,
           dealer_position: 0,
           small_blind: 5,
-          big_blind: 10
+          big_blind: 10,
+          deck: deck // Save remaining deck (will be updated after bots too)
         })
         .select()
         .single();
 
       if (gameError) throw gameError;
 
-      // Join as player (host)
+      // Join as player (host) with cards
       const { data: hostPlayer, error: playerError } = await supabase
         .from('poker_game_players')
         .insert({
@@ -2772,7 +2819,8 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
           user_id: currentUser.id,
           position: 0,
           chips: buyIn,
-          is_ai: false
+          is_ai: false,
+          hole_cards: hostCards as any // Save hole cards
         })
         .select()
         .single();
@@ -2802,48 +2850,64 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
         ];
 
         for (const ai of aiPlayers) {
+          // Deal to bot
+          const { cards: botCards, remainingDeck: deckAfterBot } = dealCards(deck, 2);
+          deck = deckAfterBot;
+
           await supabase.from('poker_game_players').insert({
             game_id: game.id,
             is_ai: true,
             ai_name: ai.name,
             position: ai.pos,
-            chips: buyIn
+            chips: buyIn,
+            hole_cards: botCards as any // Save hole cards
           });
         }
+
+        // Update Deck in Game (after all dealing)
+        await supabase.from('poker_games').update({ deck: deck }).eq('id', game.id);
 
         // Update player count and START GAME
         const sbAmount = game.small_blind;
         const bbAmount = game.big_blind;
 
         // Post Blinds (Update SB and BB players)
-        // Assume SB is Pos 1, BB is Pos 2 (since Dealer is Pos 0)
-        // Need to find which players correspond to these positions.
-        // We just inserted them.
-
         // Update SB (Pos 1) - Bot 1
-        await supabase.from('poker_game_players')
+        const sbUpdate = await supabase.from('poker_game_players')
           .update({
             chips: buyIn - sbAmount,
             current_bet: sbAmount
           })
           .eq('game_id', game.id)
-          .eq('position', 1);
+          .eq('position', 1)
+          .select();
+        console.log('💰 SB Posted:', sbUpdate.data);
 
         // Update BB (Pos 2) - Bot 2
-        await supabase.from('poker_game_players')
+        const bbUpdate = await supabase.from('poker_game_players')
           .update({
             chips: buyIn - bbAmount,
             current_bet: bbAmount
           })
           .eq('game_id', game.id)
-          .eq('position', 2);
+          .eq('position', 2)
+          .select();
+        console.log('💰 BB Posted:', bbUpdate.data);
+
+        // Get UTG Player (Pos 3) for 4-player game
+        const { data: utgPlayer } = await supabase
+          .from('poker_game_players')
+          .select('id')
+          .eq('game_id', game.id)
+          .eq('position', 3)
+          .single();
 
         await supabase
           .from('poker_games')
           .update({
             current_players: 4,
             status: 'in_progress',
-            current_turn_player_id: hostPlayer.id, // Host goes first (UTG)
+            current_turn_player_id: utgPlayer?.id || hostPlayer.id, // Start with UTG (Bot 3)
             pot_amount: sbAmount + bbAmount
           })
           .eq('id', game.id);
@@ -2875,9 +2939,14 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
 
       if (gameError || !game) throw gameError || new Error('Game not found');
 
-      // Check funds
-      if (orbitPoints < game.buy_in) {
-        console.error('Insufficient funds');
+      // Check funds with -200 minimum balance
+      const MIN_BALANCE = -200;
+      const balanceAfterBuyIn = orbitPoints - game.buy_in;
+
+      if (balanceAfterBuyIn < MIN_BALANCE) {
+        const maxAllowedBuyIn = orbitPoints - MIN_BALANCE;
+        console.error(`❌ Insufficient funds: Balance would be ${balanceAfterBuyIn} (min: ${MIN_BALANCE})`);
+        console.error(`💡 Maximum buy-in you can afford: ${maxAllowedBuyIn}`);
         return false;
       }
 
@@ -2968,6 +3037,87 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     }
   },
 
+  adminDeletePokerGame: async (gameId: string) => {
+    const { currentUser } = get();
+    if (!currentUser?.is_admin) {
+      console.error('❌ Admin access required to delete games');
+      return;
+    }
+
+    try {
+      // Delete all players first (FK constraint)
+      await supabase.from('poker_game_players').delete().eq('game_id', gameId);
+      // Delete all actions
+      await supabase.from('poker_actions').delete().eq('game_id', gameId);
+      // Delete the game
+      const { error } = await supabase.from('poker_games').delete().eq('id', gameId);
+
+      if (error) throw error;
+
+      // Refresh lobby
+      get().fetchPokerLobbyGames();
+      console.log(`🗑️ Game ${gameId} deleted by admin`);
+    } catch (err) {
+      console.error('❌ Admin delete game error:', err);
+    }
+  },
+
+  processAITurn: async (gameId: string, aiPlayerId: string) => {
+    const { activePokerGame, currentUser } = get();
+    if (!activePokerGame || activePokerGame.game.id !== gameId) return;
+
+    // God Mode: Either explicitly set via `expert_god` difficulty, OR expert + permission
+    const hasGemini3Permission = currentUser?.unlocked_models?.includes('gemini-3-pro');
+    const isExplicitGodMode = activePokerGame.game.ai_difficulty === 'expert_god';
+    const useGodMode = isExplicitGodMode || (hasGemini3Permission && activePokerGame.game.ai_difficulty === 'expert');
+
+    // Short delay for realism (reduced since we have multi-model support with high RPM)
+    const delay = useGodMode ? 2000 :
+      activePokerGame.game.ai_difficulty === 'expert' ? 1500 :
+        activePokerGame.game.ai_difficulty === 'novice' ? 1000 : 1200;
+
+    console.log(`⏱️ AI turn delay: ${delay / 1000}s${useGodMode ? ' (GOD MODE)' : ''}`);
+    await new Promise(resolve => setTimeout(resolve, delay));
+
+    const currentPlayer = activePokerGame.players.find(p => p.id === aiPlayerId);
+    if (!currentPlayer || !currentPlayer.hole_cards) return;
+
+    // Build game state for AI
+    const gameState = {
+      potAmount: activePokerGame.game.pot_amount,
+      currentRound: activePokerGame.game.current_round || 'pre_flop',
+      communityCards: (activePokerGame.game.community_cards || []).map((c: any) =>
+        typeof c === 'string' ? c : `${c.rank}${c.suit}`
+      ),
+      highestBet: Math.max(...activePokerGame.players.map(p => p.current_bet || 0)),
+      bigBlind: activePokerGame.game.big_blind,
+      players: activePokerGame.players.map(p => ({
+        name: p.username || p.ai_name || 'Unknown',
+        chips: p.chips,
+        currentBet: p.current_bet || 0,
+        isFolded: p.is_folded || false,
+        isAllIn: p.is_all_in || false,
+        isAI: p.is_ai || false
+      }))
+    };
+
+    // Import the AI decision maker dynamically to avoid circular deps
+    const { makePokerDecision } = await import('../lib/poker/aiPlayer');
+
+    // Get AI decision using Gemini (with god mode if permitted)
+    const decision = await makePokerDecision(
+      currentPlayer,
+      currentPlayer.hole_cards,
+      gameState,
+      activePokerGame.game.ai_difficulty || 'intermediate',
+      useGodMode
+    );
+
+    // Execute the decision
+    console.log(`🤖 AI ${currentPlayer.ai_name} plays: ${decision.action} ${decision.amount}`);
+    await get().performPokerAction(gameId, decision.action, decision.amount, currentPlayer.id);
+  },
+
   performPokerAction: async (gameId, action, amount, playerId) => {
     const { currentUser, activePokerGame } = get();
     // Allow action if currentUser is present OR if playerId (AI) is provided
@@ -3029,7 +3179,20 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
           ...activePokerGame.game,
           pot_amount: activePokerGame.game.pot_amount + (amount || 0)
         },
-        players: updatedPlayers
+        players: updatedPlayers,
+        // Optimistically add action for checkRoundComplete logic
+        actions: [
+          ...(activePokerGame.actions || []),
+          {
+            id: 'temp-' + Date.now(),
+            game_id: gameId,
+            player_id: player.id,
+            action_type: action,
+            amount: amount || 0,
+            round: activePokerGame.game.current_round || 'pre_flop',
+            created_at: new Date().toISOString()
+          } as PokerAction
+        ]
       };
 
       set({ activePokerGame: updatedGame });
@@ -3038,24 +3201,45 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
 
       // Update Pot and Last Action (Always)
       await supabase.from('poker_games').update({
-        pot_amount: activePokerGame.game.pot_amount + potIncrease,
-        last_action: `${player.username || player.ai_name} ${action}s`,
-        last_action_amount: amount
+        pot_amount: activePokerGame.game.pot_amount + potIncrease
+        // last_action cols removed as they don't exist in schema
       }).eq('id', gameId);
 
       // Now check round complete with updated state
       const isRoundComplete = get().checkRoundComplete(gameId);
+      console.log(`🔄 Round complete check: ${isRoundComplete}`, {
+        playerBets: get().activePokerGame?.players.map(p => ({ name: p.username || p.ai_name, bet: p.current_bet, folded: p.is_folded }))
+      });
 
       if (isRoundComplete) {
         // Advance to next stage (Flop, Turn, River)
+        console.log('🎯 Advancing to next stage...');
         await get().advanceGameStage(gameId);
       } else {
         // Rotate turn
         const nextTurnPlayerId = get().getNextActivePlayerId(gameId, player.position);
+        console.log(`🔀 Next turn: ${nextTurnPlayerId} (from position ${player.position})`);
         if (nextTurnPlayerId) {
           await supabase.from('poker_games').update({
             current_turn_player_id: nextTurnPlayerId
           }).eq('id', gameId);
+
+          // OPTIMISTIC UPDATE: Turn
+          const afterTurnGame = {
+            ...get().activePokerGame!,
+            game: {
+              ...get().activePokerGame!.game,
+              current_turn_player_id: nextTurnPlayerId
+            }
+          };
+          set({ activePokerGame: afterTurnGame });
+        }
+
+        // If we couldn't find a next player (everyone folded/all-in), advance the stage
+        if (!nextTurnPlayerId) {
+          console.log('No next turn player, advancing stage');
+          await get().advanceGameStage(gameId);
+          return true;
         }
 
         // Trigger AI if next player is AI (Using ID)
@@ -3068,8 +3252,8 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       return true;
     } catch (err) {
       console.error('❌ Action error:', err);
-      // Rollback optimistic update
-      await get().fetchPokerGame(gameId); // For MVP just refetch
+      // Rollback optimistic update by re-subscribing
+      get().subscribeToPokerGame(gameId);
       throw err;
     }
   },
@@ -3203,6 +3387,81 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     set({ activePokerGame: null });
   },
 
+  // =============================================
+  // POKER ANIMATION MANAGEMENT
+  // =============================================
+
+  addPokerAnimation: (animation: PokerAnimation) => {
+    set((state) => ({
+      pokerAnimationQueue: [...state.pokerAnimationQueue, animation].sort(
+        (a, b) => b.priority - a.priority
+      )
+    }));
+    // Auto-process if not currently animating
+    if (!get().isAnimationLocked && !get().currentAnimatingAction) {
+      get().processAnimationQueue();
+    }
+  },
+
+  processAnimationQueue: () => {
+    const { pokerAnimationQueue, isAnimationLocked } = get();
+
+    // Don't process if already animating or queue is empty
+    if (isAnimationLocked || pokerAnimationQueue.length === 0) {
+      return;
+    }
+
+    // Get next animation
+    const nextAnimation = pokerAnimationQueue[0];
+
+    // Lock animations and set current action
+    set({
+      isAnimationLocked: true,
+      currentAnimatingAction: nextAnimation.type,
+      currentPokerAnimation: nextAnimation
+    });
+
+    // Remove from queue
+    set((state) => ({
+      pokerAnimationQueue: state.pokerAnimationQueue.slice(1)
+    }));
+
+    // Schedule unlock after animation duration
+    setTimeout(() => {
+      set({
+        isAnimationLocked: false,
+        currentAnimatingAction: null,
+        currentPokerAnimation: null
+      });
+      // Process next animation if any
+      if (get().pokerAnimationQueue.length > 0) {
+        get().processAnimationQueue();
+      }
+    }, nextAnimation.duration);
+  },
+
+  skipCurrentAnimation: () => {
+    // Immediately unlock and clear current action
+    set({
+      isAnimationLocked: false,
+      currentAnimatingAction: null,
+      currentPokerAnimation: null
+    });
+    // Process next animation if any
+    if (get().pokerAnimationQueue.length > 0) {
+      get().processAnimationQueue();
+    }
+  },
+
+  clearAnimationQueue: () => {
+    set({
+      pokerAnimationQueue: [],
+      isAnimationLocked: false,
+      currentAnimatingAction: null,
+      currentPokerAnimation: null
+    });
+  },
+
   getNextActivePlayerId: (gameId: string, currentPosition: number) => {
     const { activePokerGame } = get();
     if (!activePokerGame) return null;
@@ -3236,6 +3495,12 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     const { players, game } = activePokerGame;
     const activePlayers = players.filter(p => !p.is_folded);
 
+    // If only one player remains (everyone else folded/all-in), round is effectively complete
+    if (activePlayers.length <= 1) {
+      console.log('Round complete via single active player', { active: activePlayers.length });
+      return true;
+    }
+
     // 1. Check if everyone has acted (logic: simplified for MVP)
     // In a real app, we'd track 'has_acted' flag per round.
     // For now, check if all active players have matched the highest bet (or are all-in)
@@ -3243,55 +3508,475 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     const highestBet = Math.max(...activePlayers.map(p => p.current_bet || 0));
     const allMatched = activePlayers.every(p => p.current_bet === highestBet || p.is_all_in);
 
-    // Also need to ensure everyone has had a chance to act.
-    // This is tricky without a specific 'acted_this_round' flag.
-    // Simplification: logic handled by caller or assumed true if betting equalized? 
-    // Actually, turn rotation handles "chance to act". Round ends when it rotates back to start and bets equal.
+    // 2. Check if everyone has acted in this round
+    const currentRound = game.current_round || 'pre_flop';
+    const actionsInRound = activePokerGame.actions.filter(a => a.round === currentRound);
 
-    return allMatched;
+    // Get set of player IDs who have acted
+    const actors = new Set(actionsInRound.map(a => a.player_id));
+
+    // Big Blind exemption for pre-flop: If no raises, BB effectively "acted" by posting blind? 
+    // Actually, in our simple logic, BB needs to "check" if it comes back to them.
+    // So we just enforce everyone must have an action record in this round.
+
+    const allHaveActed = activePlayers.every(p => actors.has(p.id));
+
+    if (allMatched && allHaveActed) {
+      console.log('✅ Round Complete Check: TRUE', { round: currentRound, active: activePlayers.length, actors: Array.from(actors) });
+    } else {
+      // console.log('⏳ Round Complete Check: False', { allMatched, allHaveActed, round: currentRound });
+    }
+
+    return allMatched && allHaveActed;
+  },
+
+  startNextHand: async (gameId: string) => {
+    console.log('🔄 startNextHand called with gameId:', gameId);
+
+    const { activePokerGame } = get();
+    if (!activePokerGame) {
+      console.error('❌ startNextHand: No activePokerGame in state');
+      return;
+    }
+
+    console.log('🎮 startNextHand: Game status:', activePokerGame.game.status);
+
+    const { game, players } = activePokerGame;
+    console.log('👥 startNextHand: All players chips:', players.map(p => ({ name: p.ai_name || p.username, chips: p.chips })));
+
+    const activePlayers = players.filter(p => p.chips > 0);
+
+    if (activePlayers.length < 2) {
+      console.log('🏁 Game Over: Not enough players with chips to continue.', { activePlayers: activePlayers.length });
+      return;
+    }
+
+    console.log('✅ startNextHand: Proceeding with', activePlayers.length, 'active players');
+
+    // 1. Rotate Dealer
+    // Simple rotation: increment position and wrap around
+    // In a real game, you'd skip empty seats, but here we assume players are mostly contiguous or we just use index
+    // Let's find the current dealer index in the sorted active players list
+    const sortedPlayers = [...activePlayers].sort((a, b) => a.position - b.position);
+    const currentDealerIndex = sortedPlayers.findIndex(p => p.position === game.dealer_position);
+
+    // Default to 0 if not found, otherwise moves to next player
+    const nextDealerIndex = (currentDealerIndex + 1) % sortedPlayers.length;
+    const nextDealer = sortedPlayers[nextDealerIndex];
+
+    // 2. Identify Blinds
+    // Heads up (2 players): Dealer is SB, Other is BB (Rule varies, but standard is Dealer=SB, Other=BB)
+    // 3+ Players: Dealer -> SB -> BB
+    let sbIndex, bbIndex;
+    if (sortedPlayers.length === 2) {
+      sbIndex = nextDealerIndex; // Dealer is SB
+      bbIndex = (nextDealerIndex + 1) % sortedPlayers.length;
+    } else {
+      sbIndex = (nextDealerIndex + 1) % sortedPlayers.length;
+      bbIndex = (nextDealerIndex + 2) % sortedPlayers.length;
+    }
+
+    const sbPlayer = sortedPlayers[sbIndex];
+    const bbPlayer = sortedPlayers[bbIndex];
+
+    // 3. Post Blinds & Create Deck
+    const sbAmount = Math.min(game.small_blind, sbPlayer.chips);
+    const bbAmount = Math.min(game.big_blind, bbPlayer.chips);
+
+    const { createDeck, shuffleDeck, dealCards } = await import('../lib/poker/PokerEngine');
+    let deck = shuffleDeck(createDeck());
+
+    // 4. Deal Cards
+    const updates: Promise<any>[] = [];
+    let currentDeck = deck;
+
+    // Updates for all players (reset state + deal new cards)
+    const playerUpdates = sortedPlayers.map(p => {
+      const { cards, remainingDeck } = dealCards(currentDeck, 2);
+      currentDeck = remainingDeck;
+
+      let chips = p.chips;
+      let currentBet = 0;
+      let isAllIn = false;
+
+      // Deduct blinds
+      if (p.id === sbPlayer.id) {
+        chips -= sbAmount;
+        currentBet = sbAmount;
+      } else if (p.id === bbPlayer.id) {
+        chips -= bbAmount;
+        currentBet = bbAmount;
+      }
+
+      if (chips === 0 && (p.id === sbPlayer.id || p.id === bbPlayer.id)) {
+        isAllIn = true;
+      }
+
+      return {
+        id: p.id,
+        hole_cards: cards,
+        chips,
+        current_bet: currentBet,
+        is_folded: false,
+        is_all_in: isAllIn,
+        game_id: gameId
+      };
+    });
+
+    // 5. Update DB
+    // Update Players
+    for (const pUpdate of playerUpdates) {
+      updates.push(
+        Promise.resolve(supabase.from('poker_game_players').update({
+          hole_cards: pUpdate.hole_cards as any,
+          chips: pUpdate.chips,
+          current_bet: pUpdate.current_bet,
+          is_folded: false,
+          is_all_in: pUpdate.is_all_in
+        }).eq('id', pUpdate.id))
+      );
+    }
+
+    // Reset non-active players too (just fold/bet reset)
+    // Actually, we should just reset everyone's folding status
+
+    // Update Game
+    const firstActionPlayerIndex = (bbIndex + 1) % sortedPlayers.length;
+    const firstActionPlayer = sortedPlayers[firstActionPlayerIndex];
+
+    updates.push(
+      Promise.resolve(supabase.from('poker_games').update({
+        current_round: 'pre_flop',
+        status: 'in_progress',
+        pot_amount: sbAmount + bbAmount,
+        community_cards: [],
+        deck: currentDeck,
+        current_turn_player_id: firstActionPlayer.id,
+        dealer_position: nextDealer.position,
+        winner_id: null,
+        winner_player_id: null,
+        winning_hand: null,
+        final_pot_amount: null
+      }).eq('id', gameId))
+    );
+
+    const results = await Promise.all(updates);
+
+    // Check for errors in any update
+    const errors = results.filter(r => r.error);
+    if (errors.length > 0) {
+      console.error('❌ startNextHand DB update errors:', errors.map(e => e.error));
+      return; // Don't update local state if DB failed
+    }
+
+    console.log('✅ startNextHand: All DB updates successful');
+
+    // CRITICAL: Optimistic update to sync local state immediately
+    // This prevents "Player not found" errors when AI tries to act before subscription fires
+    const updatedPlayers = sortedPlayers.map(p => {
+      const pUpdate = playerUpdates.find(u => u.id === p.id);
+      if (!pUpdate) return p;
+      return {
+        ...p,
+        hole_cards: pUpdate.hole_cards,
+        chips: pUpdate.chips,
+        current_bet: pUpdate.current_bet,
+        is_folded: false,
+        is_all_in: pUpdate.is_all_in
+      };
+    });
+
+    set({
+      activePokerGame: {
+        ...activePokerGame,
+        game: {
+          ...game,
+          current_round: 'pre_flop',
+          status: 'in_progress',
+          pot_amount: sbAmount + bbAmount,
+          community_cards: [],
+          deck: currentDeck,
+          current_turn_player_id: firstActionPlayer.id,
+          dealer_position: nextDealer.position,
+          winner_id: null,
+          winner_player_id: null,
+          winning_hand: null,
+          final_pot_amount: null
+        },
+        players: updatedPlayers,
+        actions: [] // Clear actions for new hand
+      }
+    });
+
+    console.log('🔄 Started next hand. Dealer:', nextDealer.position, 'First action:', firstActionPlayer.ai_name || firstActionPlayer.username);
   },
 
   advanceGameStage: async (gameId: string) => {
     const { activePokerGame } = get();
     if (!activePokerGame) return;
 
-    const { game } = activePokerGame;
-    const deck = ['As', 'Ks', 'Qs', 'Js', '10s', '9s', '8s', '7s', '6s', '5s', '4s', '3s', '2s',
-      'Ah', 'Kh', 'Qh', 'Jh', '10h', '9h', '8h', '7h', '6h', '5h', '4h', '3h', '2h',
-      'Ad', 'Kd', 'Qd', 'Jd', '10d', '9d', '8d', '7d', '6d', '5d', '4d', '3d', '2d',
-      'Ac', 'Kc', 'Qc', 'Jc', '10c', '9c', '8c', '7c', '6c', '5c', '4c', '3c', '2c'];
+    const { game, players } = activePokerGame;
 
-    // Shuffle (simple)
-    const shuffled = [...deck].sort(() => Math.random() - 0.5);
+    // Use actual deck from game, or create fallback if missing
+    let gameDeck = game.deck as any[] | null;
+    if (!gameDeck || gameDeck.length === 0) {
+      console.warn('⚠️ No deck found in game, creating fallback');
+      const { createDeck } = await import('../lib/poker/PokerEngine');
+      gameDeck = createDeck().map((c: any) => `${c.rank}${c.suit === '♥' ? 'h' : c.suit === '♦' ? 'd' : c.suit === '♣' ? 'c' : 's'}`);
+    }
 
     let nextStage = game.community_cards.length === 0 ? 'flop' :
       game.community_cards.length === 3 ? 'turn' :
         game.community_cards.length === 4 ? 'river' : 'showdown';
 
-    let newCards = [...game.community_cards];
+    // GUARD: Prevent infinite loop if state is already advanced (or advancing)
+    const currentCardCount = game.community_cards.length;
+    if (nextStage === 'flop' && currentCardCount >= 3) {
+      console.warn('🛑 Loop Guard: Attempted to advance to Flop, but already have cards.', game.community_cards);
+      return;
+    }
+    if (nextStage === 'turn' && currentCardCount >= 4) return;
+    if (nextStage === 'river' && currentCardCount >= 5) return;
+
+    let newCards: any[] = [...game.community_cards];
+    let updatedDeck = [...gameDeck];
 
     if (nextStage === 'flop') {
-      newCards.push({ suit: '♥', rank: 'A' }, { suit: '♠', rank: 'K' }, { suit: '♦', rank: '10' }); // Mock for now, need real dealing
-      // TODO: Use real deck from DB or generate properly
-    } else if (nextStage === 'turn' || nextStage === 'river') {
-      newCards.push({ suit: '♣', rank: '7' }); // Mock
+      // Deal 3 cards for flop
+      const flopCards = updatedDeck.splice(0, 3);
+      newCards.push(...flopCards);
+      console.log('🃏 Flop:', flopCards);
+    } else if (nextStage === 'turn') {
+      // Deal 1 card for turn
+      const turnCard = updatedDeck.shift();
+      newCards.push(turnCard);
+      console.log('🃏 Turn:', turnCard);
+    } else if (nextStage === 'river') {
+      // Deal 1 card for river
+      const riverCard = updatedDeck.shift();
+      newCards.push(riverCard);
+      console.log('🃏 River:', riverCard);
     }
 
     if (nextStage === 'showdown') {
-      // Determine winner
-      // ...
-      await supabase.from('poker_games').update({ status: 'completed' }).eq('id', game.id);
+      // ==================== REAL SHOWDOWN LOGIC ====================
+      console.log('🎰 SHOWDOWN! Evaluating hands...');
+
+      // Import dynamic to avoid circular deps (functions are in scope via import at top)
+      const { evaluateHand, compareHands, calculatePayout } = await import('../lib/poker/PokerEngine');
+
+      const activePlayers = players.filter(p => !p.is_folded);
+
+      if (activePlayers.length === 1) {
+        // Only one player left = they win by default
+        const winner = activePlayers[0];
+        const { payout } = calculatePayout(game.pot_amount);
+
+        console.log(`🏆 Winner (last standing): ${winner.username || winner.ai_name} wins ${payout}!`);
+
+        await supabase.from('poker_game_players')
+          .update({ chips: winner.chips + payout })
+          .eq('id', winner.id);
+
+        const winnerUserId = winner.user_id || null;
+        const winnerPlayerId = winner.id;
+
+        const gameUpdate: any = {
+          status: 'completed',
+          winner_id: winnerUserId,
+          winner_player_id: winnerPlayerId,
+          winning_hand: 'Last Standing',
+          final_pot_amount: payout
+        };
+
+        const { error: winnerUpdateError } = await supabase.from('poker_games').update(gameUpdate).eq('id', game.id);
+
+        // Fallback if column doesn't exist yet
+        if (winnerUpdateError && winnerUpdateError.code === '42703') {
+          const { error: retryError } = await supabase.from('poker_games').update({
+            status: 'completed',
+            winner_id: winnerUserId,
+            winning_hand: 'Last Standing',
+            final_pot_amount: payout
+          }).eq('id', game.id);
+          if (retryError) console.error('Failed to update winner without winner_player_id:', retryError);
+        } else if (winnerUpdateError) {
+          console.error('Failed to update winner with winner_player_id:', winnerUpdateError);
+        }
+
+        // Optimistic update for local UI (supports AI winners)
+        set({
+          activePokerGame: {
+            ...activePokerGame,
+            game: {
+              ...activePokerGame.game,
+              status: 'completed',
+              winner_id: winnerUserId || winnerPlayerId, // Prefer user id, fallback to player id for UI
+              winner_player_id: winnerPlayerId,
+              winning_hand: 'Last Standing' as any,
+              final_pot_amount: payout
+            }
+          }
+        });
+
+        // Auto-start next hand
+        setTimeout(() => get().startNextHand(game.id), 8000);
+      } else {
+        // Evaluate each player's hand
+        console.log('🃏 Showdown cards:', { communityCards: newCards, playerCount: activePlayers.length });
+
+        const evaluatedPlayers = activePlayers.map(player => {
+          const rawCards = [...(player.hole_cards || []), ...newCards];
+          console.log(`🃏 ${player.ai_name || player.username}: rawCards =`, rawCards);
+
+          // Helper to parse string cards (e.g. "Ah") to PokerCard objects
+          const parseCard = (c: any) => {
+            if (typeof c !== 'string') return c;
+
+            // Handle '10' case (3 chars) vs others (2 chars)
+            let rankStr, suitChar;
+            if (c.startsWith('10')) {
+              rankStr = '10';
+              suitChar = c.charAt(2);
+            } else {
+              rankStr = c.charAt(0);
+              suitChar = c.charAt(1);
+            }
+
+            const suitMap: Record<string, string> = { 'h': '♥', 'd': '♦', 'c': '♣', 's': '♠' };
+            return {
+              rank: rankStr,
+              suit: suitMap[suitChar] || '♠' // Default to spade if unknown
+            };
+          };
+
+          const allCards = rawCards.map(parseCard);
+
+          if (allCards.length < 5) {
+            console.warn(`⚠️ Player ${player.id} has insufficient cards:`, allCards);
+            return { player, hand: null };
+          }
+          const hand = evaluateHand(allCards);
+          console.log(`📊 ${player.username || player.ai_name}: ${hand.rankName} (${hand.highCards.join(', ')})`);
+          return { player, hand };
+        }).filter(ep => ep.hand !== null);
+
+        if (evaluatedPlayers.length === 0) {
+          console.error('❌ No valid hands to evaluate!');
+          await supabase.from('poker_games').update({ status: 'completed' }).eq('id', game.id);
+          return;
+        }
+
+        // Sort by hand strength
+        evaluatedPlayers.sort((a, b) => compareHands(b.hand!, a.hand!));
+
+        const winner = evaluatedPlayers[0];
+        const { payout, rake } = calculatePayout(game.pot_amount);
+
+        console.log(`🏆 Winner: ${winner.player.username || winner.player.ai_name} with ${winner.hand!.rankName}! Payout: ${payout} (Rake: ${rake})`);
+
+        // Update winner's chips
+        await supabase.from('poker_game_players')
+          .update({ chips: winner.player.chips + payout })
+          .eq('id', winner.player.id);
+
+        const winnerUserId = winner.player.user_id || null;
+        const winnerPlayerId = winner.player.id;
+
+        // Optimistic Winner Update for UI Banner
+        const { activePokerGame } = get();
+        if (activePokerGame) {
+          set({
+            activePokerGame: {
+              ...activePokerGame,
+              game: {
+                ...activePokerGame.game,
+                status: 'completed',
+                winner_id: winnerUserId || winnerPlayerId,
+                winner_player_id: winnerPlayerId,
+                winning_hand: winner.hand!.rankName as any, // Cast to any to avoid mismatched string literal type
+                final_pot_amount: payout
+              }
+            }
+          });
+        }
+
+        // Update game status
+        const gameUpdate: any = {
+          status: 'completed',
+          winner_id: winnerUserId,
+          winner_player_id: winnerPlayerId,
+          winning_hand: winner.hand!.rankName,
+          final_pot_amount: payout
+        };
+
+        const { error: winnerUpdateError } = await supabase.from('poker_games').update(gameUpdate).eq('id', game.id);
+
+        // Fallback if winner_player_id column is missing
+        if (winnerUpdateError && winnerUpdateError.code === '42703') {
+          const { error: retryError } = await supabase.from('poker_games').update({
+            status: 'completed',
+            winner_id: winnerUserId,
+            winning_hand: winner.hand!.rankName,
+            final_pot_amount: payout
+          }).eq('id', game.id);
+          if (retryError) console.error('Failed to update winner without winner_player_id:', retryError);
+        } else if (winnerUpdateError) {
+          console.error('Failed to update winner with winner_player_id:', winnerUpdateError);
+        }
+
+        // Auto-start next hand
+        setTimeout(() => get().startNextHand(game.id), 8000);
+      }
     } else {
       // Reset bets for next round
       await supabase.from('poker_game_players')
         .update({ current_bet: 0 })
         .eq('game_id', game.id);
 
-      await supabase.from('poker_games').update({
+      // Find first active player for next round (SB position or first non-folded)
+      const firstPlayer = players.find(p => !p.is_folded && p.position === 1) ||
+        players.find(p => !p.is_folded);
+
+      console.log('🔄 Advancing Round:', {
+        nextStage,
+        firstPlayerId: firstPlayer?.id,
+        newCardsCount: newCards.length
+      });
+
+      const updatePayload = {
         community_cards: newCards,
         current_round: nextStage,
-        current_turn_player_id: activePokerGame.players.find(p => p.position === 0)?.id // Reset turn to first player (Host/ID) - TODO: Fix to SB
-      }).eq('id', game.id);
+        current_turn_player_id: firstPlayer?.id || null,
+        deck: updatedDeck // Save remaining deck
+      };
+
+      const { error } = await supabase.from('poker_games').update(updatePayload).eq('id', game.id);
+      if (error) console.error('❌ Failed to advance stage:', error);
+
+      // Trigger AI if first player is AI
+      if (firstPlayer?.is_ai) {
+        setTimeout(() => get().processAITurn(gameId, firstPlayer.id), 1000);
+      }
+
+      // OPTIMISTIC UPDATE: Stage Advance
+      // Reset bets locally and update cards/stage/deck
+      const { activePokerGame } = get();
+      if (activePokerGame) {
+        set({
+          activePokerGame: {
+            ...activePokerGame,
+            game: {
+              ...activePokerGame.game,
+              current_round: nextStage as any,
+              community_cards: newCards,
+              current_turn_player_id: firstPlayer?.id || null,
+              deck: updatedDeck // Keep deck in sync!
+            },
+            players: activePokerGame.players.map(p => ({ ...p, current_bet: 0 }))
+          }
+        });
+      }
     }
   }
 }));

@@ -4,7 +4,7 @@
 // TypeScript interfaces for Texas Hold'em poker system
 
 // Card representation
-export type CardSuit = '♠' | '♥' | '♦' | '♣';
+export type CardSuit = '♠' | '♥' | '♦' | '♣' | 'hearts' | 'diamonds' | 'clubs' | 'spades';
 export type CardRank = '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '10' | 'J' | 'Q' | 'K' | 'A';
 
 export interface PokerCard {
@@ -35,7 +35,7 @@ export interface EvaluatedHand {
 
 // Game types
 export type PokerGameType = 'practice' | 'multiplayer';
-export type AIDifficulty = 'novice' | 'intermediate' | 'expert';
+export type AIDifficulty = 'novice' | 'intermediate' | 'expert' | 'expert_god';
 export type GameStatus = 'waiting' | 'in_progress' | 'completed';
 export type BettingRound = 'pre_flop' | 'flop' | 'turn' | 'river' | 'showdown';
 
@@ -82,6 +82,8 @@ export interface PokerGame {
 
     // Results
     winner_id?: string;
+    // For AI winners, track the player row separately from user profiles
+    winner_player_id?: string;
     winning_hand?: EvaluatedHand;
     final_pot_amount?: number;
     house_rake_amount?: number;
@@ -219,7 +221,8 @@ export interface CoinModifiers {
 export const AI_COIN_MODIFIERS: Record<AIDifficulty, number> = {
     novice: 0.20, // 80% reduction
     intermediate: 0.60, // 40% reduction
-    expert: 1.00 // Full rewards
+    expert: 1.00, // Full rewards
+    expert_god: 1.00 // Full rewards (God Mode)
 };
 
 // Daily diminishing returns thresholds
@@ -249,6 +252,42 @@ export interface PokerHandHistory {
     pot_amount: number;
     actions: PokerAction[];
     winner_id: string;
+    winner_player_id?: string;
     winning_hand: EvaluatedHand;
     created_at: string;
+}
+
+// =============================================
+// ANIMATION TYPES
+// =============================================
+
+export type PokerAnimationType =
+    | 'deal_cards'
+    | 'reveal_flop'
+    | 'reveal_turn'
+    | 'reveal_river'
+    | 'reveal_hole_cards'
+    | 'chip_to_pot'
+    | 'pot_to_winner'
+    | 'fold_cards'
+    | 'action_feedback';
+
+export interface PokerAnimation {
+    id: string;
+    type: PokerAnimationType;
+    data: any;
+    duration: number; // milliseconds
+    priority: number; // higher = more important
+}
+
+export interface DealTarget {
+    x: number;
+    y: number;
+    rotation: number;
+    playerIndex: number;
+}
+
+export interface Position {
+    x: number;
+    y: number;
 }

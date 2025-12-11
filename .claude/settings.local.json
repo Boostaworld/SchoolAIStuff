@@ -13,7 +13,10 @@
       "Bash(timeout /t 3 /nobreak)",
       "Bash(npm run build:*)",
       "Bash(timeout /t 5 /nobreak)",
-      "WebFetch(domain:ai.google.dev)"
+      "WebFetch(domain:ai.google.dev)",
+      "Bash(git log:*)",
+      "Bash(mkdir:*)",
+      "Bash(ping:*)"
     ],
     "deny": [],
     "ask": []

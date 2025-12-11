@@ -326,22 +326,26 @@ export const analyzeImageWithVision = async (
  */
 export const analyzeGoogleForm = async (
   image: string,
-  model: string = 'gemini-2.5-pro' // Updated to 2.5 Pro for better accuracy
+  model: string = 'gemini-2.5-pro'
 ): Promise<VisionResponse> => {
   const prompt = `Analyze this Google Form screenshot carefully.
 
 TASK:
-1. Extract each question from the form
-2. Provide a clear, accurate answer for each question
+1. Extract each question from the form.
+2. Provide a clear, accurate answer for each question.
+3. Identify the likely topic/subject of the quiz.
 
 FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-QUESTION 1: [Question text here]
-ANSWER: [Your answer here]
+TOPIC: [Subject of the form]
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-QUESTION 2: [Question text here]
-ANSWER: [Your answer here]
+QUESTION 1: [Question text]
+ANSWER: [Your accurate answer]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+QUESTION 2: [Question text]
+ANSWER: [Your accurate answer]
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 (Continue for all questions...)
@@ -363,7 +367,11 @@ If you cannot read the form clearly, explain why.`;
       mimeType = mimeMatch[1];
     }
 
-    const response = await ai.models.generateContent({
+    // Use Gemini 3.0 Pro Image Preview if available/selected, otherwise fallback
+    // Note: If model passed is generic 'gemini-3-vision', map it strictly
+    const start = Date.now();
+
+    const fetchPromise = ai.models.generateContent({
       model: model,
       contents: [
         {
@@ -383,13 +391,13 @@ If you cannot read the form clearly, explain why.`;
       ],
       config: {
         systemInstruction: 'You are an advanced AI with expert-level knowledge in analyzing educational content. Think carefully about each question, use your reasoning capabilities to provide accurate answers, and extract information with precision.',
-        temperature: model.includes('gemini-3') ? 1.0 : 0.3,
-        maxOutputTokens: 8192, // Increased for detailed form analysis
+        temperature: model.includes('gemini-3') ? 1.0 : 0.1, // Lower temp for 2.5 for accuracy
+        maxOutputTokens: 8192,
         thinkingConfig: model.includes('gemini-3')
-          ? { thinkingBudget: -1 } // Dynamic thinking for Gemini 3
+          ? { thinkingBudget: 1024 } // Explicit budget for forms to prevent timeouts
           : model.includes('2.5-pro')
-            ? { thinkingBudget: -1 } // Dynamic thinking for Pro
-            : { thinkingBudget: 12288 }, // Deep thinking for complex forms
+            ? { thinkingBudget: 1024 }
+            : undefined, // Flash doesn't support thinking config usually
         safetySettings: [
           { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
           { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -399,9 +407,16 @@ If you cannot read the form clearly, explain why.`;
       }
     });
 
+    // 45s Timeout
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("Form analysis timed out after 45s")), 45000)
+    );
+
+    const response: any = await Promise.race([fetchPromise, timeoutPromise]);
+
     const text = response.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) {
-      throw new Error("No response from Gemini");
+      throw new Error("Empty response from Gemini");
     }
 
     return { text };

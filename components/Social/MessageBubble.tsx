@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Download, FileText, Image as ImageIcon, Smile, Maximize2, Edit2, Trash2, Check, X } from 'lucide-react';
+import { Download, FileText, Image as ImageIcon, Smile, Maximize2, Edit2, Trash2, Check, X, Reply } from 'lucide-react';
 import { Message } from '../../types';
 import { useOrbitStore } from '../../store/useOrbitStore';
 import ReactionPicker from './ReactionPicker';
@@ -14,7 +14,7 @@ interface MessageBubbleProps {
 }
 
 const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
-  const { currentUser, reactions, addReaction, removeReaction, deleteMessage, editMessage } = useOrbitStore();
+  const { currentUser, reactions, addReaction, removeReaction, deleteMessage, editMessage, setReplyingTo, messages, activeChannelId } = useOrbitStore();
   const [showReactionPicker, setShowReactionPicker] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -161,7 +161,28 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
           </div>
         )}
 
-        {/* Message Content */}
+        {/* Reply Context (Discord style) */}
+        {message.reply_to_id && (() => {
+          const replyMessage = activeChannelId ? messages[activeChannelId]?.find(m => m.id === message.reply_to_id) : null;
+          return replyMessage ? (
+            <div className="flex items-center gap-1.5 px-2 mb-1">
+              {/* Hook line */}
+              <div className="w-4 h-4 border-l-2 border-t-2 border-cyan-500/40 rounded-tl ml-1" />
+              <div className="flex items-center gap-1 text-cyan-400/60 text-xs font-mono truncate max-w-[80%]">
+                <Reply className="w-3 h-3 flex-shrink-0" />
+                <span className="font-semibold">{replyMessage.senderUsername || 'User'}</span>
+                <span className="truncate opacity-70">{replyMessage.content.substring(0, 50)}{replyMessage.content.length > 50 ? '...' : ''}</span>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 px-2 mb-1 text-cyan-400/40 text-xs font-mono italic">
+              <Reply className="w-3 h-3" />
+              <span>Original message unavailable</span>
+            </div>
+          );
+        })()}
+
+        {/* Message Content */}}
         <motion.div
           whileHover={{ scale: 1.01 }}
           className={`
@@ -304,6 +325,14 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
               )}
             </div>
           )}
+
+          <button
+            onClick={() => setReplyingTo(message)}
+            className="opacity-0 hover:opacity-100 group-hover:opacity-100 transition-opacity p-1 hover:bg-slate-800 rounded"
+            title="Reply"
+          >
+            <Reply className="w-4 h-4 text-cyan-400" />
+          </button>
 
           <button
             onClick={() => setShowReactionPicker(!showReactionPicker)}

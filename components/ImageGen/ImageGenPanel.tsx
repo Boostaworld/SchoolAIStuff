@@ -3,9 +3,12 @@ import { Sparkles, Wand2, Download, X, Maximize2, Zap, Cpu, Grid3x3, Palette, Im
 import { motion, AnimatePresence } from 'framer-motion';
 import { useOrbitStore } from '../../store/useOrbitStore';
 import { runIntelQuery } from '../../lib/ai/intel';
+import { improvePrompt } from '../../lib/ai/promptImprover';
 import { toast } from '@/lib/toast';
 import clsx from 'clsx';
 import { ConfirmModal } from '../Shared/ConfirmModal';
+import { DynamicTextarea } from '../Shared/DynamicTextarea';
+import { SplitEditor } from './SplitEditor';
 import {
   getFolders,
   createFolder,
@@ -123,6 +126,7 @@ export const ImageGenPanel: React.FC = () => {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showThinkingPanel, setShowThinkingPanel] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [isImproving, setIsImproving] = useState(false);
 
   // Folder State
   const [folders, setFolders] = useState<ImageFolder[]>([]);
@@ -144,6 +148,9 @@ export const ImageGenPanel: React.FC = () => {
 
   // Delete Confirmation State
   const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean; type: 'folder' | 'image'; id: string | null; name?: string }>({ isOpen: false, type: 'image', id: null });
+
+  // Image Editor State
+  const [splitEditorImage, setSplitEditorImage] = useState<string | null>(null);
 
   // Load folders and images on mount
   useEffect(() => {
@@ -269,6 +276,25 @@ export const ImageGenPanel: React.FC = () => {
       setProgress(0);
     }
   }, [isGenerating]);
+
+  // Prompt Improver Handler
+  const handleImprovePrompt = async () => {
+    if (!prompt.trim() || isImproving) return;
+
+    setIsImproving(true);
+    try {
+      const result = await improvePrompt(prompt, 'image', model);
+      setPrompt(result.improvedPrompt);
+      if (result.changes.length > 0) {
+        toast.success(`✨ ${result.changes.join(', ')}`);
+      }
+    } catch (error) {
+      console.error('Prompt improvement failed:', error);
+      toast.error('Failed to improve prompt');
+    } finally {
+      setIsImproving(false);
+    }
+  };
 
   // Handlers
   const handleGenerate = async (e: React.FormEvent) => {
@@ -864,19 +890,52 @@ export const ImageGenPanel: React.FC = () => {
 
               {/* Main Prompt */}
               <div className="space-y-2">
-                <label className="text-xs font-bold text-cyan-400 font-mono uppercase tracking-wider flex items-center gap-2">
-                  <Wand2 className="w-4 h-4" />
-                  Imagination Prompt
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-cyan-400 font-mono uppercase tracking-wider flex items-center gap-2">
+                    <Wand2 className="w-4 h-4" />
+                    Imagination Prompt
+                  </label>
+                  <motion.button
+                    type="button"
+                    onClick={handleImprovePrompt}
+                    disabled={!prompt.trim() || isImproving || isGenerating}
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    className={clsx(
+                      "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-mono uppercase tracking-wider transition-all",
+                      prompt.trim() && !isImproving
+                        ? "bg-gradient-to-r from-fuchsia-600 to-violet-600 text-white shadow-[0_0_15px_rgba(192,132,252,0.4)] hover:shadow-[0_0_25px_rgba(192,132,252,0.6)]"
+                        : "bg-slate-800 text-slate-500 cursor-not-allowed"
+                    )}
+                  >
+                    {isImproving ? (
+                      <>
+                        <motion.div
+                          animate={{ rotate: 360 }}
+                          transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                        >
+                          <Sparkles className="w-3 h-3" />
+                        </motion.div>
+                        Enhancing...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-3 h-3" />
+                        Improve
+                      </>
+                    )}
+                  </motion.button>
+                </div>
                 <div className="relative group">
                   <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/20 to-indigo-500/20 rounded-xl blur opacity-0 group-focus-within:opacity-100 transition-opacity" />
-                  <textarea
+                  <DynamicTextarea
                     value={prompt}
                     onChange={(e) => setPrompt(e.target.value)}
                     placeholder="A crystalline forest bathed in bioluminescent light, ethereal atmosphere..."
-                    className="relative w-full h-40 bg-slate-950/80 border-2 border-slate-700 focus:border-cyan-500/50 rounded-xl p-4 text-sm text-slate-100 placeholder:text-slate-600 font-mono resize-none transition-all outline-none"
+                    className="relative w-full min-h-[160px] bg-slate-950/80 border-2 border-slate-700 focus:border-cyan-500/50 rounded-xl p-4 text-sm text-slate-100 placeholder:text-slate-600 font-mono resize-none transition-all outline-none"
                     disabled={isGenerating}
                     style={{ lineHeight: '1.6' }}
+                    maxHeight={400}
                   />
                 </div>
                 <p className="text-[10px] text-slate-500 font-mono">
@@ -1151,7 +1210,7 @@ export const ImageGenPanel: React.FC = () => {
 
                     {/* Thinking Text */}
                     {latestThinkingImage.thinking_process && (
-                      <div className="bg-slate-950/60 border border-violet-500/20 rounded-lg p-3 max-h-40 overflow-y-auto">
+                      <div className="bg-slate-950/60 border border-violet-500/20 rounded-lg p-3 max-h-[50vh] overflow-y-auto custom-scrollbar">
                         <p className="text-xs text-slate-300 font-mono leading-relaxed whitespace-pre-wrap">
                           {latestThinkingImage.thinking_process}
                         </p>
@@ -1239,6 +1298,16 @@ export const ImageGenPanel: React.FC = () => {
                               title="Share to friend"
                             >
                               <Share2 className="w-3.5 h-3.5" />
+                            </motion.button>
+                            {/* EDIT BUTTON */}
+                            <motion.button
+                              whileHover={{ scale: 1.05 }}
+                              whileTap={{ scale: 0.95 }}
+                              onClick={() => setSplitEditorImage(img.image_url)}
+                              className="py-2 px-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors"
+                              title="Edit Image"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
                             </motion.button>
                             <motion.button
                               whileHover={{ scale: 1.05 }}
@@ -1669,6 +1738,18 @@ export const ImageGenPanel: React.FC = () => {
         onConfirm={deleteConfirm.type === 'folder' ? confirmDeleteFolder : confirmDeleteImage}
         onCancel={() => setDeleteConfirm({ isOpen: false, type: 'image', id: null })}
       />
+
+      {/* Split Image Editor */}
+      {splitEditorImage && (
+        <SplitEditor
+          initialImage={splitEditorImage}
+          onClose={() => setSplitEditorImage(null)}
+          onSave={(newImage) => {
+            // Could update the image in the gallery if needed
+            setSplitEditorImage(null);
+          }}
+        />
+      )}
     </div>
   );
 };

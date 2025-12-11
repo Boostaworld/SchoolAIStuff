@@ -77,7 +77,7 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
     flash: 'gemini-2.5-flash',
     pro: 'gemini-2.5-pro', // Updated to 2.5 Pro with thinking
     'orbit-x': 'gemini-2.5-pro', // Use 2.5 Pro for premium queries
-    'gemini-3-pro': 'gemini-3.0-pro-preview', // Gemini 3.0 Pro with advanced thinking
+    'gemini-3-pro': 'gemini-3-pro-preview', // Gemini 3.0 Pro with advanced thinking
     'gemini-3-image': 'gemini-3-pro-image-preview', // Gemini 3.0 Image Generation (Updated name)
     'gemini-2.5-flash-image': 'gemini-2.5-flash-image' // Fast image generation with Gemini 2.5 Flash
   };

@@ -1,7 +1,7 @@
 import React from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { clsx } from 'clsx';
-import { CardRank, CardSuit, PokerCard as PokerCardType } from '../../lib/poker/types';
+import { PokerCard as PokerCardType } from '../../lib/poker/types';
 
 interface PokerCardProps {
     card?: PokerCardType;
@@ -9,6 +9,8 @@ interface PokerCardProps {
     className?: string;
     size?: 'sm' | 'md' | 'lg';
     isWinner?: boolean;
+    isFolded?: boolean;
+    dealDelay?: number;
 }
 
 export const PokerCard: React.FC<PokerCardProps> = ({
@@ -16,9 +18,11 @@ export const PokerCard: React.FC<PokerCardProps> = ({
     hidden = false,
     className,
     size = 'md',
-    isWinner = false
+    isWinner = false,
+    isFolded = false,
+    dealDelay = 0
 }) => {
-    const isRed = card?.suit === 'hearts' || card?.suit === 'diamonds';
+    const isRed = card?.suit === 'hearts' || card?.suit === 'diamonds' || card?.suit === '♥' || card?.suit === '♦';
 
     const sizeClasses = {
         sm: "w-10 h-14 text-xs rounded",
@@ -27,10 +31,8 @@ export const PokerCard: React.FC<PokerCardProps> = ({
     };
 
     const suitIcons: Record<string, string> = {
-        hearts: '♥',
-        diamonds: '♦',
-        clubs: '♣',
-        spades: '♠'
+        hearts: '♥', diamonds: '♦', clubs: '♣', spades: '♠',
+        '♥': '♥', '♦': '♦', '♣': '♣', '♠': '♠'
     };
 
     const rankDisplay: Record<string, string> = {
@@ -38,59 +40,80 @@ export const PokerCard: React.FC<PokerCardProps> = ({
         'J': 'J', 'Q': 'Q', 'K': 'K', 'A': 'A'
     };
 
+    if (isFolded) return null;
+
     return (
-        <div className={clsx("relative perspective-1000", sizeClasses[size], className)}>
-            <motion.div
-                initial={false}
-                animate={{ rotateY: hidden ? 180 : 0 }}
-                transition={{ duration: 0.6, type: "spring", stiffness: 260, damping: 20 }}
+        <motion.div
+            className={clsx("relative", sizeClasses[size], className)}
+            initial={dealDelay > 0 ? { scale: 0.8, opacity: 0 } : false}
+            animate={{
+                scale: 1,
+                opacity: 1,
+                rotateY: hidden ? 180 : 0
+            }}
+            transition={{
+                delay: dealDelay,
+                duration: 0.3,
+                rotateY: { duration: 0.5, ease: 'easeInOut' }
+            }}
+            style={{
+                transformStyle: 'preserve-3d',
+                perspective: '1000px'
+            }}
+        >
+            {/* CARD BACK (visible when rotateY=180) */}
+            <div
                 className={clsx(
-                    "w-full h-full relative preserve-3d shadow-xl transition-all duration-300",
-                    isWinner && "ring-4 ring-yellow-400 shadow-yellow-400/50 scale-110 z-10"
+                    "absolute inset-0 border-2 flex items-center justify-center overflow-hidden select-none",
+                    sizeClasses[size]
                 )}
-                style={{ transformStyle: 'preserve-3d' }}
+                style={{
+                    background: 'linear-gradient(135deg, #1e1b4b 0%, #0f172a 100%)',
+                    borderColor: '#3730a3',
+                    backfaceVisibility: 'hidden',
+                    transform: 'rotateY(180deg)'
+                }}
             >
-                {/* Front Face */}
-                <div className={clsx(
-                    "absolute inset-0 backface-hidden bg-white flex flex-col justify-between p-1.5 select-none overflow-hidden border border-slate-200",
-                    size === 'sm' ? 'rounded' : size === 'md' ? 'rounded-lg' : 'rounded-xl',
-                    isRed ? "text-red-600" : "text-slate-900"
-                )}>
-                    {card && (
-                        <>
-                            {/* Top Left */}
-                            <div className="flex flex-col items-center leading-none">
-                                <span className="font-bold font-mono">{rankDisplay[card.rank]}</span>
-                                <span className="text-[0.8em]">{suitIcons[card.suit]}</span>
-                            </div>
-
-                            {/* Center Suit */}
-                            <div className="absolute inset-0 flex items-center justify-center opacity-10 pointer-events-none">
-                                <span className="text-[4em]">{suitIcons[card.suit]}</span>
-                            </div>
-
-                            {/* Bottom Right (Rotated) */}
-                            <div className="flex flex-col items-center leading-none rotate-180">
-                                <span className="font-bold font-mono">{rankDisplay[card.rank]}</span>
-                                <span className="text-[0.8em]">{suitIcons[card.suit]}</span>
-                            </div>
-                        </>
-                    )}
+                <div className="w-full h-full opacity-30 flex items-center justify-center">
+                    <div className="w-3/4 h-3/4 border border-indigo-400/50 rounded-sm" />
                 </div>
+            </div>
 
-                {/* Back Face */}
-                <div
-                    className={clsx(
-                        "absolute inset-0 backface-hidden rotate-y-180 bg-indigo-900 border-2 border-indigo-800 flex items-center justify-center overflow-hidden",
-                        size === 'sm' ? 'rounded' : size === 'md' ? 'rounded-lg' : 'rounded-xl'
-                    )}
-                    style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}
-                >
-                    <div className="w-full h-full opacity-20 bg-[url('https://www.transparenttextures.com/patterns/diagmonds-light.png')]"></div>
-                    <div className="absolute inset-2 border border-indigo-400/30 rounded-sm"></div>
-                    <div className="absolute w-8 h-8 rounded-full bg-indigo-500/20 blur-xl"></div>
-                </div>
-            </motion.div>
-        </div>
+            {/* CARD FRONT (visible when rotateY=0) */}
+            <div
+                className={clsx(
+                    "absolute inset-0 flex flex-col justify-between p-1.5 select-none overflow-hidden border",
+                    sizeClasses[size],
+                    isRed ? "text-red-500 border-red-200/50" : "text-slate-900 border-slate-300/50",
+                    isWinner && "ring-2 ring-yellow-400 shadow-lg shadow-yellow-400/30"
+                )}
+                style={{
+                    background: 'linear-gradient(135deg, #ffffff 0%, #fafafa 100%)',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24)',
+                    backfaceVisibility: 'hidden'
+                }}
+            >
+                {card && (
+                    <>
+                        {/* Top Left */}
+                        <div className="flex flex-col items-center leading-none">
+                            <span className="font-bold font-mono">{rankDisplay[card.rank]}</span>
+                            <span className="text-[0.8em]">{suitIcons[card.suit]}</span>
+                        </div>
+
+                        {/* Center Suit */}
+                        <div className="absolute inset-0 flex items-center justify-center opacity-10 pointer-events-none">
+                            <span className="text-[3em]">{suitIcons[card.suit]}</span>
+                        </div>
+
+                        {/* Bottom Right (Rotated) */}
+                        <div className="flex flex-col items-center leading-none rotate-180">
+                            <span className="font-bold font-mono">{rankDisplay[card.rank]}</span>
+                            <span className="text-[0.8em]">{suitIcons[card.suit]}</span>
+                        </div>
+                    </>
+                )}
+            </div>
+        </motion.div>
     );
 };

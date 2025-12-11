@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { clsx } from 'clsx';
-import { ArrowUpCircle, XCircle, CheckCircle, Coins } from 'lucide-react';
+import { ArrowUpCircle, XCircle, CheckCircle, Coins, Loader } from 'lucide-react';
+import { useOrbitStore } from '../../store/useOrbitStore';
 
 interface PokerControlsProps {
     onAction: (action: 'fold' | 'check' | 'call' | 'raise' | 'all_in', amount?: number) => void;
@@ -23,6 +24,7 @@ export const PokerControls: React.FC<PokerControlsProps> = ({
     canCheck
 }) => {
     const [raiseAmount, setRaiseAmount] = useState(minRaise);
+    const isAnimationLocked = useOrbitStore(state => state.isAnimationLocked);
 
     // Reset raise amount when minRaise changes
     useEffect(() => {
@@ -33,6 +35,16 @@ export const PokerControls: React.FC<PokerControlsProps> = ({
         return (
             <div className="h-24 flex items-center justify-center text-slate-500 font-mono text-sm animate-pulse">
                 Waiting for opponents...
+            </div>
+        );
+    }
+
+    // Show animation lockout message
+    if (isAnimationLocked) {
+        return (
+            <div className="h-24 flex items-center justify-center gap-3 text-cyan-400 font-mono text-sm">
+                <Loader className="w-5 h-5 animate-spin" />
+                <span>Animation playing...</span>
             </div>
         );
     }

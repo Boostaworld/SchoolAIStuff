@@ -148,7 +148,7 @@ export const sendChatMessage = async (
 export const AI_MODELS = [
   // Gemini 3.0 Series - Latest and most capable
   {
-    id: 'gemini-3.0-pro-preview',
+    id: 'gemini-3-pro-preview',
     name: 'Gemini 3.0 Pro Preview',
     badge: 'BEST',
     color: 'emerald',

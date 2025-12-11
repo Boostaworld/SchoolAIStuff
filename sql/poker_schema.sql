@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS poker_games (
   
   -- Metadata
   winner_id UUID REFERENCES profiles(id),
+  winner_player_id UUID REFERENCES poker_game_players(id),
   winning_hand JSONB,
   final_pot_amount INTEGER,
   house_rake_amount INTEGER -- 10% of pot

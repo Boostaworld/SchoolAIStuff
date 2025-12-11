@@ -70,6 +70,69 @@
 
 ---
 
+### Poker Game Animations & AI Rate Limiting
+
+**✅ COMPLETED (Dec 11):** Critical Showdown Animation Fixes
+- [x] **Showdown Card Reveal System** (100% COMPLETE):
+  - ✅ Added `reveal_hole_cards` animation type to types.ts
+  - ✅ Implemented showdown detection logic in animationTriggers.ts (uses `current_round === 'showdown'`)
+  - ✅ Created `holeCardRevealVariants` for smooth 3D flip animations
+  - ✅ Refactored PokerCard.tsx with 3D flip animation using rotateY and backfaceVisibility
+  - ✅ Updated PokerTable.tsx card visibility logic to use `current_round === 'showdown'` instead of `status === 'completed'`
+  - ✅ Created RoundTransition.tsx component with countdown timer and winner celebration
+  - ✅ Integrated RoundTransition into PokerTable.tsx with proper state management
+  - ✅ Fixed React setState-during-render error in RoundTransition
+
+**Key Fix:** Cards now properly flip and reveal at showdown at the END OF EACH ROUND (not just end of game).
+
+**✅ COMPLETED (Dec 11):** AI Rate Limiting System
+- [x] **Rate Limiting & Retry Logic** (100% COMPLETE):
+  - ✅ Created AIRequestQueue class with 1.5-second minimum interval between API calls
+  - ✅ Implemented exponential backoff retry logic (2s, 4s, 8s) for 429 rate limit errors
+  - ✅ Wrapped all AI decisions in queue to serialize API requests
+  - ✅ Increased AI turn delays: 2-3 seconds (was 1-2.5s) to further prevent rate limits
+  - ✅ Automatic fallback to basic AI logic when API quota exhausted
+
+**Key Fix:** Multiple AI players no longer overwhelm Gemini API with simultaneous requests. Requests are queued, retried with backoff, and spaced 1.5+ seconds apart.
+
+**✅ COMPLETED (Dec 11):** Minimum Balance Protection
+- [x] **-200 Orbit Points Limit** (100% COMPLETE):
+  - ✅ Added MIN_BALANCE constant (-200) to prevent excessive debt
+  - ✅ Updated createPokerGame to validate balance before deducting buy-in
+  - ✅ Updated joinPokerGame with same validation
+  - ✅ Replaced alert() with toast notifications for better UX
+  - ✅ Clear error messages showing current balance and maximum allowed buy-in
+
+**Key Fix:** Users can no longer bet if their balance would drop below -200 Orbit Points, preventing runaway debt.
+
+**✅ COMPLETED (Dec 11):** Multi-Model AI System
+- [x] **Dynamic Model Selection** (100% COMPLETE):
+  - ✅ Novice difficulty uses: gemini-2.5-flash, gemini-2.5-flash-lite, gemini-2.0-flash-exp (random selection)
+  - ✅ Intermediate difficulty uses: gemini-2.5-pro, gemini-2.5-flash-lite (random selection)
+  - ✅ Expert difficulty uses: gemini-2.5-pro, gemini-2.5-flash (random selection)
+  - ✅ **GOD MODE**: Users with `gemini-3-pro` permission can face Gemini 3 Pro AI
+  - ✅ Increased all rate limits to 5 seconds minimum between requests
+  - ✅ AI turn delays increased to 5-7 seconds (7s for God Mode)
+  - ✅ Added "Ultimate Poker AI" personality for God Mode with advanced GTO concepts
+  - ✅ Model selection logged to console for debugging
+
+**Key Fix:** AI opponents now use a variety of models based on difficulty, providing more diverse gameplay. Special God Mode available for users with Gemini 3 Pro access.
+
+**Previous Progress (Dec 10):**
+- [x] **Phase 1 Foundation - Core Infrastructure** (100% COMPLETE):
+  - ✅ Animation types, constants, variants, triggers
+  - ✅ Zustand store animation state and queue management
+  - ✅ PokerCard enhanced with holographic effects
+- [ ] **Phase 1 Foundation - Components** (67% - PokerCard & RoundTransition done):
+  - Need: DealAnimation improvements, PokerControls lockout
+- [ ] **Phase 2 Community & Chips**: Flop/Turn/River animations, chip movements
+- [ ] **Phase 3 Win & Feedback**: Additional celebration effects, action badges
+- [ ] **Phase 4 Polish**: Performance optimization, mobile, accessibility
+
+**📄 See handoff.md and implementation_plan.md for complete details**
+
+---
+
 ## 🔮 Backlog (From Gold Master Roadmap)
 
 ### Economy System

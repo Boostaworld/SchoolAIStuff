@@ -123,6 +123,7 @@ export interface Message {
   created_at: string;
   edited_at?: string;  // Added for edit tracking
   deleted_at?: string; // Added for soft delete
+  reply_to_id?: string; // For threading/replying
   // Computed properties
   senderUsername?: string;
   senderAvatar?: string;

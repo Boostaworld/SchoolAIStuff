@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Send, Paperclip, AlertTriangle, Signal, Users, Trash2, Eye, EyeOff } from 'lucide-react';
+import { X, Send, Paperclip, AlertTriangle, Signal, Users, Trash2, Eye, EyeOff, Reply } from 'lucide-react';
 import { useOrbitStore } from '../../store/useOrbitStore';
 import { DMChannel } from '../../types';
 import MessageBubble from './MessageBubble';
@@ -22,7 +22,9 @@ export default function CommsPanel() {
     sendMessage,
     setTyping,
     hideChannel,
-    toggleReadReceipts
+    toggleReadReceipts,
+    replyingTo,
+    setReplyingTo
   } = useOrbitStore();
 
   const [inputValue, setInputValue] = useState('');
@@ -70,10 +72,19 @@ export default function CommsPanel() {
     e.preventDefault();
     if (!activeChannelId || (!inputValue.trim() && !selectedFile)) return;
 
-    await sendMessage(activeChannelId, inputValue, selectedFile || undefined);
+    // specific message input lag fix: Optimistically clear input immediately
+    const contentToSend = inputValue;
+    const fileToSend = selectedFile;
+
     setInputValue('');
     setSelectedFile(null);
     setTyping(activeChannelId, false);
+
+    // Pass replyToId if replying
+    const replyToId = replyingTo?.id;
+    setReplyingTo(null); // Clear reply state
+
+    await sendMessage(activeChannelId, contentToSend, fileToSend || undefined, replyToId);
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -430,6 +441,27 @@ export default function CommsPanel() {
               {/* Input */}
               <div className="border-t border-cyan-500/20 bg-slate-900/50 backdrop-blur-xl p-4">
                 <form onSubmit={handleSend} className="space-y-2">
+                  {/* Reply Banner */}
+                  {replyingTo && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="flex items-center gap-2 px-3 py-2 bg-cyan-500/10 border border-cyan-500/30 rounded-lg"
+                    >
+                      <Reply className="w-4 h-4 text-cyan-400" />
+                      <span className="text-cyan-300 text-sm font-mono flex-1 truncate">
+                        Replying to <span className="font-semibold">{replyingTo.senderUsername || 'User'}</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setReplyingTo(null)}
+                        className="text-cyan-400 hover:text-cyan-300 transition-colors"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </motion.div>
+                  )}
+
                   {selectedFile && (
                     <motion.div
                       initial={{ opacity: 0, y: 10 }}
