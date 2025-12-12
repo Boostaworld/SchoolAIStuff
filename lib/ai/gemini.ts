@@ -442,10 +442,17 @@ export interface ChatRequest {
   conversationHistory?: Array<{ role: 'user' | 'model', text: string }>;
 }
 
+export interface GroundingSource {
+  url: string;
+  title?: string;
+}
+
 export interface ChatResponse {
   text: string;
   thinking?: string;
   thinkingUsed?: boolean;
+  urlContextUsed?: boolean;  // True when URL context tool was used
+  sources?: GroundingSource[];  // URLs used for grounding
 }
 
 /**
@@ -518,9 +525,21 @@ export const sendChatMessage = async (request: ChatRequest): Promise<ChatRespons
       request.model.includes('2.0') ||
       request.model.includes('1.5');
 
+    // Check if model supports URL context (Gemini 3.x only)
+    const supportsUrlContext = request.model.includes('gemini-3') || request.model.includes('3.0');
+
+    // Extract URLs from prompt for fallback tracking (streaming API doesn't return grounding metadata)
+    const urlRegex = /(https?:\/\/[^\s]+)/gi;
+    const promptUrls = request.message.match(urlRegex) || [];
+    const hasPromptUrls = promptUrls.length > 0 && supportsUrlContext;
+
+    if (hasPromptUrls) {
+      console.log('[Gemini] Detected URLs in prompt:', promptUrls);
+    }
+
     // For Gemini 3.x: Always enable Google Search + URL Context
     // For Gemini 2.x/1.5: Only enable when explicitly requested via webSearchEnabled
-    if (request.model.includes('gemini-3') || request.model.includes('3.0')) {
+    if (supportsUrlContext) {
       config.tools = [
         { googleSearch: {} },
         { urlContext: {} }
@@ -543,8 +562,17 @@ export const sendChatMessage = async (request: ChatRequest): Promise<ChatRespons
 
     let thoughtSummary = '';
     let mainText = '';
+    let groundingMetadata: any = null;
+    let lastChunk: any = null;
+
+    // Track prompt URLs for fallback source detection
+    const detectedPromptUrls: GroundingSource[] = hasPromptUrls
+      ? promptUrls.map(url => ({ url, title: undefined }))
+      : [];
+
 
     for await (const chunk of stream) {
+      lastChunk = chunk; // Keep track of the last chunk for metadata
       const parts = chunk.candidates?.[0]?.content?.parts || [];
       for (const part of parts) {
         if (part.text) {
@@ -555,16 +583,88 @@ export const sendChatMessage = async (request: ChatRequest): Promise<ChatRespons
           }
         }
       }
+      // Capture grounding metadata from the chunk (it's populated at the end)
+      if (chunk.candidates?.[0]?.groundingMetadata) {
+        groundingMetadata = chunk.candidates[0].groundingMetadata;
+      }
+      // Check for url_context_metadata at candidate level
+      if ((chunk as any).candidates?.[0]?.urlContextMetadata) {
+        console.log('[Gemini] Found urlContextMetadata at candidate:', (chunk as any).candidates[0].urlContextMetadata);
+        groundingMetadata = groundingMetadata || {};
+        groundingMetadata.urlContextMetadata = (chunk as any).candidates[0].urlContextMetadata;
+      }
+      // Check at chunk level
+      if ((chunk as any).urlContextMetadata) {
+        console.log('[Gemini] Found urlContextMetadata at chunk level:', (chunk as any).urlContextMetadata);
+        groundingMetadata = groundingMetadata || {};
+        groundingMetadata.urlContextMetadata = (chunk as any).urlContextMetadata;
+      }
+    }
+
+    // Debug: Log the last chunk structure to see what's available
+    if (lastChunk) {
+      console.log('[Gemini] Last chunk full structure:', JSON.stringify(lastChunk, null, 2).substring(0, 2000));
+      console.log('[Gemini] Last chunk keys:', Object.keys(lastChunk));
+      if (lastChunk.candidates?.[0]) {
+        console.log('[Gemini] Candidate keys:', Object.keys(lastChunk.candidates[0]));
+        // Check specifically for any metadata
+        const candidate = lastChunk.candidates[0] as any;
+        if (candidate.citationMetadata) console.log('[Gemini] citationMetadata:', candidate.citationMetadata);
+        if (candidate.groundingMetadata) console.log('[Gemini] groundingMetadata found in final candidate');
+        if (candidate.urlContextMetadata) console.log('[Gemini] urlContextMetadata found in final candidate');
+      }
     }
 
     if (!mainText) {
       throw new Error("No response from Gemini");
     }
 
+    // Extract sources from grounding metadata
+    let sources: GroundingSource[] | undefined;
+    let urlContextUsed = false;
+
+    // Log the raw grounding metadata for debugging
+    if (groundingMetadata) {
+      console.log('[Gemini] Raw groundingMetadata:', JSON.stringify(groundingMetadata, null, 2));
+    }
+
+    // Check if urlContextMetadata exists (proves URL context was used even without sources list)
+    if (groundingMetadata?.urlContextMetadata) {
+      urlContextUsed = true;
+      // Try to extract URLs from urlContextMetadata
+      const urlMeta = groundingMetadata.urlContextMetadata;
+      if (urlMeta.urlMetadata && Array.isArray(urlMeta.urlMetadata)) {
+        sources = urlMeta.urlMetadata
+          .filter((meta: any) => meta.retrievedUrl || meta.url)
+          .map((meta: any) => ({
+            url: meta.retrievedUrl || meta.url,
+            title: meta.title || undefined
+          }));
+      }
+      console.log('[Gemini] URL Context used via urlContextMetadata, sources:', sources);
+    }
+
+    if (groundingMetadata?.groundingChunks) {
+      sources = groundingMetadata.groundingChunks
+        .filter((chunk: any) => chunk.web?.uri)
+        .map((chunk: any) => ({
+          url: chunk.web.uri,
+          title: chunk.web.title || undefined
+        }));
+      urlContextUsed = sources.length > 0;
+      console.log('[Gemini] URL Context used via groundingChunks, sources:', sources);
+    } else if (groundingMetadata?.webSearchQueries) {
+      // If we have search queries but no chunks, still mark as URL context used
+      urlContextUsed = true;
+      console.log('[Gemini] Web search queries used:', groundingMetadata.webSearchQueries);
+    }
+
     return {
       text: mainText,
       thinking: thoughtSummary || undefined,
-      thinkingUsed: !!config.thinkingConfig
+      thinkingUsed: !!config.thinkingConfig,
+      urlContextUsed,
+      sources
     };
 
   } catch (error: any) {

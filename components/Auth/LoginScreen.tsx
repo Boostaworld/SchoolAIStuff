@@ -42,7 +42,7 @@ export const LoginScreen: React.FC = () => {
   };
 
   return (
-    <div className="relative w-full h-screen flex items-center justify-center overflow-hidden bg-slate-950">
+    <div className="relative w-full min-h-dvh flex items-center justify-center overflow-hidden bg-slate-950" style={{ minHeight: '100dvh' }}>
       <Nebula />
 
       <motion.div

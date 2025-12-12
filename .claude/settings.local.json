@@ -16,7 +16,8 @@
       "WebFetch(domain:ai.google.dev)",
       "Bash(git log:*)",
       "Bash(mkdir:*)",
-      "Bash(ping:*)"
+      "Bash(ping:*)",
+      "Bash(if not exist \"C:\\Users\\kayla\\OneDrive\\Desktop\\SchoolAIStuff\\components\\Announcements\" mkdir \"C:\\Users\\kayla\\OneDrive\\Desktop\\SchoolAIStuff\\components\\Announcements\")"
     ],
     "deny": [],
     "ask": []

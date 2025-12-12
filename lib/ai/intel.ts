@@ -181,6 +181,15 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
         // If model doesn't support thinking, config.thinkingConfig stays undefined
       }
 
+      // ✨ Enable Google Search + URL Context for Gemini 3 Pro
+      if (model === 'gemini-3-pro') {
+        config.tools = [
+          { googleSearch: {} },
+          { urlContext: {} }
+        ];
+        console.log('[Intel] Google Search + URL Context enabled for Gemini 3 Pro');
+      }
+
       const response = await ai.models.generateContent({
         model: modelMap[model] || modelMap.flash,
         config: {

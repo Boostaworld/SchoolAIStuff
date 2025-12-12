@@ -1,0 +1,326 @@
+diff --git a/store/useOrbitStore.ts b/store/useOrbitStore.ts
+index 7059a87..b76810e 100644
+--- a/store/useOrbitStore.ts
++++ b/store/useOrbitStore.ts
+@@ -178,6 +178,7 @@ interface OrbitState {
+   skipCurrentAnimation: () => void;
+   clearAnimationQueue: () => void;
+   performPokerAction: (gameId: string, action: PokerActionType, amount?: number, playerId?: string) => Promise<boolean>;
++  rebuyPokerPlayer: (gameId: string, amount?: number) => Promise<boolean>;
+   adminDeletePokerGame: (gameId: string) => Promise<void>;
+   subscribeToPokerGame: (gameId: string) => void;
+   unsubscribeFromPokerGame: (gameId: string) => void;
+@@ -3037,6 +3038,76 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
+     }
+   },
+ 
++  rebuyPokerPlayer: async (gameId: string, amount?: number) => {
++    const { currentUser, orbitPoints, activePokerGame, updateOrbitPoints } = get();
++    if (!currentUser) return false;
++    if (!activePokerGame || activePokerGame.game.id !== gameId) return false;
++
++    const buyIn = amount ?? activePokerGame.game.buy_in;
++    const MIN_BALANCE = -200;
++    const newBalance = orbitPoints - buyIn;
++
++    if (newBalance < MIN_BALANCE) {
++      console.error('❌ Rebuy denied: insufficient Orbit Points', { balance: orbitPoints, cost: buyIn, min: MIN_BALANCE });
++      return false;
++    }
++
++    try {
++      // Deduct funds
++      const { error: fundError } = await supabase
++        .from('profiles')
++        .update({ orbit_points: newBalance })
++        .eq('id', currentUser.id);
++      if (fundError) {
++        console.error('❌ Rebuy fund update failed:', fundError);
++        return false;
++      }
++      updateOrbitPoints(newBalance);
++
++      // Reset chips and flags for this player
++      const { error: playerError } = await supabase
++        .from('poker_game_players')
++        .update({
++          chips: buyIn,
++          current_bet: 0,
++          is_folded: false,
++          is_all_in: false
++        })
++        .eq('game_id', gameId)
++        .eq('user_id', currentUser.id);
++
++      if (playerError) {
++        console.error('❌ Rebuy player update failed:', playerError);
++        return false;
++      }
++
++      // Optimistic local state update
++      const updatedPlayers = (activePokerGame.players || []).map(p =>
++        p.user_id === currentUser.id
++          ? { ...p, chips: buyIn, current_bet: 0, is_folded: false, is_all_in: false, is_busted: false }
++          : p
++      );
++
++      set({
++        activePokerGame: {
++          ...activePokerGame,
++          players: updatedPlayers
++        }
++      });
++
++      // If the table is waiting and we now have 2+ funded players, restart next hand
++      const activeCount = updatedPlayers.filter(p => (p.chips || 0) > 0).length;
++      if (activeCount >= 2 && activePokerGame.game.status === 'waiting') {
++        await get().startNextHand(gameId);
++      }
++
++      return true;
++    } catch (err) {
++      console.error('❌ Rebuy error:', err);
++      return false;
++    }
++  },
++
+   adminDeletePokerGame: async (gameId: string) => {
+     const { currentUser } = get();
+     if (!currentUser?.is_admin) {
+@@ -3136,36 +3207,97 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
+         return false;
+       }
+ 
++      const currentRound = activePokerGame.game.current_round || 'pre_flop';
++      const bigBlind = activePokerGame.game.big_blind || 0;
++      const activePlayers = activePokerGame.players.filter(p => !p.is_folded);
++      const highestBet = Math.max(...activePlayers.map(p => p.current_bet || 0), 0);
++      const currentBet = player.current_bet || 0;
++      const stack = player.chips;
++
++      // Normalize action to legal alternative if input is inconsistent with state
++      let normalizedAction = action;
++      const minRaiseTotal = Math.max(highestBet + bigBlind, highestBet + 1); // require at least +1 over highest bet
++
++      if (normalizedAction === 'check' && highestBet > currentBet) {
++        normalizedAction = 'call';
++      }
++
++      if (normalizedAction === 'raise') {
++        const targetBetInput = amount ?? minRaiseTotal;
++        const targetBet = Math.max(targetBetInput, minRaiseTotal);
++        if (targetBet <= highestBet) {
++          normalizedAction = 'call';
++        }
++      }
++
++      let wager = 0;
++      let chipsUpdate: Partial<PokerGamePlayer> = {};
++
++      switch (normalizedAction) {
++        case 'fold':
++          chipsUpdate = { is_folded: true };
++          break;
++        case 'check':
++          // No chip movement
++          break;
++        case 'call': {
++          const callCost = Math.max(0, amount ?? (highestBet - currentBet));
++          wager = Math.min(callCost, stack);
++          const newChips = stack - wager;
++          chipsUpdate = {
++            chips: newChips,
++            current_bet: currentBet + wager,
++            is_all_in: newChips <= 0
++          };
++          break;
++        }
++        case 'raise': {
++          // `amount` represents the target total bet for this player
++          const targetBetInput = amount ?? minRaiseTotal;
++          const targetBet = Math.max(targetBetInput, minRaiseTotal);
++          const raiseContribution = Math.max(0, targetBet - currentBet);
++          wager = Math.min(raiseContribution, stack);
++          const newChips = stack - wager;
++          chipsUpdate = {
++            chips: newChips,
++            current_bet: currentBet + wager,
++            is_all_in: newChips <= 0
++          };
++          break;
++        }
++        case 'all_in': {
++          wager = stack;
++          chipsUpdate = {
++            chips: 0,
++            current_bet: currentBet + wager,
++            is_all_in: true
++          };
++          break;
++        }
++      }
++
+       // Insert action
+       const { error } = await supabase
+         .from('poker_actions')
+         .insert({
+           game_id: gameId,
+           player_id: player.id,
+-          action_type: action,
+-          amount: amount || 0,
+-          round: activePokerGame.game.current_round || 'pre_flop'
++          action_type: normalizedAction,
++          amount: wager,
++          round: currentRound
+         });
+ 
+       if (error) throw error;
+ 
+       // UPDATE GAME STATE (Client-side logic for MVP)
+       // 1. Update Player State
+-      let chipsUpdate = {};
+-      if (action === 'fold') chipsUpdate = { is_folded: true };
+-      if (action === 'call' || action === 'raise' || action === 'all_in') {
+-        chipsUpdate = {
+-          chips: player.chips - (amount || 0),
+-          current_bet: (player.current_bet || 0) + (amount || 0),
+-          is_all_in: action === 'all_in'
+-        };
++      if (Object.keys(chipsUpdate).length > 0) {
++        await supabase
++          .from('poker_game_players')
++          .update(chipsUpdate)
++          .eq('id', player.id);
+       }
+ 
+-      await supabase
+-        .from('poker_game_players')
+-        .update(chipsUpdate)
+-        .eq('id', player.id);
+-
+       // OPTIMISTIC UPDATE: Update local state immediately so checkRoundComplete sees the new bet
+       const updatedPlayers = activePokerGame.players.map(p =>
+         p.id === player.id
+@@ -3173,11 +3305,13 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
+           : p
+       );
+ 
++      const newPot = activePokerGame.game.pot_amount + wager;
++
+       const updatedGame = {
+         ...activePokerGame,
+         game: {
+           ...activePokerGame.game,
+-          pot_amount: activePokerGame.game.pot_amount + (amount || 0)
++          pot_amount: newPot
+         },
+         players: updatedPlayers,
+         // Optimistically add action for checkRoundComplete logic
+@@ -3187,9 +3321,9 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
+             id: 'temp-' + Date.now(),
+             game_id: gameId,
+             player_id: player.id,
+-            action_type: action,
+-            amount: amount || 0,
+-            round: activePokerGame.game.current_round || 'pre_flop',
++            action_type: normalizedAction,
++            amount: wager,
++            round: currentRound,
+             created_at: new Date().toISOString()
+           } as PokerAction
+         ]
+@@ -3197,11 +3331,9 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
+ 
+       set({ activePokerGame: updatedGame });
+ 
+-      const potIncrease = amount || 0;
+-
+       // Update Pot and Last Action (Always)
+       await supabase.from('poker_games').update({
+-        pot_amount: activePokerGame.game.pot_amount + potIncrease
++        pot_amount: newPot
+         // last_action cols removed as they don't exist in schema
+       }).eq('id', gameId);
+ 
+@@ -3494,6 +3626,7 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
+ 
+     const { players, game } = activePokerGame;
+     const activePlayers = players.filter(p => !p.is_folded);
++    const actionablePlayers = activePlayers.filter(p => !p.is_all_in);
+ 
+     // If only one player remains (everyone else folded/all-in), round is effectively complete
+     if (activePlayers.length <= 1) {
+@@ -3519,15 +3652,16 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
+     // Actually, in our simple logic, BB needs to "check" if it comes back to them.
+     // So we just enforce everyone must have an action record in this round.
+ 
+-    const allHaveActed = activePlayers.every(p => actors.has(p.id));
++    const allHaveActed = actionablePlayers.every(p => actors.has(p.id));
++    const actedOrLocked = allHaveActed || actionablePlayers.length === 0;
+ 
+-    if (allMatched && allHaveActed) {
+-      console.log('✅ Round Complete Check: TRUE', { round: currentRound, active: activePlayers.length, actors: Array.from(actors) });
++    if (allMatched && actedOrLocked) {
++      console.log('✅ Round Complete Check: TRUE', { round: currentRound, active: activePlayers.length, actors: Array.from(actors), actionable: actionablePlayers.length });
+     } else {
+       // console.log('⏳ Round Complete Check: False', { allMatched, allHaveActed, round: currentRound });
+     }
+ 
+-    return allMatched && allHaveActed;
++    return allMatched && actedOrLocked;
+   },
+ 
+   startNextHand: async (gameId: string) => {
+@@ -3544,10 +3678,25 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
+     const { game, players } = activePokerGame;
+     console.log('👥 startNextHand: All players chips:', players.map(p => ({ name: p.ai_name || p.username, chips: p.chips })));
+ 
+-    const activePlayers = players;
++    const activePlayers = players.filter(p => (p.chips || 0) > 0);
+ 
+     if (activePlayers.length < 2) {
+-      console.log('🏁 Game Over: Not enough players to continue.', { activePlayers: activePlayers.length });
++      console.log('dY?? Waiting for opponents: Not enough funded players to continue.', { activePlayers: activePlayers.length });
++      await supabase.from('poker_games').update({
++        status: 'waiting',
++        current_turn_player_id: null
++      }).eq('id', gameId);
++
++      set({
++        activePokerGame: {
++          ...activePokerGame,
++          game: {
++            ...activePokerGame.game,
++            status: 'waiting',
++            current_turn_player_id: null
++          }
++        }
++      });
+       return;
+     }
+ 
+@@ -3981,8 +4130,9 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
+         .update({ current_bet: 0 })
+         .eq('game_id', game.id);
+ 
+-      // Find first active player for next round (SB position or first non-folded)
+-      const firstPlayer = players.find(p => !p.is_folded && p.position === 1) ||
++      // Find first active player for next round (SB position or first non-folded/non-all-in)
++      const firstPlayer = players.find(p => !p.is_folded && !p.is_all_in && p.position === 1) ||
++        players.find(p => !p.is_folded && !p.is_all_in) ||
+         players.find(p => !p.is_folded);
+ 
+       console.log('🔄 Advancing Round:', {
+@@ -4024,6 +4174,12 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
+           }
+         });
+       }
++
++      // If everyone is all-in (no actionable players), fast-forward to the next stage
++      const hasActionable = players.some(p => !p.is_folded && !p.is_all_in);
++      if (!hasActionable) {
++        setTimeout(() => get().advanceGameStage(gameId), 150);
++      }
+     }
+   }
+ }));

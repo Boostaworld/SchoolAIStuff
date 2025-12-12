@@ -25,6 +25,7 @@ export const PokerControls: React.FC<PokerControlsProps> = ({
 }) => {
     const [raiseAmount, setRaiseAmount] = useState(minRaise);
     const isAnimationLocked = useOrbitStore(state => state.isAnimationLocked);
+    const canRaise = playerChips >= minRaise && playerChips > currentBet;
 
     // Reset raise amount when minRaise changes
     useEffect(() => {
@@ -52,12 +53,12 @@ export const PokerControls: React.FC<PokerControlsProps> = ({
     return (
         <div className="flex flex-col gap-4 p-4 bg-slate-900/80 backdrop-blur-md rounded-xl border border-slate-700 shadow-2xl max-w-2xl mx-auto">
             {/* Betting Slider (only if player has enough chips to raise) */}
-            {playerChips > currentBet && (
+            {canRaise && (
                 <div className="flex items-center gap-4 px-2">
                     <span className="text-xs font-mono text-slate-400 w-12 text-right">{raiseAmount}</span>
                     <input
                         type="range"
-                        min={minRaise}
+                        min={Math.min(minRaise, playerChips)}
                         max={playerChips}
                         step={1}
                         value={raiseAmount}
@@ -91,7 +92,7 @@ export const PokerControls: React.FC<PokerControlsProps> = ({
                 </button>
 
                 {/* Raise Button */}
-                {playerChips > currentBet && (
+                {canRaise && (
                     <button
                         onClick={() => onAction('raise', raiseAmount)}
                         className="flex flex-col items-center justify-center w-20 h-20 rounded-xl bg-slate-800 border border-slate-600 text-cyan-400 hover:bg-cyan-900/20 hover:border-cyan-500/50 transition-all active:scale-95"

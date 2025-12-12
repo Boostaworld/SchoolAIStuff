@@ -1,6 +1,6 @@
-
+﻿
 import { create } from 'zustand';
-import { Task, ChatMessage, UserProfile, IntelDrop, DMChannel, Message, MessageReaction, TypingChallenge, TypingSession, KeyStat, Period } from '../types';
+import { Task, ChatMessage, UserProfile, IntelDrop, DMChannel, Message, MessageReaction, Period } from '../types';
 import { PokerGame, PokerGamePlayer, PokerAction, PokerLobbyGame, AIDifficulty, PokerActionType, PokerAnimation } from '../lib/poker/types';
 import { createDeck, dealCards, evaluateHand, compareHands } from '../lib/poker/PokerEngine';
 import { generateOracleRoast, assessTaskDifficulty } from '../lib/ai/gemini';
@@ -63,11 +63,7 @@ interface OrbitState {
   // DM Replying State
   replyingTo: Message | null;
 
-  // Phase 3: Training State
-  typingChallenges: TypingChallenge[];
-  activeChallenge: TypingChallenge | null;
-  typingHeatmap: Record<string, KeyStat>;
-  recentSessions: TypingSession[];
+
 
   // Phase 6: Schedule State
   schedule: Period[];
@@ -88,6 +84,14 @@ interface OrbitState {
   isAnimationLocked: boolean;
   currentAnimatingAction: string | null;
   currentPokerAnimation: PokerAnimation | null;
+  lastPokerAIReasoning: {
+    playerId: string;
+    name: string;
+    action: PokerActionType;
+    amount: number;
+    reasoning: string;
+    round: string;
+  } | null;
 
   // Initialization
   initialize: () => Promise<void>;
@@ -152,13 +156,7 @@ interface OrbitState {
   dismissPersistentBanner: (bannerId: string) => void;
   setReplyingTo: (message: Message | null) => void;
 
-  // Phase 3: Training Actions
-  fetchChallenges: () => Promise<void>;
-  startChallenge: (challengeId: string) => void;
-  submitSession: (challengeId: string | null, wpm: number, accuracy: number, errorCount: number) => Promise<number>;
-  syncTypingStats: (keyStats: Record<string, { errors: number; presses: number }>) => Promise<void>;
-  fetchTypingHeatmap: () => Promise<void>;
-  fetchRecentSessions: () => Promise<void>;
+
 
   // Phase 6: Schedule Actions
   fetchSchedule: () => Promise<void>;
@@ -171,6 +169,7 @@ interface OrbitState {
   createPokerGame: (buyIn: number, maxPlayers: number, gameType?: 'practice' | 'multiplayer', aiDifficulty?: AIDifficulty) => Promise<{ gameId: string | null; error: string | null }>;
   joinPokerGame: (gameId: string) => Promise<boolean>;
   leavePokerGame: (gameId: string) => Promise<void>;
+  cashOutAndLeave: (gameId: string) => Promise<boolean>;
 
   // Poker Animation Actions
   addPokerAnimation: (animation: PokerAnimation) => void;
@@ -178,6 +177,7 @@ interface OrbitState {
   skipCurrentAnimation: () => void;
   clearAnimationQueue: () => void;
   performPokerAction: (gameId: string, action: PokerActionType, amount?: number, playerId?: string) => Promise<boolean>;
+  rebuyPokerPlayer: (gameId: string, amount?: number) => Promise<boolean>;
   adminDeletePokerGame: (gameId: string) => Promise<void>;
   subscribeToPokerGame: (gameId: string) => void;
   unsubscribeFromPokerGame: (gameId: string) => void;
@@ -204,6 +204,35 @@ interface OrbitState {
   fetchNotifications: () => Promise<void>;
   markNotificationRead: (id: string) => Promise<void>;
   markAllNotificationsRead: () => Promise<void>;
+  markAllNotificationsRead: () => Promise<void>;
+
+  // Announcer System
+  announcements: {
+    list: Announcement[];
+    activeBanner: Announcement | null;
+    pagination: {
+      total: number;
+      limit: number;
+      offset: number;
+      hasMore: boolean;
+    };
+    selectedCategories: Announcement['category'][];
+    isModalOpen: boolean;
+    activeAnnouncementId: string | null;
+    isLoading: boolean;
+    error: string | null;
+    dismissedIds: Set<string>;
+  };
+  fetchAnnouncements: (reset?: boolean) => Promise<void>;
+  loadMoreAnnouncements: () => Promise<void>;
+  fetchActiveBanner: () => Promise<void>;
+  dismissBanner: (id: string) => void;
+  openChangelogModal: (announcementId?: string) => void;
+  closeChangelogModal: () => void;
+  toggleCategory: (category: Announcement['category']) => void;
+  createAnnouncement: (data: CreateAnnouncementRequest) => Promise<Announcement>;
+  updateAnnouncement: (id: string, data: Partial<CreateAnnouncementRequest>) => Promise<Announcement>;
+  deleteAnnouncement: (id: string) => Promise<void>;
 }
 
 export const useOrbitStore = create<OrbitState>((set, get) => ({
@@ -259,11 +288,7 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
   // DM Replying State
   replyingTo: null,
 
-  // Phase 3: Training State
-  typingChallenges: [],
-  activeChallenge: null,
-  typingHeatmap: {},
-  recentSessions: [],
+
 
   // Phase 6: Schedule State
   schedule: [],
@@ -280,6 +305,27 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
   isAnimationLocked: false,
   currentAnimatingAction: null,
   currentPokerAnimation: null,
+  lastPokerAIReasoning: null,
+
+  // Announcer System State
+  announcements: {
+    list: [],
+    activeBanner: null,
+    pagination: {
+      total: 0,
+      limit: 20,
+      offset: 0,
+      hasMore: false
+    },
+    selectedCategories: [],
+    isModalOpen: false,
+    activeAnnouncementId: null,
+    isLoading: false,
+    error: null,
+    dismissedIds: typeof window !== 'undefined'
+      ? new Set(JSON.parse(localStorage.getItem('orbit_dismissed_announcements') || '[]'))
+      : new Set()
+  },
 
   // --- INITIALIZATION & REALTIME ---
   initialize: async () => {
@@ -314,7 +360,7 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
           }
         }
 
-        // Fetch Tasks: Get user's own tasks + public tasks from others
+        // Fetch Tasks: Get user's own active tasks + public tasks from others (limit for performance)
         const { data: tasks } = await supabase
           .from('tasks')
           .select(`
@@ -322,7 +368,8 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
             profiles!tasks_user_id_fkey(username, avatar_url)
           `)
           .or(`user_id.eq.${session.user.id},is_public.eq.true`)
-          .order('created_at', { ascending: true });
+          .order('created_at', { ascending: false })
+          .limit(100);
 
         // Map DB Profile to App Type
         const mappedUser: UserProfile = ensuredProfile ? {
@@ -333,7 +380,6 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
           isAdmin: ensuredProfile.is_admin || false,
           // Expose both camelCase and snake_case admin flags for UI compatibility
           ...(ensuredProfile.is_admin ? { is_admin: ensuredProfile.is_admin } : { is_admin: ensuredProfile.is_admin || false }),
-          max_wpm: ensuredProfile.max_wpm || 0,
           orbit_points: ensuredProfile.orbit_points || 0,
           points: ensuredProfile.orbit_points || 0, // legacy alias used in UI code
           last_active: ensuredProfile.last_active,
@@ -358,11 +404,8 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
         await get().fetchIntelDrops();
         await get().loadOracleHistory();
 
-        // Phase 3: Fetch Social & Training Data
+        // Phase 3: Fetch Social Data
         await get().fetchDMChannels();
-        await get().fetchChallenges();
-        await get().fetchTypingHeatmap();
-        await get().fetchRecentSessions();
 
         // Phase 6: Fetch Schedule
         await get().fetchSchedule();
@@ -1415,7 +1458,7 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     const { currentUser } = get();
     if (!currentUser) return;
 
-    // Fetch public drops + my private drops
+    // Fetch public drops + my private drops (limit to 50 for performance)
     const { data, error } = await supabase
       .from('intel_drops')
       .select(`
@@ -1428,7 +1471,8 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
         )
       `)
       .or(`is_private.eq.false,author_id.eq.${currentUser.id}`)
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .limit(50);
 
     if (error) {
       console.error('Fetch Intel Drops Error:', error);
@@ -1588,25 +1632,18 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     const { currentUser } = get();
     if (!currentUser) return;
 
-    // First, get hidden channels for this user
-    const { data: hiddenChannels } = await supabase
-      .from('user_hidden_channels')
-      .select('channel_id')
-      .eq('user_id', currentUser.id);
-
-    const hiddenChannelIds = new Set(hiddenChannels?.map(h => h.channel_id) || []);
-
-    const { data, error } = await supabase
-      .from('dm_channels')
-      .select(`
-        *,
-        user1:profiles!dm_channels_user1_id_fkey(id, username, avatar_url, max_wpm, orbit_points, tasks_completed, tasks_forfeited, last_active),
-        user2:profiles!dm_channels_user2_id_fkey(id, username, avatar_url, max_wpm, orbit_points, tasks_completed, tasks_forfeited, last_active)
-      `)
-      .or(`user1_id.eq.${currentUser.id},user2_id.eq.${currentUser.id}`)
-      .order('created_at', { ascending: false });
+    // Use optimized SQL function that returns everything in ONE query
+    // This replaces the N+1 pattern (40+ queries -> 1 query)
+    const { data, error } = await supabase.rpc('get_dm_channels_with_meta', {
+      p_user_id: currentUser.id
+    });
 
     if (error) {
+      // Fallback: If the function doesn't exist yet, use legacy method
+      if (error.code === '42883' || error.message?.includes('function')) {
+        console.warn('Optimized DM function not found, using fallback. Run sql/optimize_queries.sql');
+        return await fetchDMChannelsLegacy();
+      }
       if (missingTable(error, 'public.dm_channels')) {
         console.warn('Comms: dm_channels table not found; disabling DM features.');
         set({ dmChannels: [] });
@@ -1616,57 +1653,37 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       return;
     }
 
-    // Calculate unread counts for each channel
-    const channelsWithUnread = await Promise.all(
-      (data || []).map(async (channel: any) => {
-        const otherUserData = channel.user1_id === currentUser.id ? channel.user2 : channel.user1;
-
-        // Count unread messages where sender is NOT current user
-        const { count, error: countError } = await supabase
-          .from('messages')
-          .select('*', { count: 'exact', head: true })
-          .eq('channel_id', channel.id)
-          .eq('read', false)
-          .neq('sender_id', currentUser.id);
-
-        if (countError) {
-          console.error('Error counting unread messages:', countError);
+    // Map the flat RPC result to the expected DMChannel structure
+    const channels = (data || []).map((row: any) => ({
+      id: row.id,
+      user1_id: row.user1_id,
+      user2_id: row.user2_id,
+      created_at: row.created_at,
+      read_receipts_enabled: row.read_receipts_enabled,
+      unreadCount: row.unread_count || 0,
+      lastMessageAt: row.last_message_at,
+      lastMessagePreview: row.last_message_content?.substring(0, 50),
+      otherUser: row.other_user_id ? {
+        id: row.other_user_id,
+        username: row.other_user_username,
+        avatar: row.other_user_avatar,
+        joinedAt: '',
+        orbit_points: row.other_user_orbit_points,
+        last_active: row.other_user_last_active,
+        stats: {
+          tasksCompleted: row.other_user_tasks_completed || 0,
+          tasksForfeited: row.other_user_tasks_forfeited || 0,
+          streakDays: 0
         }
+      } : undefined
+    }));
 
-        return {
-          id: channel.id,
-          user1_id: channel.user1_id,
-          user2_id: channel.user2_id,
-          created_at: channel.created_at,
-          read_receipts_enabled: channel.read_receipts_enabled,
-          unreadCount: count || 0,
-          otherUser: otherUserData ? {
-            id: otherUserData.id,
-            username: otherUserData.username,
-            avatar: otherUserData.avatar_url,
-            joinedAt: '',
-            max_wpm: otherUserData.max_wpm,
-            orbit_points: otherUserData.orbit_points,
-            last_active: otherUserData.last_active,
-            stats: {
-              tasksCompleted: otherUserData.tasks_completed || 0,
-              tasksForfeited: otherUserData.tasks_forfeited || 0,
-              streakDays: 0
-            }
-          } : undefined
-        };
-      })
-    );
-
-    // Filter out hidden channels
-    const visibleChannels = channelsWithUnread.filter(ch => !hiddenChannelIds.has(ch.id));
-
-    set({ dmChannels: visibleChannels });
+    set({ dmChannels: channels });
 
     // Update favicon badge with total unread count
     if (typeof window !== 'undefined') {
       import('../lib/utils/notifications').then(({ updateFaviconBadge, getTotalUnreadCount }) => {
-        const totalUnread = getTotalUnreadCount(channelsWithUnread);
+        const totalUnread = getTotalUnreadCount(channels);
         updateFaviconBadge(totalUnread);
       });
     }
@@ -1715,6 +1732,8 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
   },
 
   fetchMessages: async (channelId: string) => {
+    // Fetch the most recent 100 messages (prevents unbounded growth)
+    // We fetch descending to get the latest, then reverse for display order
     const { data, error } = await supabase
       .from('messages')
       .select(`
@@ -1722,7 +1741,8 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
         profiles:sender_id (username, avatar_url, is_admin, can_customize_ai)
       `)
       .eq('channel_id', channelId)
-      .order('created_at', { ascending: true });
+      .order('created_at', { ascending: false })
+      .limit(100);
 
     if (error) {
       console.error('Fetch Messages Error:', error);
@@ -1737,7 +1757,7 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       senderIsAdmin: msg.profiles?.is_admin || false,
       senderCanCustomizeAI: msg.profiles?.can_customize_ai || false,
       profiles: undefined // Remove nested object
-    }));
+    })).reverse(); // Reverse to show oldest first (we fetched in desc order for limit)
 
     set(state => ({
       messages: { ...state.messages, [channelId]: messagesWithSender }
@@ -1763,8 +1783,20 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
   },
 
   sendMessage: async (channelId: string, content: string, attachmentFile?: File, replyToId?: string) => {
-    const { currentUser } = get();
+    const { currentUser, messages } = get();
     if (!currentUser) return;
+
+    // 🛡️ DEDUPLICATION GUARD 🛡️
+    // Check if the exact same message was sent to this channel in the last 2 seconds
+    const channelMessages = messages[channelId] || [];
+    const lastMsg = channelMessages[channelMessages.length - 1];
+    if (lastMsg &&
+      lastMsg.sender_id === currentUser.id &&
+      lastMsg.content === content &&
+      (new Date().getTime() - new Date(lastMsg.created_at).getTime() < 2000)) {
+      console.warn('Duplicate message prevented by store guard:', content);
+      return;
+    }
 
     // Handle file upload if present
     let attachmentUrl = null;
@@ -2292,165 +2324,6 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
   },
 
 
-  // ============================================
-  // PHASE 3: TRAINING ACTIONS
-  // ============================================
-
-  fetchChallenges: async () => {
-    const { data, error } = await supabase
-      .from('typing_challenges')
-      .select('*')
-      .order('difficulty', { ascending: true });
-
-    if (error) {
-      console.error('Fetch Challenges Error:', error);
-      return;
-    }
-
-    set({ typingChallenges: data || [] });
-  },
-
-  startChallenge: (challengeId: string) => {
-    const challenge = get().typingChallenges.find(c => c.id === challengeId);
-    set({ activeChallenge: challenge || null });
-  },
-
-  submitSession: async (challengeId: string | null, wpm: number, accuracy: number, errorCount: number) => {
-    const { currentUser } = get();
-    if (!currentUser) return;
-
-    // Calculate points earned: (WPM * Accuracy) / 10
-    // This rewards both speed and accuracy
-    const pointsEarned = Math.floor((wpm * accuracy) / 10);
-
-    // Insert session
-    await supabase.from('typing_sessions').insert({
-      user_id: currentUser.id,
-      challenge_id: challengeId,
-      wpm,
-      accuracy,
-      error_count: errorCount
-    });
-
-    // Award points for the race
-    if (pointsEarned > 0) {
-      const currentPoints = currentUser.orbit_points ?? currentUser.points ?? get().orbitPoints;
-      const newPoints = currentPoints + pointsEarned;
-
-      await supabase
-        .from('profiles')
-        .update({ orbit_points: newPoints })
-        .eq('id', currentUser.id);
-
-      set(state => ({
-        currentUser: state.currentUser ? {
-          ...state.currentUser,
-          orbit_points: newPoints,
-          points: newPoints
-        } : null,
-        orbitPoints: newPoints
-      }));
-    }
-
-    // Update max_wpm if this is a new record
-    if (wpm > (currentUser.max_wpm || 0)) {
-      await supabase
-        .from('profiles')
-        .update({ max_wpm: wpm })
-        .eq('id', currentUser.id);
-
-      set(state => ({
-        currentUser: state.currentUser ? {
-          ...state.currentUser,
-          max_wpm: wpm
-        } : null
-      }));
-    }
-
-    // Refresh recent sessions
-    await get().fetchRecentSessions();
-
-    // Return points earned so UI can show it
-    return pointsEarned;
-  },
-
-  syncTypingStats: async (keyStats: Record<string, { errors: number; presses: number }>) => {
-    const { currentUser } = get();
-    if (!currentUser) return;
-
-    // Batch upsert per-key stats
-    const upsertPromises = Object.entries(keyStats).map(([key, stats]) =>
-      supabase.from('typing_stats').upsert({
-        user_id: currentUser.id,
-        key_char: key,
-        error_count: stats.errors,
-        total_presses: stats.presses
-      }, {
-        onConflict: 'user_id,key_char'
-      })
-    );
-
-    await Promise.all(upsertPromises);
-
-    // Update local heatmap
-    const heatmap: Record<string, KeyStat> = {};
-    Object.entries(keyStats).forEach(([key, stats]) => {
-      heatmap[key] = {
-        errors: stats.errors,
-        presses: stats.presses,
-        accuracy: stats.presses > 0 ? ((stats.presses - stats.errors) / stats.presses) * 100 : 100
-      };
-    });
-
-    set({ typingHeatmap: heatmap });
-  },
-
-  fetchTypingHeatmap: async () => {
-    const { currentUser } = get();
-    if (!currentUser) return;
-
-    const { data, error } = await supabase
-      .from('typing_stats')
-      .select('*')
-      .eq('user_id', currentUser.id);
-
-    if (error) {
-      console.error('Fetch Typing Heatmap Error:', error);
-      return;
-    }
-
-    const heatmap: Record<string, KeyStat> = {};
-    (data || []).forEach(stat => {
-      heatmap[stat.key_char] = {
-        errors: stat.error_count,
-        presses: stat.total_presses,
-        accuracy: stat.total_presses > 0
-          ? ((stat.total_presses - stat.error_count) / stat.total_presses) * 100
-          : 100
-      };
-    });
-
-    set({ typingHeatmap: heatmap });
-  },
-
-  fetchRecentSessions: async () => {
-    const { currentUser } = get();
-    if (!currentUser) return;
-
-    const { data, error } = await supabase
-      .from('typing_sessions')
-      .select('*')
-      .eq('user_id', currentUser.id)
-      .order('completed_at', { ascending: false })
-      .limit(10);
-
-    if (error) {
-      console.error('Fetch Recent Sessions Error:', error);
-      return;
-    }
-
-    set({ recentSessions: data || [] });
-  },
 
   // ============================================
   // ECONOMY ACTIONS
@@ -3037,6 +2910,125 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     }
   },
 
+  // Cash out current chips to Orbit Points and leave table
+  cashOutAndLeave: async (gameId) => {
+    const { currentUser, activePokerGame, orbitPoints, updateOrbitPoints } = get();
+    if (!currentUser) return false;
+    if (!activePokerGame || activePokerGame.game.id !== gameId) return false;
+
+    const player = activePokerGame.players.find(p => p.user_id === currentUser.id);
+    if (!player) return false;
+
+    // Payout is whatever chips remain in front of the player (no rebuy profit/loss tracking here)
+    const payout = Math.max(0, player.chips);
+
+    try {
+      // Credit wallet
+      const { error: creditErr } = await supabase
+        .from('profiles')
+        .update({ orbit_points: orbitPoints + payout })
+        .eq('id', currentUser.id);
+      if (creditErr) {
+        console.error('❌ Cash out credit failed:', creditErr);
+        return false;
+      }
+      updateOrbitPoints(orbitPoints + payout);
+
+      // Remove player from table
+      await supabase
+        .from('poker_game_players')
+        .delete()
+        .eq('game_id', gameId)
+        .eq('user_id', currentUser.id);
+
+      await supabase.rpc('decrement_poker_players', { game_id: gameId });
+
+      set({ activePokerGame: null });
+      get().unsubscribeFromPokerGame(gameId);
+
+      console.log('✅ Cash out complete and left game', { gameId, payout });
+      return true;
+    } catch (err) {
+      console.error('❌ Cash out error:', err);
+      return false;
+    }
+  },
+
+  rebuyPokerPlayer: async (gameId: string, amount?: number) => {
+    const { currentUser, orbitPoints, activePokerGame, updateOrbitPoints } = get();
+    if (!currentUser) return false;
+    if (!activePokerGame || activePokerGame.game.id !== gameId) return false;
+    // Prevent mid-hand rebuy to avoid chip reset exploits
+    if (activePokerGame.game.status === 'in_progress') {
+      console.warn('Rebuy blocked: hand in progress');
+      return false;
+    }
+
+    const buyIn = amount ?? activePokerGame.game.buy_in;
+    const MIN_BALANCE = -200;
+    const newBalance = orbitPoints - buyIn;
+
+    if (newBalance < MIN_BALANCE) {
+      console.error('❌ Rebuy denied: insufficient Orbit Points', { balance: orbitPoints, cost: buyIn, min: MIN_BALANCE });
+      return false;
+    }
+
+    try {
+      // Deduct funds
+      const { error: fundError } = await supabase
+        .from('profiles')
+        .update({ orbit_points: newBalance })
+        .eq('id', currentUser.id);
+      if (fundError) {
+        console.error('❌ Rebuy fund update failed:', fundError);
+        return false;
+      }
+      updateOrbitPoints(newBalance);
+
+      // Reset chips and flags for this player
+      const { error: playerError } = await supabase
+        .from('poker_game_players')
+        .update({
+          chips: buyIn,
+          current_bet: 0,
+          is_folded: false,
+          is_all_in: false
+        })
+        .eq('game_id', gameId)
+        .eq('user_id', currentUser.id);
+
+      if (playerError) {
+        console.error('❌ Rebuy player update failed:', playerError);
+        return false;
+      }
+
+      // Optimistic local state update
+      const updatedPlayers = (activePokerGame.players || []).map(p =>
+        p.user_id === currentUser.id
+          ? { ...p, chips: buyIn, current_bet: 0, is_folded: false, is_all_in: false, is_busted: false }
+          : p
+      );
+
+      set({
+        activePokerGame: {
+          ...activePokerGame,
+          players: updatedPlayers
+        }
+      });
+
+      // If the table is waiting and we now have 2+ funded players, restart next hand
+      const activeCount = updatedPlayers.filter(p => (p.chips || 0) > 0).length;
+      if (activeCount >= 2 && activePokerGame.game.status === 'waiting') {
+        await get().startNextHand(gameId);
+      }
+
+      return true;
+    } catch (err) {
+      console.error('❌ Rebuy error:', err);
+      return false;
+    }
+  },
+
   adminDeletePokerGame: async (gameId: string) => {
     const { currentUser } = get();
     if (!currentUser?.is_admin) {
@@ -3113,6 +3105,18 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       useGodMode
     );
 
+    // Store reasoning for UI display
+    set({
+      lastPokerAIReasoning: {
+        playerId: currentPlayer.id,
+        name: currentPlayer.ai_name || currentPlayer.username || 'AI',
+        action: decision.action,
+        amount: decision.amount,
+        reasoning: decision.reasoning || '',
+        round: gameState.currentRound
+      }
+    });
+
     // Execute the decision
     console.log(`🤖 AI ${currentPlayer.ai_name} plays: ${decision.action} ${decision.amount}`);
     await get().performPokerAction(gameId, decision.action, decision.amount, currentPlayer.id);
@@ -3136,35 +3140,108 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
         return false;
       }
 
+      // Hard guard: only the player whose turn it is may act (covers stale state after reconnects)
+      const isPlayerTurn = activePokerGame.game.current_turn_player_id === player.id;
+      if (!isPlayerTurn) {
+        console.warn('⏳ Action ignored because it is not this player turn', {
+          gameId,
+          attemptingPlayerId: player.id,
+          currentTurnPlayerId: activePokerGame.game.current_turn_player_id,
+          action
+        });
+        return false;
+      }
+
+      const currentRound = activePokerGame.game.current_round || 'pre_flop';
+      const bigBlind = activePokerGame.game.big_blind || 0;
+      const activePlayers = activePokerGame.players.filter(p => !p.is_folded);
+      const highestBet = Math.max(...activePlayers.map(p => p.current_bet || 0), 0);
+      const currentBet = player.current_bet || 0;
+      const stack = player.chips;
+
+      // Normalize action to legal alternative if input is inconsistent with state
+      let normalizedAction = action;
+      const minRaiseTotal = Math.max(highestBet + bigBlind, highestBet + 1); // require at least +1 over highest bet
+
+      if (normalizedAction === 'check' && highestBet > currentBet) {
+        normalizedAction = 'call';
+      }
+
+      if (normalizedAction === 'raise') {
+        const targetBetInput = amount ?? minRaiseTotal;
+        const targetBet = Math.max(targetBetInput, minRaiseTotal);
+        if (targetBet <= highestBet) {
+          normalizedAction = 'call';
+        }
+      }
+
+      let wager = 0;
+      let chipsUpdate: Partial<PokerGamePlayer> = {};
+
+      switch (normalizedAction) {
+        case 'fold':
+          chipsUpdate = { is_folded: true };
+          break;
+        case 'check':
+          // No chip movement
+          break;
+        case 'call': {
+          const callCost = Math.max(0, amount ?? (highestBet - currentBet));
+          wager = Math.min(callCost, stack);
+          const newChips = stack - wager;
+          chipsUpdate = {
+            chips: newChips,
+            current_bet: currentBet + wager,
+            is_all_in: newChips <= 0
+          };
+          break;
+        }
+        case 'raise': {
+          // `amount` represents the target total bet for this player
+          const targetBetInput = amount ?? minRaiseTotal;
+          const targetBet = Math.max(targetBetInput, minRaiseTotal);
+          const raiseContribution = Math.max(0, targetBet - currentBet);
+          wager = Math.min(raiseContribution, stack);
+          const newChips = stack - wager;
+          chipsUpdate = {
+            chips: newChips,
+            current_bet: currentBet + wager,
+            is_all_in: newChips <= 0
+          };
+          break;
+        }
+        case 'all_in': {
+          wager = stack;
+          chipsUpdate = {
+            chips: 0,
+            current_bet: currentBet + wager,
+            is_all_in: true
+          };
+          break;
+        }
+      }
+
       // Insert action
       const { error } = await supabase
         .from('poker_actions')
         .insert({
           game_id: gameId,
           player_id: player.id,
-          action_type: action,
-          amount: amount || 0,
-          round: activePokerGame.game.current_round || 'pre_flop'
+          action_type: normalizedAction,
+          amount: wager,
+          round: currentRound
         });
 
       if (error) throw error;
 
       // UPDATE GAME STATE (Client-side logic for MVP)
       // 1. Update Player State
-      let chipsUpdate = {};
-      if (action === 'fold') chipsUpdate = { is_folded: true };
-      if (action === 'call' || action === 'raise' || action === 'all_in') {
-        chipsUpdate = {
-          chips: player.chips - (amount || 0),
-          current_bet: (player.current_bet || 0) + (amount || 0),
-          is_all_in: action === 'all_in'
-        };
+      if (Object.keys(chipsUpdate).length > 0) {
+        await supabase
+          .from('poker_game_players')
+          .update(chipsUpdate)
+          .eq('id', player.id);
       }
-
-      await supabase
-        .from('poker_game_players')
-        .update(chipsUpdate)
-        .eq('id', player.id);
 
       // OPTIMISTIC UPDATE: Update local state immediately so checkRoundComplete sees the new bet
       const updatedPlayers = activePokerGame.players.map(p =>
@@ -3173,11 +3250,13 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
           : p
       );
 
+      const newPot = activePokerGame.game.pot_amount + wager;
+
       const updatedGame = {
         ...activePokerGame,
         game: {
           ...activePokerGame.game,
-          pot_amount: activePokerGame.game.pot_amount + (amount || 0)
+          pot_amount: newPot
         },
         players: updatedPlayers,
         // Optimistically add action for checkRoundComplete logic
@@ -3187,9 +3266,9 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
             id: 'temp-' + Date.now(),
             game_id: gameId,
             player_id: player.id,
-            action_type: action,
-            amount: amount || 0,
-            round: activePokerGame.game.current_round || 'pre_flop',
+            action_type: normalizedAction,
+            amount: wager,
+            round: currentRound,
             created_at: new Date().toISOString()
           } as PokerAction
         ]
@@ -3197,11 +3276,9 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
 
       set({ activePokerGame: updatedGame });
 
-      const potIncrease = amount || 0;
-
       // Update Pot and Last Action (Always)
       await supabase.from('poker_games').update({
-        pot_amount: activePokerGame.game.pot_amount + potIncrease
+        pot_amount: newPot
         // last_action cols removed as they don't exist in schema
       }).eq('id', gameId);
 
@@ -3466,24 +3543,26 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     const { activePokerGame } = get();
     if (!activePokerGame) return null;
 
-    // transform players into sorted array by position
-    const sortedPlayers = [...activePokerGame.players].sort((a, b) => a.position - b.position);
-    const playerCount = sortedPlayers.length;
+    // Sort only the seated players; skip empty seats so turn order doesn’t bounce to gaps
+    const sortedPlayers = [...activePokerGame.players]
+      .filter(p => !p.is_folded && !p.is_all_in) // only actionable
+      .sort((a, b) => a.position - b.position);
 
-    // Find next non-folded player
-    let nextPos = (currentPosition + 1) % activePokerGame.game.max_players;
-    let loops = 0;
+    if (sortedPlayers.length === 0) return null;
 
-    while (loops < activePokerGame.game.max_players) {
-      const playerAtPos = sortedPlayers.find(p => p.position === nextPos);
-      if (playerAtPos && !playerAtPos.is_folded && !playerAtPos.is_all_in) {
-        return playerAtPos.id; // Return Player Row ID
+    const currentIdx = sortedPlayers.findIndex(p => p.position === currentPosition);
+
+    // If current player isn’t in the actionable list (e.g., just folded), start from the first
+    let startIdx = currentIdx === -1 ? 0 : currentIdx;
+
+    for (let i = 1; i <= sortedPlayers.length; i++) {
+      const candidate = sortedPlayers[(startIdx + i) % sortedPlayers.length];
+      if (candidate) {
+        return candidate.id;
       }
-      nextPos = (nextPos + 1) % activePokerGame.game.max_players;
-      loops++;
     }
 
-    return null; // Should not happen unless game over
+    return null; // Should not happen unless everyone is locked
   },
 
 
@@ -3494,6 +3573,7 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
 
     const { players, game } = activePokerGame;
     const activePlayers = players.filter(p => !p.is_folded);
+    const actionablePlayers = activePlayers.filter(p => !p.is_all_in);
 
     // If only one player remains (everyone else folded/all-in), round is effectively complete
     if (activePlayers.length <= 1) {
@@ -3519,15 +3599,16 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     // Actually, in our simple logic, BB needs to "check" if it comes back to them.
     // So we just enforce everyone must have an action record in this round.
 
-    const allHaveActed = activePlayers.every(p => actors.has(p.id));
+    const allHaveActed = actionablePlayers.every(p => actors.has(p.id));
+    const actedOrLocked = allHaveActed || actionablePlayers.length === 0;
 
-    if (allMatched && allHaveActed) {
-      console.log('✅ Round Complete Check: TRUE', { round: currentRound, active: activePlayers.length, actors: Array.from(actors) });
+    if (allMatched && actedOrLocked) {
+      console.log('✅ Round Complete Check: TRUE', { round: currentRound, active: activePlayers.length, actors: Array.from(actors), actionable: actionablePlayers.length });
     } else {
       // console.log('⏳ Round Complete Check: False', { allMatched, allHaveActed, round: currentRound });
     }
 
-    return allMatched && allHaveActed;
+    return allMatched && actedOrLocked;
   },
 
   startNextHand: async (gameId: string) => {
@@ -3544,20 +3625,46 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     const { game, players } = activePokerGame;
     console.log('👥 startNextHand: All players chips:', players.map(p => ({ name: p.ai_name || p.username, chips: p.chips })));
 
-    const activePlayers = players;
+    // Clear previous AI reasoning so new hand shows fresh thoughts only
+    set({ lastPokerAIReasoning: null });
 
-    if (activePlayers.length < 2) {
-      console.log('🏁 Game Over: Not enough players to continue.', { activePlayers: activePlayers.length });
+    // Clear previous hand actions in DB so reconnects don't mis-detect "all players acted"
+    try {
+      await supabase.from('poker_actions').delete().eq('game_id', gameId);
+    } catch (clearErr) {
+      console.error('⚠️ Failed to clear old poker_actions for new hand:', clearErr);
+    }
+
+    // Keep all seats; only players with chips are funded for the next hand
+    const fundedPlayers = players.filter(p => (p.chips || 0) > 0);
+
+    if (fundedPlayers.length < 2) {
+      console.log('dY?? Waiting for opponents: Not enough funded players to continue.', { activePlayers: fundedPlayers.length });
+      await supabase.from('poker_games').update({
+        status: 'waiting',
+        current_turn_player_id: null
+      }).eq('id', gameId);
+
+      set({
+        activePokerGame: {
+          ...activePokerGame,
+          game: {
+            ...activePokerGame.game,
+            status: 'waiting',
+            current_turn_player_id: null
+          }
+        }
+      });
       return;
     }
 
-    console.log('✅ startNextHand: Proceeding with', activePlayers.length, 'active players');
+    console.log('✅ startNextHand: Proceeding with', fundedPlayers.length, 'funded players');
 
     // 1. Rotate Dealer
     // Simple rotation: increment position and wrap around
     // In a real game, you'd skip empty seats, but here we assume players are mostly contiguous or we just use index
     // Let's find the current dealer index in the sorted active players list
-    const sortedPlayers = [...activePlayers].sort((a, b) => a.position - b.position);
+    const sortedPlayers = [...fundedPlayers].sort((a, b) => a.position - b.position);
     const currentDealerIndex = sortedPlayers.findIndex(p => p.position === game.dealer_position);
 
     // Default to 0 if not found, otherwise moves to next player
@@ -3590,12 +3697,27 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     const updates: Promise<any>[] = [];
     let currentDeck = deck;
 
-    // Updates for all players (reset state + deal new cards)
-    const playerUpdates = sortedPlayers.map(p => {
+    // Updates for all players (reset state + deal new cards) while keeping busted seats
+    const playerUpdates = players.map(p => {
+      // If busted, keep them seated but folded/all-in with no cards until they rebuy
+      if ((p.chips || 0) <= 0) {
+        return {
+          id: p.id,
+          hole_cards: [],
+          chips: p.chips || 0,
+          current_bet: 0,
+          is_folded: true,
+          is_all_in: true,
+          game_id: gameId
+        };
+      }
+
       const { cards, remainingDeck } = dealCards(currentDeck, 2);
       currentDeck = remainingDeck;
 
-      let chips = game.buy_in;
+      // Preserve the player's existing stack instead of resetting every hand
+      const startingChips = Math.max(0, p.chips ?? game.buy_in);
+      let chips = startingChips;
       let currentBet = 0;
       let isAllIn = false;
 
@@ -3631,7 +3753,7 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
           hole_cards: pUpdate.hole_cards as any,
           chips: pUpdate.chips,
           current_bet: pUpdate.current_bet,
-          is_folded: false,
+          is_folded: pUpdate.is_folded,
           is_all_in: pUpdate.is_all_in
         }).eq('id', pUpdate.id))
       );
@@ -3673,7 +3795,7 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
 
     // CRITICAL: Optimistic update to sync local state immediately
     // This prevents "Player not found" errors when AI tries to act before subscription fires
-    const updatedPlayers = sortedPlayers.map(p => {
+    const updatedPlayers = players.map(p => {
       const pUpdate = playerUpdates.find(u => u.id === p.id);
       if (!pUpdate) return p;
       return {
@@ -3681,7 +3803,7 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
         hole_cards: pUpdate.hole_cards,
         chips: pUpdate.chips,
         current_bet: pUpdate.current_bet,
-        is_folded: false,
+        is_folded: pUpdate.is_folded,
         is_all_in: pUpdate.is_all_in
       };
     });
@@ -3708,7 +3830,12 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       }
     });
 
-    console.log('🔄 Started next hand. Dealer:', nextDealer.position, 'First action:', firstActionPlayer.ai_name || firstActionPlayer.username);
+    console.log('Started next hand. Dealer:', nextDealer.position, 'First action:', firstActionPlayer.ai_name || firstActionPlayer.username);
+
+    // If the hand opens on an AI seat, trigger its action immediately so the round advances
+    if (firstActionPlayer.is_ai) {
+      setTimeout(() => get().processAITurn(gameId, firstActionPlayer.id), 300);
+    }
   },
 
   advanceGameStage: async (gameId: string) => {
@@ -3981,8 +4108,10 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
         .update({ current_bet: 0 })
         .eq('game_id', game.id);
 
-      // Find first active player for next round (SB position or first non-folded)
-      const firstPlayer = players.find(p => !p.is_folded && p.position === 1) ||
+      // First to act is immediately left of the dealer (small blind), falling back to next available
+      const firstPlayerId = get().getNextActivePlayerId(gameId, game.dealer_position);
+      const firstPlayer = players.find(p => p.id === firstPlayerId) ||
+        players.find(p => !p.is_folded && !p.is_all_in) ||
         players.find(p => !p.is_folded);
 
       console.log('🔄 Advancing Round:', {
@@ -4024,6 +4153,250 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
           }
         });
       }
+
+      // If everyone is all-in (no actionable players), fast-forward to the next stage
+      const hasActionable = players.some(p => !p.is_folded && !p.is_all_in);
+      if (!hasActionable) {
+        setTimeout(() => get().advanceGameStage(gameId), 150);
+      }
     }
+  },
+
+  // ============================================
+  // ANNOUNCEMENTS SYSTEM
+  // ============================================
+
+  fetchAnnouncements: async (reset = false) => {
+    const state = get();
+
+    if (state.announcements.isLoading) return;
+
+    set((s) => ({
+      announcements: {
+        ...s.announcements,
+        isLoading: true,
+        error: null,
+        ...(reset && { offset: 0, list: [] })
+      }
+    }));
+
+    try {
+      const offset = reset ? 0 : state.announcements.pagination.offset;
+      const limit = state.announcements.pagination.limit;
+      const categories = state.announcements.selectedCategories;
+
+      let query = supabase
+        .from('announcements')
+        .select('*', { count: 'exact' })
+        .eq('active', true)
+        .order('is_pinned', { ascending: false })
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1);
+
+      if (categories.length > 0) {
+        query = query.in('category', categories);
+      }
+
+      const { data, error, count } = await query;
+
+      if (error) throw error;
+
+      const announcements = data || [];
+      const total = count || 0;
+
+      set((s) => ({
+        announcements: {
+          ...s.announcements,
+          list: reset ? announcements : [...s.announcements.list, ...announcements],
+          pagination: {
+            ...s.announcements.pagination,
+            total,
+            offset: reset ? announcements.length : s.announcements.pagination.offset + announcements.length,
+            hasMore: (reset ? announcements.length : s.announcements.pagination.offset + announcements.length) < total
+          },
+          isLoading: false
+        }
+      }));
+    } catch (error: any) {
+      console.error('Failed to fetch announcements:', error);
+      set((s) => ({
+        announcements: {
+          ...s.announcements,
+          isLoading: false,
+          error: error.message || 'Failed to load announcements'
+        }
+      }));
+    }
+  },
+
+  loadMoreAnnouncements: async () => {
+    const state = get();
+    if (!state.announcements.pagination.hasMore || state.announcements.isLoading) return;
+    await get().fetchAnnouncements(false);
+  },
+
+  fetchActiveBanner: async () => {
+    try {
+      const { data, error } = await supabase
+        .from('announcements')
+        .select('*')
+        .eq('active', true)
+        .eq('banner_enabled', true)
+        .order('is_pinned', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      const dismissed = get().announcements.dismissedIds;
+      const activeBanner = (data || []).find(ann => !dismissed.has(ann.id)) || null;
+
+      set((s) => ({
+        announcements: {
+          ...s.announcements,
+          activeBanner
+        }
+      }));
+    } catch (error) {
+      console.error('Failed to fetch active banner:', error);
+    }
+  },
+
+  dismissBanner: (id: string) => {
+    set((s) => {
+      const newDismissed = new Set(s.announcements.dismissedIds);
+      newDismissed.add(id);
+
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('orbit_dismissed_announcements', JSON.stringify([...newDismissed]));
+      }
+
+      return {
+        announcements: {
+          ...s.announcements,
+          activeBanner: null,
+          dismissedIds: newDismissed
+        }
+      };
+    });
+  },
+
+  openChangelogModal: (announcementId?: string) => {
+    set((s) => ({
+      announcements: {
+        ...s.announcements,
+        isModalOpen: true,
+        activeAnnouncementId: announcementId || null
+      }
+    }));
+
+    if (get().announcements.list.length === 0) {
+      get().fetchAnnouncements(true);
+    }
+  },
+
+  closeChangelogModal: () => {
+    set((s) => {
+      // Mark all recent announcements as read when closing the modal
+      const newDismissed = new Set(s.announcements.dismissedIds);
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+      // Add all recent announcements to dismissed set
+      s.announcements.list.forEach(a => {
+        const createdAt = new Date(a.created_at);
+        if (createdAt > sevenDaysAgo) {
+          newDismissed.add(a.id);
+        }
+      });
+
+      // Persist to localStorage
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('orbit_dismissed_announcements', JSON.stringify([...newDismissed]));
+      }
+
+      return {
+        announcements: {
+          ...s.announcements,
+          isModalOpen: false,
+          activeAnnouncementId: null,
+          dismissedIds: newDismissed
+        }
+      };
+    });
+  },
+
+  toggleCategory: (category: Announcement['category']) => {
+    set((s) => {
+      const categories = s.announcements.selectedCategories;
+      const newCategories = categories.includes(category)
+        ? categories.filter(c => c !== category)
+        : [...categories, category];
+
+      return {
+        announcements: {
+          ...s.announcements,
+          selectedCategories: newCategories
+        }
+      };
+    });
+
+    get().fetchAnnouncements(true);
+  },
+
+  createAnnouncement: async (data: CreateAnnouncementRequest): Promise<Announcement> => {
+    const { data: announcement, error } = await supabase
+      .from('announcements')
+      .insert({
+        title: data.title,
+        summary: data.summary || null,
+        content: data.content,
+        version: data.version || null,
+        category: data.category,
+        hero_image_url: data.hero_image_url || null,
+        is_pinned: data.is_pinned || false,
+        banner_enabled: data.banner_enabled !== false,
+        theme_id: data.theme_id || 'default',
+        custom_theme: data.custom_theme || null,
+        active: true
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    if (!announcement) throw new Error('Failed to create announcement');
+
+    await get().fetchActiveBanner();
+    await get().fetchAnnouncements(true);
+
+    return announcement;
+  },
+
+  updateAnnouncement: async (id: string, data: Partial<CreateAnnouncementRequest>): Promise<Announcement> => {
+    const { data: announcement, error } = await supabase
+      .from('announcements')
+      .update(data)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    if (!announcement) throw new Error('Failed to update announcement');
+
+    await get().fetchActiveBanner();
+    await get().fetchAnnouncements(true);
+
+    return announcement;
+  },
+
+  deleteAnnouncement: async (id: string): Promise<void> => {
+    const { error } = await supabase
+      .from('announcements')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+
+    await get().fetchActiveBanner();
+    await get().fetchAnnouncements(true);
   }
 }));

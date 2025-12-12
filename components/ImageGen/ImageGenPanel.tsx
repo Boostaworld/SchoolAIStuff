@@ -15,6 +15,7 @@ import {
   updateFolder,
   deleteFolder,
   getImages,
+  getImage,
   saveImage,
   deleteImage as dbDeleteImage,
   moveImageToFolder,
@@ -24,9 +25,30 @@ import {
   type GeneratedImage as DBGeneratedImage
 } from '../../lib/imageStorage';
 
-// Types
+// Types - Gallery images now include storage_url for direct CDN access
+interface GalleryImage {
+  id: string;
+  prompt: string;
+  storage_url?: string;  // Supabase Storage CDN URL
+  aspect_ratio?: string;
+  style?: string;
+  model?: string;
+  is_favorite?: boolean;
+  created_at?: string;
+  folder_id?: string | null;
+}
+
+// Full image with all data (for view/share/edit)
 interface GeneratedImage extends DBGeneratedImage {
   // UI-specific extensions if needed
+}
+
+/**
+ * Helper to get the display URL for an image
+ * Prefers storage_url (CDN), falls back to image_url (deprecated base64)
+ */
+function getDisplayUrl(img: GalleryImage | GeneratedImage): string | undefined {
+  return (img as any).storage_url || (img as any).image_url;
 }
 
 // Constants
@@ -121,7 +143,8 @@ export const ImageGenPanel: React.FC = () => {
   const [webSearch, setWebSearch] = useState(false);
   const [showThinking, setShowThinking] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
+  // Gallery images only contain metadata, NOT the actual base64 image data (for performance)
+  const [generatedImages, setGeneratedImages] = useState<GalleryImage[]>([]);
   const [selectedImage, setSelectedImage] = useState<GeneratedImage | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showThinkingPanel, setShowThinkingPanel] = useState(false);
@@ -177,7 +200,8 @@ export const ImageGenPanel: React.FC = () => {
     setIsLoading(true);
     try {
       const data = await getImages(selectedFolderId || undefined);
-      setGeneratedImages(data);
+      // Cast to GalleryImage since we're only fetching metadata columns
+      setGeneratedImages(data as GalleryImage[]);
     } catch (error: any) {
       console.error('Failed to load images:', error);
       // Silently fail if tables don't exist yet
@@ -411,7 +435,7 @@ export const ImageGenPanel: React.FC = () => {
     setDeleteConfirm({ isOpen: false, type: 'image', id: null });
   };
 
-  const handleToggleFavorite = async (img: GeneratedImage) => {
+  const handleToggleFavorite = async (img: GalleryImage) => {
     try {
       await toggleFavorite(img.id, !img.is_favorite);
       await loadImages();
@@ -1258,10 +1282,12 @@ export const ImageGenPanel: React.FC = () => {
                       transition={{ delay: idx * 0.05 }}
                       className="group relative aspect-square rounded-xl overflow-hidden bg-slate-900 border-2 border-slate-800 hover:border-cyan-500/50 transition-all"
                     >
+                      {/* Image served directly from Supabase Storage CDN */}
                       <img
-                        src={img.image_url}
+                        src={getDisplayUrl(img)}
                         alt={img.prompt}
                         className="w-full h-full object-cover"
+                        loading="lazy"
                       />
 
                       {/* Hover Overlay */}
@@ -1281,7 +1307,15 @@ export const ImageGenPanel: React.FC = () => {
                             <motion.button
                               whileHover={{ scale: 1.05 }}
                               whileTap={{ scale: 0.95 }}
-                              onClick={() => setSelectedImage(img)}
+                              onClick={async () => {
+                                // Fetch full image data before viewing
+                                try {
+                                  const fullImage = await getImage(img.id);
+                                  setSelectedImage(fullImage);
+                                } catch (e) {
+                                  toast.error('Failed to load image');
+                                }
+                              }}
                               className="flex-1 py-2 px-3 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-mono uppercase tracking-wider transition-colors flex items-center justify-center gap-2"
                             >
                               <Eye className="w-3.5 h-3.5" />
@@ -1290,9 +1324,15 @@ export const ImageGenPanel: React.FC = () => {
                             <motion.button
                               whileHover={{ scale: 1.05 }}
                               whileTap={{ scale: 0.95 }}
-                              onClick={() => {
-                                setImageToShare(img);
-                                setShowShareDialog(true);
+                              onClick={async () => {
+                                // Fetch full image data before sharing
+                                try {
+                                  const fullImage = await getImage(img.id);
+                                  setImageToShare(fullImage);
+                                  setShowShareDialog(true);
+                                } catch (e) {
+                                  toast.error('Failed to load image for sharing');
+                                }
                               }}
                               className="py-2 px-3 bg-violet-600 hover:bg-violet-500 text-white rounded-lg transition-colors"
                               title="Share to friend"
@@ -1303,7 +1343,15 @@ export const ImageGenPanel: React.FC = () => {
                             <motion.button
                               whileHover={{ scale: 1.05 }}
                               whileTap={{ scale: 0.95 }}
-                              onClick={() => setSplitEditorImage(img.image_url)}
+                              onClick={() => {
+                                // Use storage URL directly from CDN
+                                const url = getDisplayUrl(img);
+                                if (url) {
+                                  setSplitEditorImage(url);
+                                } else {
+                                  toast.error('Image not available');
+                                }
+                              }}
                               className="py-2 px-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors"
                               title="Edit Image"
                             >

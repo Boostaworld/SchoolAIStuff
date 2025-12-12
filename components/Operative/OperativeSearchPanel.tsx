@@ -15,7 +15,6 @@ interface SearchResult {
   status: string;
   orbit_points?: number;
   last_active?: string;
-  max_wpm?: number;
   is_admin?: boolean;
   can_customize_ai?: boolean;
 }
@@ -46,7 +45,7 @@ export const OperativeSearchPanel: React.FC = () => {
       try {
         const { data, error } = await supabase
           .from('profiles')
-          .select('id, username, avatar_url, bio, tasks_completed, tasks_forfeited, status, orbit_points, last_active, max_wpm, is_admin, can_customize_ai')
+          .select('id, username, avatar_url, bio, tasks_completed, tasks_forfeited, status, orbit_points, last_active, is_admin, can_customize_ai')
           .order('username', { ascending: true })
           .limit(1000); // Reasonable limit for client-side filtering
 

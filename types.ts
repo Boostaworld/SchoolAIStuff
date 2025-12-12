@@ -29,7 +29,7 @@ export interface UserProfile {
   can_customize_ai?: boolean;
   unlocked_models?: string[];
   intel_instructions?: string;
-  max_wpm?: number; // Phase 3: Maximum WPM achieved
+
   orbit_points?: number; // Phase 3: Gamification points
   last_active?: string; // Phase 3: For presence tracking
   stats: {
@@ -109,6 +109,8 @@ export interface DMChannel {
   // Computed properties
   otherUser?: UserProfile;
   lastMessage?: Message;
+  lastMessageAt?: string;
+  lastMessagePreview?: string;
   unreadCount?: number;
 }
 
@@ -141,141 +143,92 @@ export interface MessageReaction {
   username?: string;
 }
 
-// Training/Typing Types
-export interface TypingChallenge {
+export interface Announcement {
   id: string;
   title: string;
-  text_content: string;
-  difficulty: 'Easy' | 'Medium' | 'Hard';
+  summary: string | null;
+  content: string;
+  version: string | null;
+  category: 'update' | 'feature' | 'fix' | 'system' | 'event';
+  active: boolean;
+  hero_image_url: string | null;
+  is_pinned: boolean;
+  banner_enabled: boolean;
+  theme_id: string;
+  custom_theme: any | null; // AnnouncementTheme JSON
   created_at: string;
-  // Enhanced fields
-  category?: string;
-  length_type?: 'Sprint' | 'Medium' | 'Marathon';
-  is_custom?: boolean;
-  is_ai_generated?: boolean;
-  user_id?: string;
-  word_count?: number;
-  char_count?: number;
+  updated_at: string;
 }
 
-export interface TypingSession {
-  id: string;
-  user_id: string;
-  challenge_id: string | null;
-  wpm: number;
-  accuracy: number;
-  error_count: number;
-  completed_at: string;
-}
-
-export interface TypingStats {
-  user_id: string;
-  key_char: string;
-  error_count: number;
-  total_presses: number;
-}
-
-export interface KeyStat {
-  errors: number;
-  presses: number;
-  accuracy: number; // Computed: (presses - errors) / presses * 100
-}
-
-export interface TypingHistory {
-  id: string;
-  user_id: string;
-  challenge_id: string;
-  session_id: string;
-  wpm: number;
-  accuracy: number;
-  error_count: number;
-  time_elapsed: number; // seconds
-  words_data?: Array<{ word: string; correct: boolean; time_ms: number }>;
-  challenge_text: string;
-  challenge_title: string;
-  completed_at: string;
-}
-
-// Racing Types
-export interface TypingRace {
-  id: string;
-  challenge_id: string;
-  host_user_id: string;
-  bot_count: number;
-  bot_wpm_ranges: number[];
-  status: 'waiting' | 'in_progress' | 'completed';
-  started_at?: string;
-  created_at: string;
-}
-
-export interface RaceParticipant {
-  id: string;
-  race_id: string;
-  user_id?: string;
-  is_bot: boolean;
-  bot_name?: string;
-  bot_target_wpm?: number;
-  position?: number;
-  final_wpm?: number;
-  final_accuracy?: number;
-  completion_time?: number; // milliseconds
-  // Computed
-  username?: string;
-  avatar?: string;
-  currentProgress?: number; // 0-100%
-  currentWPM?: number;
-}
-
-export interface ChallengeGenerationRequest {
-  id: string;
-  user_id: string;
-  category: string;
-  difficulty: string;
-  length_type: string;
-  custom_prompt?: string;
-  status: 'pending' | 'generating' | 'completed' | 'failed';
-  generated_challenge_id?: string;
-  error_message?: string;
-  created_at: string;
-  completed_at?: string;
+export interface CreateAnnouncementRequest {
+  title: string;
+  summary?: string;
+  content: string;
+  version?: string;
+  category: Announcement['category'];
+  hero_image_url?: string;
+  is_pinned?: boolean;
+  banner_enabled?: boolean;
+  theme_id?: string;
+  custom_theme?: any; // AnnouncementTheme JSON
 }
 
 // ============================================
-// DUAL-CORE TRAINING TYPES
+// BUG REPORT & SUGGESTION SYSTEM
 // ============================================
 
-export type TrainingMode = 'velocity' | 'academy';
+export type ReportType = 'bug' | 'suggestion';
+export type ReportStatus = 'new' | 'in_progress' | 'need_info' | 'resolved' | 'closed';
 
-export interface RaceBot {
+export interface ReportContext {
+  route: string;
+  full_url: string;
+  user_id: string;
+  username: string;
+  timestamp: string;
+  timezone: string;
+  app_version: string;
+  browser: string;
+  os: string;
+  viewport: string;
+  referrer: string | null;
+  action_trail: Array<{
+    action: 'navigate' | 'click' | 'input' | 'error';
+    target?: string;
+    to?: string;
+    ts: string;
+  }>;
+}
+
+export interface Report {
   id: string;
-  name: string;
-  targetWpm: number;
-  errorRate: number;
-  personality: 'aggressive' | 'steady' | 'cautious';
-  avatarUrl?: string;
+  reporter_id: string | null;
+  report_type: ReportType;
+  user_text: string;
+  attachment_url?: string;
+  attachment_type?: string;
+  context: ReportContext;
+  status: ReportStatus;
+  internal_notes?: string;
+  assigned_admin_id?: string;
+  created_at: string;
+  updated_at: string;
+  resolved_at?: string;
+  // Computed/joined fields
+  reporter_username?: string;
+  reporter_avatar?: string;
+  thread_count?: number;
 }
 
-export interface AcademyDrill {
+export interface ReportThread {
   id: string;
-  userId: string;
-  targetKeys: string[];
-  drillText: string;
-  difficulty: number;
-  generatedAt: string;
-  completed: boolean;
-  finalAccuracy?: number;
-}
-
-export interface EnhancedTypingSession extends TypingSession {
-  mode?: TrainingMode;
-  latencyAvg?: number; // ms between keystrokes
-  rhythmScore?: number; // 0-100
-}
-
-export interface RaceResults {
-  wpm: number;
-  accuracy: number;
-  errorCount: number;
-  placement: number; // 1st, 2nd, 3rd, 4th
-  pointsEarned: number;
+  report_id: string;
+  sender_id: string;
+  is_admin_reply: boolean;
+  content: string;
+  created_at: string;
+  // Computed/joined fields
+  sender_username?: string;
+  sender_avatar?: string;
+  sender_is_admin?: boolean;
 }

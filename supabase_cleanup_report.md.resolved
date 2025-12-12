@@ -1,0 +1,289 @@
+# 🧹 Supabase Infrastructure Cleanup Report
+
+**Scan Date:** 2025-12-11T23:08:20-05:00  
+**Repository:** SchoolAIStuff (Orbit OS)  
+**Files Scanned:** 51 SQL files, 60+ components, full store analysis
+
+---
+
+## Executive Summary
+
+This audit identified **significant unused database resources** primarily related to the **typing/racing training system** that was removed from the codebase. Cleanup will reduce database complexity, free storage, and reduce load on your Supabase project.
+
+| Category | Count | Priority |
+|----------|-------|----------|
+| Unused Tables | 13 | 🔴 HIGH |
+| Unused Columns | 8 | 🟡 MEDIUM |
+| Unused Functions | 3 | 🟢 LOW |
+| Unused Triggers | 3 | 🟢 LOW |
+
+---
+
+## 🎯 Top 5 High-Priority Cleanups
+
+### 1. 🔴 Remove Entire Typing/Racing System (13 Tables)
+
+The typing/racing training feature was removed from the codebase (confirmed in conversation history), but **13 database tables** remain in the schema with zero code references.
+
+#### Affected Tables
+| Table | Confidence | Last Activity Check |
+|-------|------------|---------------------|
+| `typing_challenges` | HIGH | `SELECT count(*) FROM typing_challenges;` |
+| `typing_sessions` | HIGH | `SELECT count(*) FROM typing_sessions;` |
+| `typing_stats` | HIGH | `SELECT count(*) FROM typing_stats;` |
+| `typing_history` | HIGH | `SELECT count(*) FROM typing_history;` |
+| `race_replays` | HIGH | `SELECT count(*) FROM race_replays;` |
+| `typing_races` | HIGH | `SELECT count(*) FROM typing_races;` |
+| `race_participants` | HIGH | `SELECT count(*) FROM race_participants;` |
+| `race_lobbies` | HIGH | `SELECT count(*) FROM race_lobbies;` |
+| `challenge_generation_queue` | HIGH | `SELECT count(*) FROM challenge_generation_queue;` |
+
+#### Verification SQL (Run in Supabase SQL Editor)
+```sql
+-- Check if any tables have data worth preserving
+SELECT 'typing_challenges' as table_name, count(*) as row_count FROM typing_challenges
+UNION ALL SELECT 'typing_sessions', count(*) FROM typing_sessions
+UNION ALL SELECT 'typing_stats', count(*) FROM typing_stats
+UNION ALL SELECT 'typing_history', count(*) FROM typing_history
+UNION ALL SELECT 'race_replays', count(*) FROM race_replays
+UNION ALL SELECT 'typing_races', count(*) FROM typing_races
+UNION ALL SELECT 'race_participants', count(*) FROM race_participants
+UNION ALL SELECT 'race_lobbies', count(*) FROM race_lobbies
+UNION ALL SELECT 'challenge_generation_queue', count(*) FROM challenge_generation_queue;
+
+-- Check total storage used
+SELECT 
+  schemaname || '.' || relname as table_name,
+  pg_size_pretty(pg_table_size(relid)) as table_size,
+  n_live_tup as row_count
+FROM pg_stat_user_tables 
+WHERE relname LIKE 'typing%' OR relname LIKE 'race%' OR relname = 'challenge_generation_queue'
+ORDER BY pg_table_size(relid) DESC;
+```
+
+#### Safe Removal Steps
+```sql
+-- STEP 1: Rename tables (reversible backup)
+ALTER TABLE typing_challenges RENAME TO _deprecated_typing_challenges;
+ALTER TABLE typing_sessions RENAME TO _deprecated_typing_sessions;
+ALTER TABLE typing_stats RENAME TO _deprecated_typing_stats;
+ALTER TABLE typing_history RENAME TO _deprecated_typing_history;
+ALTER TABLE race_replays RENAME TO _deprecated_race_replays;
+ALTER TABLE typing_races RENAME TO _deprecated_typing_races;
+ALTER TABLE race_participants RENAME TO _deprecated_race_participants;
+ALTER TABLE race_lobbies RENAME TO _deprecated_race_lobbies;
+ALTER TABLE challenge_generation_queue RENAME TO _deprecated_challenge_generation_queue;
+
+-- STEP 2: Remove from realtime publication
+ALTER PUBLICATION supabase_realtime DROP TABLE IF EXISTS typing_races;
+ALTER PUBLICATION supabase_realtime DROP TABLE IF EXISTS race_participants;
+
+-- STEP 3: Monitor for 7 days, then drop
+-- DROP TABLE _deprecated_typing_challenges CASCADE;
+-- (repeat for all tables)
+```
+
+**Estimated Impact:** 🟢 Significant - reduces schema complexity by ~25%, frees storage
+
+---
+
+### 2. 🔴 Remove Contracts/Bounty Table
+
+The bounty/contracts feature was designed but never implemented in code. Zero references found.
+
+#### Verification SQL
+```sql
+SELECT count(*) FROM contracts;
+SELECT pg_size_pretty(pg_table_size('contracts'));
+```
+
+#### Safe Removal Steps
+```sql
+-- Rename first
+ALTER TABLE contracts RENAME TO _deprecated_contracts;
+
+-- After 7 days of monitoring
+-- DROP TABLE _deprecated_contracts CASCADE;
+```
+
+**Estimated Impact:** 🟢 LOW - schema cleanup
+
+---
+
+### 3. 🟡 Remove Poker Statistics & History Tables
+
+The poker game is implemented but player statistics tracking and hand history replay features were never wired up.
+
+#### Affected Tables
+| Table | Confidence |
+|-------|------------|
+| `poker_statistics` | HIGH |
+| `poker_hand_history` | HIGH |
+
+#### Verification SQL
+```sql
+SELECT count(*) FROM poker_statistics;
+SELECT count(*) FROM poker_hand_history;
+```
+
+#### Safe Removal Steps
+```sql
+-- Also remove related functions
+DROP FUNCTION IF EXISTS reset_daily_poker_winnings();
+DROP FUNCTION IF EXISTS calculate_poker_winnings(INTEGER, BOOLEAN, VARCHAR, UUID);
+
+-- Rename tables
+ALTER TABLE poker_statistics RENAME TO _deprecated_poker_statistics;
+ALTER TABLE poker_hand_history RENAME TO _deprecated_poker_hand_history;
+```
+
+**Estimated Impact:** 🟢 LOW - schema cleanup, reduces unused indexes
+
+---
+
+### 4. 🟡 Remove Unused Profile Columns
+
+These columns in the `profiles` table have zero code references:
+
+| Column | Confidence | Check |
+|--------|------------|-------|
+| `races_won` | HIGH | `SELECT count(*) FROM profiles WHERE races_won > 0;` |
+| `races_participated` | HIGH | `SELECT count(*) FROM profiles WHERE races_participated > 0;` |
+| `daily_streak` | HIGH | `SELECT count(*) FROM profiles WHERE daily_streak > 0;` |
+| `last_daily_completion` | HIGH | `SELECT count(*) FROM profiles WHERE last_daily_completion IS NOT NULL;` |
+| `intel_queries` | HIGH | `SELECT count(*) FROM profiles WHERE intel_queries > 0;` |
+| `current_theme_id` | HIGH | `SELECT count(*) FROM profiles WHERE current_theme_id IS NOT NULL;` |
+| `active_session_start` | HIGH | `SELECT count(*) FROM profiles WHERE active_session_start IS NOT NULL;` |
+
+#### ⚠️ Special Case: `max_wpm`
+The `max_wpm` column is still referenced in DM channel queries but is never written to (always 0). 
+
+**Before removing**, update code first:
+
+```diff
+// store/useOrbitStore.ts lines 1595-1596 and 1651
+- user1:profiles!dm_channels_user1_id_fkey(id, username, avatar_url, max_wpm, orbit_points, ...)
++ user1:profiles!dm_channels_user1_id_fkey(id, username, avatar_url, orbit_points, ...)
+```
+
+#### Safe Removal Steps
+```sql
+-- AFTER code is updated
+ALTER TABLE profiles DROP COLUMN races_won;
+ALTER TABLE profiles DROP COLUMN races_participated;
+ALTER TABLE profiles DROP COLUMN daily_streak;
+ALTER TABLE profiles DROP COLUMN last_daily_completion;
+ALTER TABLE profiles DROP COLUMN intel_queries;
+ALTER TABLE profiles DROP COLUMN current_theme_id;
+ALTER TABLE profiles DROP COLUMN active_session_start;
+-- After code fix:
+-- ALTER TABLE profiles DROP COLUMN max_wpm;
+```
+
+**Estimated Impact:** 🟢 Reduces profile row size, faster queries
+
+---
+
+### 5. 🟢 Remove user_settings Table
+
+Settings are stored directly on the `profiles` table. The separate `user_settings` table is never accessed.
+
+#### Verification SQL
+```sql
+SELECT count(*) FROM user_settings;
+```
+
+#### Safe Removal Steps
+```sql
+ALTER TABLE user_settings RENAME TO _deprecated_user_settings;
+-- After 7 days:
+-- DROP TABLE _deprecated_user_settings CASCADE;
+```
+
+**Estimated Impact:** 🟢 LOW - removes unused table
+
+---
+
+## ✅ What's Being Used (Keep These)
+
+The following tables ARE actively used and should be retained:
+
+| Category | Tables |
+|----------|--------|
+| **Core** | `profiles`, `tasks` |
+| **Intel** | `intel_drops`, `intel_sessions`, `oracle_chat_history` |
+| **Messaging** | `dm_channels`, `messages`, `message_reactions`, `user_hidden_channels` |
+| **Notifications** | `notifications` |
+| **Images** | `image_folders`, `generated_images` |
+| **Vision** | `vision_sessions` |
+| **Schedule** | `school_schedule` |
+| **Economy** | `shop_items`, `user_inventory`, `vault_files`, `vault_access` |
+| **Poker** | `poker_games`, `poker_game_players`, `poker_actions` |
+
+---
+
+## 🔧 One-Liner Verification Checks
+
+Copy-paste these into the Supabase SQL Editor:
+
+```sql
+-- 1. Get all table sizes sorted by usage
+SELECT 
+  schemaname || '.' || relname as table_name,
+  pg_size_pretty(pg_table_size(relid)) as size,
+  n_live_tup as live_rows,
+  last_autovacuum
+FROM pg_stat_user_tables 
+ORDER BY pg_table_size(relid) DESC;
+
+-- 2. Find tables with no recent activity (potential cleanup targets)
+SELECT relname, last_autovacuum, last_autoanalyze, n_live_tup
+FROM pg_stat_user_tables
+WHERE last_autovacuum IS NULL OR last_autovacuum < NOW() - INTERVAL '30 days'
+ORDER BY n_live_tup DESC;
+
+-- 3. Check all installed extensions
+SELECT extname, extversion FROM pg_extension;
+
+-- 4. List all custom functions
+SELECT proname, prosrc 
+FROM pg_proc 
+WHERE pronamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public');
+
+-- 5. Check realtime publication tables
+SELECT * FROM pg_publication_tables WHERE pubname = 'supabase_realtime';
+
+-- 6. Find orphaned triggers
+SELECT tgname, relname 
+FROM pg_trigger t
+JOIN pg_class c ON t.tgrelid = c.oid
+WHERE NOT tgisinternal;
+```
+
+---
+
+## 📋 Next Steps
+
+1. **Immediate (Today)**
+   - [ ] Run verification queries above to confirm row counts
+   - [ ] Review this report and approve cleanup scope
+
+2. **Phase 1 - Low Risk (This Week)**
+   - [ ] Rename all typing/racing tables to `_deprecated_*`
+   - [ ] Remove typing_races and race_participants from realtime publication
+   - [ ] Drop unused functions (poker helpers, create_contract)
+
+3. **Phase 2 - Medium Risk (After 7 Days)**
+   - [ ] Update code to remove `max_wpm` references
+   - [ ] Drop profile columns
+   - [ ] Drop renamed tables
+
+4. **Ongoing**
+   - [ ] Monitor database size reduction
+   - [ ] Remove deprecated tables after monitoring period
+
+---
+
+## 📄 Full Findings
+
+See [supabase_cleanup_findings.json](file:///C:/Users/kayla/.gemini/antigravity/brain/494fe346-7541-498d-b25d-99938fe4ee1f/supabase_cleanup_findings.json) for complete JSON metadata.

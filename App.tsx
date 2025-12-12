@@ -2,11 +2,13 @@
 import React, { useEffect, useState } from 'react';
 import { Dashboard } from './components/Dashboard/Dashboard';
 import { LoginScreen } from './components/Auth/LoginScreen';
-import { RaceSpectatorView } from './components/Training/RaceSpectatorView';
 import { useOrbitStore } from './store/useOrbitStore';
 import { ToastProvider } from './components/Shared/ToastManager';
 import { MessageToast } from './components/Social/MessageToast';
 import { PersistentMessageBanner } from './components/Social/PersistentMessageBanner';
+import { ErrorBoundary } from './components/Shared/ErrorBoundary';
+import { ThemedAnnouncementBanner } from './components/Announcements/ThemedAnnouncementBanner';
+import { ThemedChangelogModal } from './components/Announcements/ThemedChangelogModal';
 
 function App() {
   const {
@@ -20,17 +22,9 @@ function App() {
     setActiveChannel,
     toggleCommsPanel
   } = useOrbitStore();
-  const [spectatorRaceId, setSpectatorRaceId] = useState<string | null>(null);
 
   useEffect(() => {
     initialize();
-
-    // Check for spectator mode in URL
-    const params = new URLSearchParams(window.location.search);
-    const raceId = params.get('spectate');
-    if (raceId) {
-      setSpectatorRaceId(raceId);
-    }
   }, [initialize]);
 
   if (isAuthLoading) {
@@ -39,21 +33,6 @@ function App() {
         INITIALIZING ORBIT PROTOCOLS...
       </div>
     )
-  }
-
-  // Spectator mode (no auth required)
-  if (spectatorRaceId) {
-    return (
-      <ToastProvider>
-        <RaceSpectatorView
-          raceId={spectatorRaceId}
-          onExit={() => {
-            setSpectatorRaceId(null);
-            window.history.replaceState({}, '', window.location.pathname);
-          }}
-        />
-      </ToastProvider>
-    );
   }
 
   return (
@@ -91,7 +70,17 @@ function App() {
         }}
       />
 
-      {isAuthenticated ? <Dashboard /> : <LoginScreen />}
+      {/* Announcement System */}
+      {isAuthenticated && (
+        <>
+          <ThemedAnnouncementBanner />
+          <ThemedChangelogModal />
+        </>
+      )}
+
+      <ErrorBoundary>
+        {isAuthenticated ? <Dashboard /> : <LoginScreen />}
+      </ErrorBoundary>
     </ToastProvider>
   );
 }

@@ -1,8 +1,8 @@
-// =============================================
+﻿// =============================================
 // POKER AI - Gemini-Powered Decision Making
 // =============================================
 
-import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
+import { GoogleGenAI, HarmCategory, HarmBlockThreshold, Type } from "@google/genai";
 import { PokerGamePlayer, PokerActionType, AIDifficulty } from './types';
 
 // Get API key (same logic as gemini.ts)
@@ -292,7 +292,8 @@ ${aiPlayer.chips > gameState.highestBet ? `- RAISE (min: ${gameState.highestBet 
 ${aiPlayer.chips <= callAmount ? `- ALL-IN (${aiPlayer.chips} chips)` : ''}
 
 DECIDE your action. Return ONLY a JSON object with NO other text, NO explanation:
-{"action": "fold" | "check" | "call" | "raise" | "all_in", "amount": number, "reasoning": "brief"}`;
+{"action": "fold" | "check" | "call" | "raise" | "all_in", "amount": number, "reasoning": "brief"}
+Do NOT include chain-of-thought, analysis, or any text outside the JSON.`;
 
     try {
         // Wrap API call with exponential backoff retry
@@ -302,15 +303,54 @@ DECIDE your action. Return ONLY a JSON object with NO other text, NO explanation
                 contents: [{ role: 'user', parts: [{ text: prompt }] }],
                 config: {
                     responseMimeType: "application/json",
+                    // Enforce a strict schema so the model must return valid JSON
+                    responseSchema: {
+                        type: Type.OBJECT,
+                        properties: {
+                            action: { type: Type.STRING, enum: ['fold', 'check', 'call', 'raise', 'all_in'] },
+                            amount: { type: Type.NUMBER },
+                            reasoning: { type: Type.STRING },
+                        },
+                        required: ['action', 'amount', 'reasoning'],
+                        propertyOrdering: ['action', 'amount', 'reasoning']
+                    },
                     temperature: useGodMode ? 0.1 : difficulty === 'novice' ? 0.8 : difficulty === 'expert' ? 0.2 : 0.5,
-                    maxOutputTokens: 256,
+                    maxOutputTokens: 400,
+                    stopSequences: ['}'] // encourage clean JSON close
                 }
             });
         });
 
-        let text = response.candidates?.[0]?.content?.parts?.[0]?.text;
+        const primaryCandidate = response.candidates?.[0];
+        const finishReason = primaryCandidate?.finishReason;
+        let text = primaryCandidate?.content?.parts?.[0]?.text || (response as any).text?.trim?.();
+        if (!text || (finishReason && finishReason !== 'STOP')) {
+            console.warn('AI response incomplete, retrying with compact prompt.', { finishReason });
+            const compactPrompt = `Texas Hold'em. JSON only. Hole cards: ${holeCardsStr}. Community: ${communityCardsStr}. Round: ${gameState.currentRound}. Pot: ${gameState.potAmount}. Highest bet: ${gameState.highestBet}. Call: ${callAmount}. Stack: ${aiPlayer.chips}. Can check: ${canCheck}. Respond JSON: {"action": "...", "amount": number, "reasoning": "brief"} (no extra text).`;
+            const retry = await ai.models.generateContent({
+                model: selectedModel,
+                contents: [{ role: 'user', parts: [{ text: compactPrompt }] }],
+                config: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: Type.OBJECT,
+                        properties: {
+                            action: { type: Type.STRING, enum: ['fold', 'check', 'call', 'raise', 'all_in'] },
+                            amount: { type: Type.NUMBER },
+                            reasoning: { type: Type.STRING },
+                        },
+                        required: ['action', 'amount', 'reasoning'],
+                        propertyOrdering: ['action', 'amount', 'reasoning']
+                    },
+                    temperature: useGodMode ? 0.1 : difficulty === 'novice' ? 0.8 : difficulty === 'expert' ? 0.2 : 0.5,
+                    maxOutputTokens: 200,
+                    stopSequences: ['}']
+                }
+            });
+            text = retry.candidates?.[0]?.content?.parts?.[0]?.text || (retry as any).text?.trim?.();
+        }
         if (!text) {
-            console.error('❌ Empty AI response, using fallback. Response:', JSON.stringify(response, null, 2));
+            console.error('Empty AI response after retry, using fallback. Response:', JSON.stringify(response, null, 2));
             return makeBasicDecision(aiPlayer, gameState);
         }
 
@@ -318,6 +358,9 @@ DECIDE your action. Return ONLY a JSON object with NO other text, NO explanation
         const jsonMatch = text.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
             text = jsonMatch[0];
+        } else {
+            console.warn('ƒsÿ‹,? AI response lacked JSON, using fallback.', text);
+            return makeBasicDecision(aiPlayer, gameState);
         }
 
         const decision = JSON.parse(text) as AIDecision;
@@ -384,3 +427,9 @@ function makeBasicDecision(aiPlayer: PokerGamePlayer, gameState: PokerGameState)
         return { action: 'fold', amount: 0, reasoning: 'Cannot afford to call.' };
     }
 }
+
+
+
+
+
+

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ImageGenPanel } from '../ImageGen/ImageGenPanel';
 
 // ... existing imports ...
@@ -11,80 +11,50 @@ import { IntelPanel } from '../Intel/IntelPanel';
 import { OperativeSearchPanel } from '../Operative/OperativeSearchPanel';
 import { EditIdentityModal } from '../Registry/EditIdentityModal';
 import { CreateActionModal } from './CreateActionModal';
-import { LayoutGrid, Database, Users, Bell, LogOut, Edit3, Plus, MessageSquare, Map, Zap, Flag, Coins, Shield, Menu, X, Sparkles, Microscope, Briefcase, Clock, Gamepad2 } from 'lucide-react';
+import { Tooltip } from '../Shared/Tooltip';
+import { LayoutGrid, Database, Users, Bell, LogOut, Edit3, Plus, MessageSquare, Map, Zap, Flag, Coins, Shield, Menu, X, Sparkles, Microscope, Briefcase, Clock, Gamepad2, Headphones } from 'lucide-react';
 import clsx from 'clsx';
 import { useOrbitStore } from '../../store/useOrbitStore';
 import { AnimatePresence, motion } from 'framer-motion';
 import CommsPanel from '../Social/CommsPanel';
 import ConstellationMap from '../Social/ConstellationMap';
 import UnreadDMBanner from '../Social/UnreadDMBanner';
-import { TypingTerminal } from '../Training/TypingTerminal';
-import { TypingHeatmap } from '../Training/TypingHeatmap';
-import EnhancedChallengeSelector from '../Training/EnhancedChallengeSelector';
-import { CategorySelector } from '../Training/CategorySelector';
+
 import { BlackMarket } from '../Economy/BlackMarket';
 import { NotificationTray } from '../Notifications/NotificationTray';
+import { ChangelogButton } from '../Announcements/ChangelogButton';
 import { PassiveMiner } from '../Economy/PassiveMiner';
 import { TheVault } from '../Economy/TheVault';
 import { GodModePanel } from '../Admin/GodModePanel';
 import { UnifiedResearchLab } from '../Research/UnifiedResearchLab';
 import CommsPage from '../Social/CommsPage';
+import { SupportInbox } from '../Social/SupportInbox';
 import { ScheduleTimer } from '../Schedule/ScheduleTimer';
 import { ScheduleView } from '../Schedule/ScheduleView';
 import { GamesHub } from '../Games/GamesHub';
 import { isWithinPeriod } from '../../lib/utils/schedule';
+import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts';
+import { KeyboardShortcutsModal } from '../Shared/KeyboardShortcutsModal';
+import { logNavigate } from '../../lib/utils/actionTrail';
+import { ReportPill } from '../Shared/ReportPill';
 
-import RacingTerminal from '../Training/RacingTerminal';
-import { TypingChallenge } from '../../types';
-import { useToast } from '../Shared/ToastManager';
-import { CoinAnimation } from '../Shared/CoinAnimation';
-import { WRITING_FALLBACK_CHALLENGES } from '../Training/writingFallbacks';
 
-type ViewState = 'dashboard' | 'registry' | 'notifications' | 'comms' | 'constellation' | 'training' | 'race' | 'economy' | 'research' | 'admin' | 'marketplace' | 'schedule' | 'games' | 'imagegen';
 
-const defaultRaceChallenge: TypingChallenge = {
-  id: 'race-demo',
-  title: 'Orbit Sprint',
-  text_content: 'The swift fox jumps over starlit dunes while engines hum and neon trails streak across the horizon.',
-  category: 'Speed Training',
-  difficulty: 'Medium',
-  length_type: 'Sprint',
-  created_at: new Date().toISOString()
-};
+type ViewState = 'dashboard' | 'registry' | 'notifications' | 'comms' | 'support' | 'constellation' | 'economy' | 'research' | 'admin' | 'marketplace' | 'schedule' | 'games' | 'imagegen';
 
 export const Dashboard: React.FC = () => {
-  const toast = useToast();
   const [activeView, setActiveView] = useState<ViewState>('dashboard');
   const [showEditModal, setShowEditModal] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
   const [allUsers, setAllUsers] = useState<any[]>([]);
-  const [activeRaceChallenge, setActiveRaceChallenge] = useState<TypingChallenge | null>(null);
-  const [raceResults, setRaceResults] = useState<{ position: number; wpm: number; accuracy: number; time: number } | null>(null);
-  const [botRanges, setBotRanges] = useState<number[]>([35, 55, 75]);
-  const [raceStats, setRaceStats] = useState({ avgWPM: 0, avgAccuracy: 0, maxWPM: 0, raceCount: 0 });
-
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [raceCategory, setRaceCategory] = useState<'code' | 'prose'>('prose');
-  const [trainingCategory, setTrainingCategory] = useState<'code' | 'prose'>('prose');
-  const [activeCoinAnimation, setActiveCoinAnimation] = useState<{
-    amount: number;
-    startX: number;
-    startY: number;
-    endX: number;
-    endY: number;
-  } | null>(null);
-  const [localTrainingChallenge, setLocalTrainingChallenge] = useState<TypingChallenge | null>(null);
-  const [generatedArticles, setGeneratedArticles] = useState<TypingChallenge[]>([]);
-  const [isGenerating, setIsGenerating] = useState(false);
+  const headerRef = useRef<HTMLDivElement>(null);
   const {
     currentUser,
     orbitPoints,
     logout,
     commsPanelOpen,
-    typingChallenges,
-    activeChallenge,
-    startChallenge,
-    fetchChallenges,
     notifications,
     unreadCount,
     markNotificationRead,
@@ -96,18 +66,33 @@ export const Dashboard: React.FC = () => {
   } = useOrbitStore();
   const isAdminUser = currentUser?.isAdmin;
 
+  // Measure HUD height and expose as CSS variable for downstream layouts
+  useEffect(() => {
+    const updateHudHeight = () => {
+      if (headerRef.current) {
+        const h = headerRef.current.offsetHeight;
+        document.documentElement.style.setProperty('--orbit-hud-height', `${h}px`);
+      }
+    };
+    updateHudHeight();
+    window.addEventListener('resize', updateHudHeight);
+    return () => window.removeEventListener('resize', updateHudHeight);
+  }, []);
+
   // Hash-based navigation for shareable tabs (comms, research, intel)
   useEffect(() => {
     if (typeof window === 'undefined') return;
+
     const syncFromHash = () => {
       const hash = window.location.hash.slice(1); // Remove #
       const [view, param] = hash.split('/');
       // shareableTabs = views that support deep linking (e.g. #comms/123, #games/poker_game=123)
-      const shareableTabs: ViewState[] = ['comms', 'research', 'imagegen', 'games'];
+      const shareableTabs: ViewState[] = ['comms', 'support', 'research', 'imagegen', 'games'];
 
       if (view && shareableTabs.includes(view as ViewState)) {
         setActiveView(view as ViewState);
-
+        // Log navigation for action trail (bug report context)
+        logNavigate(view);
 
         // Handle deep linking for comms
         if (view === 'comms' && param) {
@@ -131,7 +116,7 @@ export const Dashboard: React.FC = () => {
   // Update hash when activeView changes (for shareable tabs only)
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const shareableTabs: ViewState[] = ['comms', 'research', 'imagegen', 'games'];
+    const shareableTabs: ViewState[] = ['comms', 'support', 'research', 'imagegen', 'games'];
 
     if (shareableTabs.includes(activeView)) {
       if (activeView === 'comms') {
@@ -171,118 +156,17 @@ export const Dashboard: React.FC = () => {
       window.location.hash = 'comms';
     }
   }, [activeChannelId, activeView]);
-  const addCounts = React.useCallback((challenge: TypingChallenge) => {
-    const wordCount = challenge.text_content.trim().split(/\s+/).length;
-    return {
-      ...challenge,
-      word_count: wordCount,
-      char_count: challenge.text_content.length
-    };
-  }, []);
-  const normalizedFallbackChallenges = React.useMemo(() => WRITING_FALLBACK_CHALLENGES.map(addCounts), [addCounts]);
-  const normalizedStoreChallenges = React.useMemo(() => typingChallenges.map(addCounts), [typingChallenges, addCounts]);
-  const trainingCategoriesPriority = React.useMemo(
-    () => ['Science', 'ELA', 'Reading', 'Literature', 'History', 'Health', 'Economics', 'Technology', 'Article', 'Creative'],
-    []
-  );
-  const trainingChallenges = React.useMemo(() => {
-    const proseCount = normalizedStoreChallenges.filter(ch =>
-      trainingCategoriesPriority.includes((ch.category || '').trim())
-    ).length;
-    const shouldPadWithProse = proseCount < 4;
-    const merged = shouldPadWithProse
-      ? [...normalizedStoreChallenges, ...normalizedFallbackChallenges, ...generatedArticles]
-      : [...normalizedStoreChallenges, ...generatedArticles];
-    const seen = new Set<string>();
-    return merged.filter(challenge => {
-      const key = `${challenge.title}-${challenge.category}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  }, [normalizedFallbackChallenges, normalizedStoreChallenges, trainingCategoriesPriority, generatedArticles]);
-
-  // Filter training challenges by selected category
-  const filteredTrainingChallenges = React.useMemo(() => {
-    const codeCategories = ['Programming'];
-    const proseCategories = [
-      'Science',
-      'ELA',
-      'Reading',
-      'Literature',
-      'History',
-      'Health',
-      'Economics',
-      'Technology',
-      'Article',
-      'Creative'
-    ];
-
-    return trainingChallenges.filter(challenge => {
-      if (trainingCategory === 'code') {
-        return codeCategories.includes(challenge.category || '');
-      } else {
-        return proseCategories.includes(challenge.category || '');
-      }
-    });
-  }, [trainingChallenges, trainingCategory]);
-
-  const activeTrainingChallenge = activeChallenge || localTrainingChallenge;
-
-  const handleTrainingSelect = React.useCallback((challengeId: string) => {
-    const chosen = filteredTrainingChallenges.find(ch => ch.id === challengeId);
-    if (!chosen) return;
-
-    const existsInStore = typingChallenges.some(ch => ch.id === challengeId);
-    if (existsInStore) {
-      startChallenge(challengeId);
-      setLocalTrainingChallenge(null);
-    } else {
-      setLocalTrainingChallenge(chosen);
-    }
-  }, [startChallenge, filteredTrainingChallenges, typingChallenges]);
-
-  const handleGenerateArticles = React.useCallback(async () => {
-    setIsGenerating(true);
-    try {
-      const { generateMultipleArticleExcerpts } = await import('../../lib/ai/gemini');
-      const articles = await generateMultipleArticleExcerpts(5);
-
-      const challenges: TypingChallenge[] = articles.map((article, idx) => ({
-        id: `generated-${Date.now()}-${idx}`,
-        title: article.title,
-        text_content: article.excerpt,
-        category: article.category,
-        difficulty: article.difficulty,
-        length_type: article.excerpt.split(/\s+/).length < 50 ? 'Sprint' : 'Medium',
-        created_at: new Date().toISOString(),
-        is_custom: true,
-        word_count: article.excerpt.split(/\s+/).length,
-        char_count: article.excerpt.length,
-      }));
-
-      setGeneratedArticles(challenges);
-      toast.success(`Generated ${challenges.length} fresh article excerpts!`, {
-        description: 'Topics: ' + challenges.map(c => c.category).join(', '),
-        duration: 5000,
-      });
-    } catch (error: any) {
-      console.error('Error generating articles:', error);
-      toast.error('Failed to generate articles', {
-        description: error.message || 'Please try again',
-        duration: 5000,
-      });
-    } finally {
-      setIsGenerating(false);
-    }
-  }, [toast]);
-
   // Fetch users for constellation map
   React.useEffect(() => {
     const fetchUsers = async () => {
       try {
         const { supabase } = await import('../../lib/supabase');
-        const { data, error } = await supabase.from('profiles').select('*');
+        // Optimized fetch: Get top 200 active users (by points) for the map instead of everyone
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('id, username, avatar_url, orbit_points, tasks_completed, tasks_forfeited, is_admin, can_customize_ai')
+          .order('orbit_points', { ascending: false })
+          .limit(200);
 
         if (error) {
           console.error('❌ Constellation Map - Failed to fetch profiles:', error);
@@ -296,8 +180,6 @@ export const Dashboard: React.FC = () => {
             id: p.id,
             username: p.username,
             avatar: p.avatar_url,
-            joinedAt: p.created_at,
-            max_wpm: p.max_wpm,
             orbit_points: p.orbit_points,
             stats: {
               tasksCompleted: p.tasks_completed || 0,
@@ -315,57 +197,31 @@ export const Dashboard: React.FC = () => {
     fetchUsers();
   }, []);
 
-  // Fetch race stats for stats display
-  const loadRaceStats = React.useCallback(async () => {
-    if (!currentUser?.id) return;
+  // Keyboard Shortcuts
+  const { toggleCommsPanel } = useOrbitStore();
+  useKeyboardShortcuts([
+    // Navigation shortcuts (Cmd/Ctrl + 1-9)
+    { key: '1', cmd: true, callback: () => setActiveView('dashboard'), description: 'Go to Dashboard', category: 'Navigation' },
+    { key: '2', cmd: true, callback: () => setActiveView('marketplace'), description: 'Go to Marketplace', category: 'Navigation' },
+    { key: '3', cmd: true, callback: () => setActiveView('schedule'), description: 'Go to Schedule', category: 'Navigation' },
+    { key: '4', cmd: true, callback: () => setActiveView('registry'), description: 'Go to User Directory', category: 'Navigation' },
+    { key: '5', cmd: true, callback: () => setActiveView('constellation'), description: 'Go to Online Users', category: 'Navigation' },
+    { key: '6', cmd: true, callback: () => setActiveView('comms'), description: 'Go to Messages', category: 'Navigation' },
+    { key: '7', cmd: true, callback: () => setActiveView('research'), description: 'Go to AI Assistant', category: 'Navigation' },
+    { key: '8', cmd: true, callback: () => setActiveView('games'), description: 'Go to Games', category: 'Navigation' },
+    { key: '9', cmd: true, callback: () => setActiveView('imagegen'), description: 'Go to AI Images', category: 'Navigation' },
 
-    try {
-      const { supabase } = await import('../../lib/supabase');
-      const { data, error } = await supabase
-        .from('typing_sessions')
-        .select('wpm, accuracy, completed_at')
-        .eq('user_id', currentUser.id)
-        .order('completed_at', { ascending: false });
+    // Action shortcuts
+    { key: 'n', cmd: true, callback: () => setShowCreateModal(true), description: 'Create New Task', category: 'Actions' },
+    { key: 'm', cmd: true, callback: () => toggleCommsPanel(), description: 'Toggle Messages Panel', category: 'Actions' },
 
-      if (error) {
-        console.error('Failed to fetch race stats:', error);
-        return;
-      }
-
-      if (data && data.length > 0) {
-        const totalWPM = data.reduce((sum, s) => sum + (s.wpm || 0), 0);
-        const totalAccuracy = data.reduce((sum, s) => sum + (s.accuracy || 0), 0);
-        const maxWPM = Math.max(...data.map(s => s.wpm || 0));
-
-        setRaceStats({
-          avgWPM: Math.round(totalWPM / data.length),
-          avgAccuracy: Math.round(totalAccuracy / data.length),
-          maxWPM: maxWPM,
-          raceCount: data.length
-        });
-      } else {
-        setRaceStats({ avgWPM: 0, avgAccuracy: 0, maxWPM: 0, raceCount: 0 });
-      }
-    } catch (err) {
-      console.error('Error fetching race stats:', err);
-    }
-  }, [currentUser?.id]);
-
-  React.useEffect(() => {
-    loadRaceStats();
-  }, [loadRaceStats]);
-
-
-
-  // Fetch challenges on mount
-  React.useEffect(() => {
-    if (typingChallenges.length === 0) {
-      fetchChallenges();
-    }
-  }, [typingChallenges.length, fetchChallenges]);
+    // Help shortcuts
+    { key: '/', cmd: true, callback: () => setShowKeyboardShortcuts(true), description: 'Show Keyboard Shortcuts', category: 'Help' },
+    { key: '?', shift: true, callback: () => setShowKeyboardShortcuts(true), description: 'Show Keyboard Shortcuts', category: 'Help' },
+  ]);
 
   return (
-    <div className="relative w-full h-screen flex">
+    <div className="relative w-full min-h-dvh flex" style={{ minHeight: '100dvh' }}>
       <Nebula />
 
       {/* Sidebar - Hidden on desktop during race, but accessible via mobile hamburger */}
@@ -383,7 +239,7 @@ export const Dashboard: React.FC = () => {
 
         {/* Sidebar */}
         <aside className={clsx(
-          "fixed lg:relative h-full border-r border-slate-800 bg-slate-950/95 backdrop-blur-md z-40 flex flex-col items-center py-6 gap-6 transition-all duration-300",
+          "fixed lg:relative min-h-screen border-r border-slate-800 bg-slate-950/95 backdrop-blur-md z-40 flex flex-col items-center py-6 gap-6 transition-all duration-300",
           "w-64 lg:w-20",
           // On mobile: always toggleable via hamburger. On desktop: hide during race
           activeView === 'race'
@@ -404,259 +260,290 @@ export const Dashboard: React.FC = () => {
 
           <nav className="flex-1 flex flex-col gap-4 w-full items-center mt-8 px-4 lg:px-0">
             {/* DEPLOY BUTTON - HIGH CONTRAST */}
-            <motion.button
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={() => {
-                setShowCreateModal(true);
-                setIsSidebarOpen(false);
-              }}
-              className="w-full lg:w-12 lg:h-12 mb-6 rounded-xl bg-cyan-500 text-slate-950 shadow-[0_0_20px_rgba(6,182,212,0.6)] flex items-center justify-center lg:justify-center gap-3 lg:gap-0 py-3 lg:py-0 relative group"
-              title="DEPLOY SYSTEM"
-            >
-              <div className="absolute inset-0 bg-white opacity-0 group-hover:opacity-20 rounded-xl transition-opacity" />
-              <Plus className="w-7 h-7 stroke-[3]" />
-              <span className="lg:hidden text-sm font-mono font-bold">DEPLOY SYSTEM</span>
-              <span className="hidden lg:block absolute -bottom-1 w-1 h-1 bg-white rounded-full" />
-            </motion.button>
+            <Tooltip content="Create New Task" position="right">
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => {
+                  setShowCreateModal(true);
+                  setIsSidebarOpen(false);
+                }}
+                className="w-full lg:w-12 lg:h-12 mb-6 rounded-xl bg-cyan-500 text-slate-950 shadow-[0_0_20px_rgba(6,182,212,0.6)] flex items-center justify-center lg:justify-center gap-3 lg:gap-0 py-3 lg:py-0 relative group"
+              >
+                <div className="absolute inset-0 bg-white opacity-0 group-hover:opacity-20 rounded-xl transition-opacity" />
+                <Plus className="w-7 h-7 stroke-[3]" />
+                <span className="lg:hidden text-sm font-mono font-bold">CREATE NEW</span>
+                <span className="hidden lg:block absolute -bottom-1 w-1 h-1 bg-white rounded-full" />
+              </motion.button>
+            </Tooltip>
 
-            <button
-              onClick={() => {
-                setActiveView('dashboard');
-                setIsSidebarOpen(false);
-              }}
-              className={clsx(
-                "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 flex items-center gap-3 lg:justify-center",
-                activeView === 'dashboard'
-                  ? "bg-slate-800 text-violet-400 border-slate-700 shadow-lg shadow-violet-900/20"
-                  : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
-              )}
-              title="Command Dashboard"
-            >
-              <LayoutGrid className="w-5 h-5 flex-shrink-0" />
-              <span className="lg:hidden text-sm font-mono">Dashboard</span>
-            </button>
+            {/* CORE SECTION */}
+            <div className="hidden lg:block w-full h-px bg-gradient-to-r from-transparent via-cyan-500/20 to-transparent mb-2" />
 
-            <button
-              onClick={() => {
-                setActiveView('marketplace');
-                setIsSidebarOpen(false);
-              }}
-              className={clsx(
-                "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 flex items-center gap-3 lg:justify-center",
-                activeView === 'marketplace'
-                  ? "bg-slate-800 text-amber-400 border-slate-700 shadow-lg shadow-amber-900/20"
-                  : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
-              )}
-              title="Public Contracts"
-            >
-              <Briefcase className="w-5 h-5 flex-shrink-0" />
-              <span className="lg:hidden text-sm font-mono">Marketplace</span>
-            </button>
-
-            <button
-              onClick={() => {
-                setActiveView('schedule');
-                setIsSidebarOpen(false);
-              }}
-              className={clsx(
-                "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 flex items-center gap-3 lg:justify-center",
-                activeView === 'schedule'
-                  ? "bg-slate-800 text-purple-400 border-slate-700 shadow-lg shadow-purple-900/20"
-                  : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
-              )}
-              title="Schedule"
-            >
-              <Clock className="w-5 h-5 flex-shrink-0" />
-              <span className="lg:hidden text-sm font-mono">Schedule</span>
-            </button>
-
-            {/* Intel tab removed - consolidated into ResearchLab */}
-
-            <button
-              onClick={() => {
-                setActiveView('registry');
-                setIsSidebarOpen(false);
-              }}
-              className={clsx(
-                "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 flex items-center gap-3 lg:justify-center",
-                activeView === 'registry'
-                  ? "bg-slate-800 text-cyan-400 border-slate-700 shadow-lg shadow-cyan-900/20"
-                  : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
-              )}
-              title="Operative Registry"
-            >
-              <Users className="w-5 h-5 flex-shrink-0" />
-              <span className="lg:hidden text-sm font-mono">Registry</span>
-            </button>
-
-            <button
-              onClick={() => {
-                setActiveView('constellation');
-                setIsSidebarOpen(false);
-              }}
-              className={clsx(
-                "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 flex items-center gap-3 lg:justify-center",
-                activeView === 'constellation'
-                  ? "bg-slate-800 text-cyan-400 border-slate-700 shadow-lg shadow-cyan-900/20"
-                  : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
-              )}
-              title="Constellation Map"
-            >
-              <Map className="w-5 h-5 flex-shrink-0" />
-              <span className="lg:hidden text-sm font-mono">Constellation</span>
-            </button>
-
-            <button
-              onClick={() => {
-                setActiveView('comms');
-                setIsSidebarOpen(false);
-              }}
-              className={clsx(
-                "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 flex items-center gap-3 lg:justify-center relative",
-                activeView === 'comms'
-                  ? "bg-slate-800 text-cyan-400 border-slate-700 shadow-lg shadow-cyan-900/20"
-                  : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
-              )}
-              title="Secure Comms"
-            >
-              <MessageSquare className="w-5 h-5 flex-shrink-0" />
-              <span className="lg:hidden text-sm font-mono">Comms</span>
-            </button>
-
-            {/* TRAINING/RACE/ECONOMY BUTTONS REMOVED - See git history to restore */}
-            {/* <button
-              onClick={() => {
-                setActiveView('economy');
-                setIsSidebarOpen(false);
-              }}
-              className={clsx(
-                "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 flex items-center gap-3 lg:justify-center",
-                activeView === 'economy'
-                  ? "bg-slate-800 text-yellow-400 border-slate-700 shadow-lg shadow-yellow-900/20"
-                  : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
-              )}
-              title="Economy Hub"
-            >
-              <Coins className="w-5 h-5 flex-shrink-0" />
-              <span className="lg:hidden text-sm font-mono">Economy</span>
-            </button> */}
-
-            <button
-              onClick={() => {
-                setActiveView('research');
-                setIsSidebarOpen(false);
-              }}
-              className={clsx(
-                "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 flex items-center gap-3 lg:justify-center",
-                activeView === 'research'
-                  ? "bg-slate-800 text-cyan-400 border-slate-700 shadow-lg shadow-cyan-900/20"
-                  : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
-              )}
-              title="Research Lab"
-            >
-              <Microscope className="w-5 h-5 flex-shrink-0" />
-              <span className="lg:hidden text-sm font-mono">Research Lab</span>
-            </button>
-
-            <button
-              onClick={() => {
-                setActiveView('games');
-                setIsSidebarOpen(false);
-              }}
-              className={clsx(
-                "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 flex items-center gap-3 lg:justify-center",
-                activeView === 'games'
-                  ? "bg-slate-800 text-pink-400 border-slate-700 shadow-lg shadow-pink-900/20"
-                  : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
-              )}
-              title="Games Hub"
-            >
-              <Gamepad2 className="w-5 h-5 flex-shrink-0" />
-              <span className="lg:hidden text-sm font-mono">Games</span>
-            </button>
-
-            <button
-              onClick={() => {
-                setActiveView('imagegen');
-                setIsSidebarOpen(false);
-              }}
-              className={clsx(
-                "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 flex items-center gap-3 lg:justify-center",
-                activeView === 'imagegen'
-                  ? "bg-slate-800 text-pink-400 border-slate-700 shadow-lg shadow-pink-900/20"
-                  : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
-              )}
-              title="Image Generation"
-            >
-              <Sparkles className="w-5 h-5 flex-shrink-0" />
-              <span className="lg:hidden text-sm font-mono">ImageGen</span>
-            </button>
-
-            {isAdminUser && (
+            <Tooltip content="Dashboard - Your home base for tasks and activity" position="right">
               <button
                 onClick={() => {
-                  setActiveView('admin');
+                  setActiveView('dashboard');
                   setIsSidebarOpen(false);
                 }}
                 className={clsx(
                   "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 flex items-center gap-3 lg:justify-center",
-                  activeView === 'admin'
-                    ? "bg-slate-800 text-red-400 border-slate-700 shadow-lg shadow-red-900/20"
+                  activeView === 'dashboard'
+                    ? "bg-slate-800 text-violet-400 border-slate-700 shadow-lg shadow-violet-900/20"
                     : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
                 )}
-                title="God Mode"
               >
-                <Shield className="w-5 h-5 flex-shrink-0" />
-                <span className="lg:hidden text-sm font-mono">God Mode</span>
+                <LayoutGrid className="w-5 h-5 flex-shrink-0" />
+                <span className="lg:hidden text-sm font-mono">Dashboard</span>
               </button>
+            </Tooltip>
+
+            <Tooltip content="Marketplace - Browse and accept public tasks from other users" position="right">
+              <button
+                onClick={() => {
+                  setActiveView('marketplace');
+                  setIsSidebarOpen(false);
+                }}
+                className={clsx(
+                  "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 flex items-center gap-3 lg:justify-center",
+                  activeView === 'marketplace'
+                    ? "bg-slate-800 text-amber-400 border-slate-700 shadow-lg shadow-amber-900/20"
+                    : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
+                )}
+              >
+                <Briefcase className="w-5 h-5 flex-shrink-0" />
+                <span className="lg:hidden text-sm font-mono">Marketplace</span>
+              </button>
+            </Tooltip>
+
+            <Tooltip content="Schedule - View and manage your daily schedule" position="right">
+              <button
+                onClick={() => {
+                  setActiveView('schedule');
+                  setIsSidebarOpen(false);
+                }}
+                className={clsx(
+                  "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 flex items-center gap-3 lg:justify-center",
+                  activeView === 'schedule'
+                    ? "bg-slate-800 text-purple-400 border-slate-700 shadow-lg shadow-purple-900/20"
+                    : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
+                )}
+              >
+                <Clock className="w-5 h-5 flex-shrink-0" />
+                <span className="lg:hidden text-sm font-mono">Schedule</span>
+              </button>
+            </Tooltip>
+
+            {/* Intel tab removed - consolidated into ResearchLab */}
+
+            {/* SOCIAL SECTION */}
+            <div className="hidden lg:block w-full h-px bg-gradient-to-r from-transparent via-cyan-500/20 to-transparent my-2" />
+
+            <Tooltip content="User Directory - Search for users and view profiles" position="right">
+              <button
+                onClick={() => {
+                  setActiveView('registry');
+                  setIsSidebarOpen(false);
+                }}
+                className={clsx(
+                  "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 flex items-center gap-3 lg:justify-center",
+                  activeView === 'registry'
+                    ? "bg-slate-800 text-cyan-400 border-slate-700 shadow-lg shadow-cyan-900/20"
+                    : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
+                )}
+              >
+                <Users className="w-5 h-5 flex-shrink-0" />
+                <span className="lg:hidden text-sm font-mono">User Directory</span>
+              </button>
+            </Tooltip>
+
+            <Tooltip content="Online Users - See who's online right now" position="right">
+              <button
+                onClick={() => {
+                  setActiveView('constellation');
+                  setIsSidebarOpen(false);
+                }}
+                className={clsx(
+                  "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 flex items-center gap-3 lg:justify-center",
+                  activeView === 'constellation'
+                    ? "bg-slate-800 text-cyan-400 border-slate-700 shadow-lg shadow-cyan-900/20"
+                    : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
+                )}
+              >
+                <Map className="w-5 h-5 flex-shrink-0" />
+                <span className="lg:hidden text-sm font-mono">Online Users</span>
+              </button>
+            </Tooltip>
+
+            <Tooltip content="Messages - Send and receive direct messages" position="right">
+              <button
+                onClick={() => {
+                  setActiveView('comms');
+                  setIsSidebarOpen(false);
+                }}
+                className={clsx(
+                  "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 flex items-center gap-3 lg:justify-center relative",
+                  activeView === 'comms'
+                    ? "bg-slate-800 text-cyan-400 border-slate-700 shadow-lg shadow-cyan-900/20"
+                    : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
+                )}
+              >
+                <MessageSquare className="w-5 h-5 flex-shrink-0" />
+                <span className="lg:hidden text-sm font-mono">Messages</span>
+              </button>
+            </Tooltip>
+
+            <Tooltip content="Support Inbox - View your bug reports and suggestions" position="right">
+              <button
+                onClick={() => {
+                  setActiveView('support');
+                  setIsSidebarOpen(false);
+                }}
+                className={clsx(
+                  "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 flex items-center gap-3 lg:justify-center",
+                  activeView === 'support'
+                    ? "bg-slate-800 text-amber-400 border-slate-700 shadow-lg shadow-amber-900/20"
+                    : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
+                )}
+              >
+                <Headphones className="w-5 h-5 flex-shrink-0" />
+                <span className="lg:hidden text-sm font-mono">Support</span>
+              </button>
+            </Tooltip>
+
+            {/* TRAINING/RACE/ECONOMY BUTTONS REMOVED - See git history to restore */}
+
+            {/* AI TOOLS SECTION */}
+            <div className="hidden lg:block w-full h-px bg-gradient-to-r from-transparent via-cyan-500/20 to-transparent my-2" />
+
+            <Tooltip content="AI Assistant - Chat with AI, get research help, and more" position="right">
+              <button
+                onClick={() => {
+                  setActiveView('research');
+                  setIsSidebarOpen(false);
+                }}
+                className={clsx(
+                  "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 flex items-center gap-3 lg:justify-center",
+                  activeView === 'research'
+                    ? "bg-slate-800 text-cyan-400 border-slate-700 shadow-lg shadow-cyan-900/20"
+                    : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
+                )}
+              >
+                <Microscope className="w-5 h-5 flex-shrink-0" />
+                <span className="lg:hidden text-sm font-mono">AI Assistant</span>
+              </button>
+            </Tooltip>
+
+            <Tooltip content="AI Images - Generate and edit images using AI" position="right">
+              <button
+                onClick={() => {
+                  setActiveView('imagegen');
+                  setIsSidebarOpen(false);
+                }}
+                className={clsx(
+                  "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 flex items-center gap-3 lg:justify-center",
+                  activeView === 'imagegen'
+                    ? "bg-slate-800 text-pink-400 border-slate-700 shadow-lg shadow-pink-900/20"
+                    : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
+                )}
+              >
+                <Sparkles className="w-5 h-5 flex-shrink-0" />
+                <span className="lg:hidden text-sm font-mono">AI Images</span>
+              </button>
+            </Tooltip>
+
+            {/* GAMES SECTION */}
+            <div className="hidden lg:block w-full h-px bg-gradient-to-r from-transparent via-cyan-500/20 to-transparent my-2" />
+
+            <Tooltip content="Games - Play poker and other multiplayer games" position="right">
+              <button
+                onClick={() => {
+                  setActiveView('games');
+                  setIsSidebarOpen(false);
+                }}
+                className={clsx(
+                  "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 flex items-center gap-3 lg:justify-center",
+                  activeView === 'games'
+                    ? "bg-slate-800 text-pink-400 border-slate-700 shadow-lg shadow-pink-900/20"
+                    : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
+                )}
+              >
+                <Gamepad2 className="w-5 h-5 flex-shrink-0" />
+                <span className="lg:hidden text-sm font-mono">Games</span>
+              </button>
+            </Tooltip>
+
+            {/* SYSTEM SECTION */}
+            <div className="hidden lg:block w-full h-px bg-gradient-to-r from-transparent via-cyan-500/20 to-transparent my-2" />
+
+            {isAdminUser && (
+              <Tooltip content="God Mode - Admin panel for user management and permissions" position="right">
+                <button
+                  onClick={() => {
+                    setActiveView('admin');
+                    setIsSidebarOpen(false);
+                  }}
+                  className={clsx(
+                    "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 flex items-center gap-3 lg:justify-center",
+                    activeView === 'admin'
+                      ? "bg-slate-800 text-red-400 border-slate-700 shadow-lg shadow-red-900/20"
+                      : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
+                  )}
+                >
+                  <Shield className="w-5 h-5 flex-shrink-0" />
+                  <span className="lg:hidden text-sm font-mono">Admin Panel</span>
+                </button>
+              </Tooltip>
             )}
 
-            <button
-              onClick={() => {
-                setActiveView('notifications');
-                setIsSidebarOpen(false);
-                markAllNotificationsRead();
-              }}
-              className={clsx(
-                "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 relative flex items-center gap-3 lg:justify-center",
-                activeView === 'notifications'
-                  ? "bg-slate-800 text-cyan-400 border-slate-700 shadow-lg shadow-cyan-900/20"
-                  : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
-              )}
-              title="Notifications"
-            >
-              <Bell className="w-5 h-5 flex-shrink-0" />
-              <span className="lg:hidden text-sm font-mono">Notifications</span>
-              {unreadCount > 0 && (
-                <span className="absolute top-2 right-2 lg:top-2 lg:right-2 w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-              )}
-            </button>
+            <Tooltip content="Notifications - View all your notifications and updates" position="right">
+              <button
+                onClick={() => {
+                  setActiveView('notifications');
+                  setIsSidebarOpen(false);
+                  markAllNotificationsRead();
+                }}
+                className={clsx(
+                  "w-full lg:w-auto p-3 rounded-xl border transition-all duration-300 relative flex items-center gap-3 lg:justify-center",
+                  activeView === 'notifications'
+                    ? "bg-slate-800 text-cyan-400 border-slate-700 shadow-lg shadow-cyan-900/20"
+                    : "bg-transparent text-slate-500 border-transparent hover:bg-slate-900 hover:text-slate-300"
+                )}
+              >
+                <Bell className="w-5 h-5 flex-shrink-0" />
+                <span className="lg:hidden text-sm font-mono">Notifications</span>
+                {unreadCount > 0 && (
+                  <span className="absolute top-2 right-2 lg:top-2 lg:right-2 w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                )}
+              </button>
+            </Tooltip>
           </nav>
 
           <div className="flex flex-col items-center gap-4 mb-2 px-4 lg:px-0 w-full">
-            <button
-              onClick={() => {
-                setShowEditModal(true);
-                setIsSidebarOpen(false);
-              }}
-              className="w-full lg:w-auto flex lg:block items-center gap-3 relative group p-2 lg:p-0 rounded-xl lg:rounded-full hover:bg-slate-900 lg:hover:bg-transparent transition-colors"
-              title="Edit Profile"
-            >
-              <img src={currentUser?.avatar} alt="Me" className="w-8 h-8 rounded-full border border-slate-600 group-hover:border-violet-500 transition-colors flex-shrink-0" />
-              <span className="lg:hidden text-sm font-mono text-slate-300">{currentUser?.username}</span>
-              <div className="hidden lg:flex absolute inset-0 bg-slate-950/80 rounded-full opacity-0 group-hover:opacity-100 transition-opacity items-center justify-center">
-                <Edit3 className="w-4 h-4 text-violet-400" />
-              </div>
-            </button>
-            <button
-              onClick={logout}
-              className="w-full lg:w-auto p-3 text-slate-600 hover:text-red-400 transition-colors flex items-center gap-3 lg:justify-center rounded-xl lg:rounded-none hover:bg-slate-900 lg:hover:bg-transparent"
-              title="Logout"
-            >
-              <LogOut className="w-5 h-5 flex-shrink-0" />
-              <span className="lg:hidden text-sm font-mono">Logout</span>
-            </button>
+            <Tooltip content="Edit Profile" position="right">
+              <button
+                onClick={() => {
+                  setShowEditModal(true);
+                  setIsSidebarOpen(false);
+                }}
+                className="w-full lg:w-auto flex lg:block items-center gap-3 relative group p-2 lg:p-0 rounded-xl lg:rounded-full hover:bg-slate-900 lg:hover:bg-transparent transition-colors"
+              >
+                <img src={currentUser?.avatar} alt="Me" className="w-8 h-8 rounded-full border border-slate-600 group-hover:border-violet-500 transition-colors flex-shrink-0" />
+                <span className="lg:hidden text-sm font-mono text-slate-300">{currentUser?.username}</span>
+                <div className="hidden lg:flex absolute inset-0 bg-slate-950/80 rounded-full opacity-0 group-hover:opacity-100 transition-opacity items-center justify-center">
+                  <Edit3 className="w-4 h-4 text-violet-400" />
+                </div>
+              </button>
+            </Tooltip>
+            <Tooltip content="Logout" position="right">
+              <button
+                onClick={logout}
+                className="w-full lg:w-auto p-3 text-slate-600 hover:text-red-400 transition-colors flex items-center gap-3 lg:justify-center rounded-xl lg:rounded-none hover:bg-slate-900 lg:hover:bg-transparent"
+              >
+                <LogOut className="w-5 h-5 flex-shrink-0" />
+                <span className="lg:hidden text-sm font-mono">Logout</span>
+              </button>
+            </Tooltip>
           </div>
         </aside>
       </>
@@ -665,9 +552,12 @@ export const Dashboard: React.FC = () => {
 
 
       {/* Main Content Area */}
-      <main className="flex-1 z-10 flex flex-col h-full overflow-hidden relative">
+      <main className="flex-1 z-10 flex flex-col overflow-hidden relative" style={{ height: '100dvh', maxHeight: '100dvh' }}>
         {/* Heads Up Display */}
-        <header className="min-h-16 border-b border-slate-800 bg-slate-950/50 backdrop-blur-sm flex flex-wrap items-center gap-2 md:gap-4 px-3 md:px-6 shrink-0 z-40 py-2">
+        <header
+          ref={headerRef}
+          className="min-h-16 border-b border-slate-800 bg-slate-950/50 backdrop-blur-sm flex flex-wrap items-center gap-2 md:gap-4 px-3 md:px-6 shrink-0 z-40 py-2"
+        >
           <div className="flex items-center gap-2 md:gap-6">
             {/* Hamburger Menu Button - Always visible for navigation */}
             <button
@@ -702,50 +592,52 @@ export const Dashboard: React.FC = () => {
 
           <div className="flex-1" />
 
+          <ReportPill />
+          <ChangelogButton />
           <NotificationTray />
         </header>
 
-        {/* View Switcher */}
-        <div className="flex-1 overflow-hidden relative">
+        {/* View Switcher - Scrollable content area */}
+        <div className="flex-1 overflow-y-auto relative">
           {activeView === 'dashboard' && (
-            <div className="absolute inset-0 p-3 md:p-6 grid grid-cols-1 xl:grid-cols-12 gap-4 md:gap-6 overflow-y-auto xl:overflow-hidden animate-in fade-in duration-300">
+            <div className="p-3 md:p-6 grid grid-cols-1 xl:grid-cols-12 gap-4 md:gap-6 animate-in fade-in duration-300 min-h-full">
               {/* Left: Tasks (5 cols on desktop, full width on mobile) */}
-              <div className="xl:col-span-5 lg:col-span-6 col-span-12 h-auto xl:h-full overflow-hidden">
+              <div className="xl:col-span-5 lg:col-span-6 col-span-12">
                 <TaskBoard />
               </div>
 
               {/* Middle: Horde (3 cols on desktop, full width on mobile) */}
-              <div className="xl:col-span-3 lg:col-span-6 col-span-12 h-auto xl:h-full overflow-hidden xl:pt-12">
+              <div className="xl:col-span-3 lg:col-span-6 col-span-12 xl:pt-12">
                 <HordeFeed />
               </div>
 
               {/* Right: Oracle (4 cols on desktop, full width on mobile) */}
-              <div className="xl:col-span-4 lg:col-span-12 col-span-12 h-auto xl:h-full overflow-hidden space-y-4">
+              <div className="xl:col-span-4 lg:col-span-12 col-span-12 space-y-4">
                 <OracleWidget />
               </div>
             </div>
           )}
 
           {activeView === 'marketplace' && (
-            <div className="absolute inset-0 overflow-hidden animate-in fade-in duration-300">
+            <div className="animate-in fade-in duration-300">
               <PublicTaskMarketplace />
             </div>
           )}
 
           {activeView === 'imagegen' && (
-            <div className="absolute inset-0 p-3 md:p-6 overflow-hidden animate-in fade-in duration-300">
+            <div className="p-3 md:p-6 animate-in fade-in duration-300">
               <ImageGenPanel />
             </div>
           )}
 
           {activeView === 'registry' && (
-            <div className="absolute inset-0 p-3 md:p-6 overflow-hidden animate-in fade-in duration-300">
+            <div className="p-3 md:p-6 animate-in fade-in duration-300">
               <OperativeSearchPanel />
             </div>
           )}
 
           {activeView === 'constellation' && (
-            <div className="absolute inset-0 p-3 md:p-6 overflow-y-auto animate-in fade-in duration-300">
+            <div className="p-3 md:p-6 animate-in fade-in duration-300">
               <div className="mb-4 md:mb-6">
                 <h2 className="text-xl md:text-2xl font-bold text-cyan-400 font-mono tracking-wider mb-2">
                   CONSTELLATION MAP
@@ -759,10 +651,14 @@ export const Dashboard: React.FC = () => {
           )}
 
           {activeView === 'comms' && (
-            <div className="absolute inset-0 p-3 md:p-6 overflow-hidden animate-in fade-in duration-300">
-              <div className="h-full">
-                <CommsPage />
-              </div>
+            <div className="p-3 md:p-6 animate-in fade-in duration-300 h-full">
+              <CommsPage />
+            </div>
+          )}
+
+          {activeView === 'support' && (
+            <div className="animate-in fade-in duration-300 h-full">
+              <SupportInbox />
             </div>
           )}
 
@@ -892,38 +788,38 @@ export const Dashboard: React.FC = () => {
           */}
 
           {activeView === 'economy' && (
-            <div className="absolute inset-0 p-3 md:p-6 overflow-y-auto animate-in fade-in duration-300">
+            <div className="p-3 md:p-6 animate-in fade-in duration-300">
               {/* Economy Hub content goes here */}
               <p className="text-slate-400">Economy Hub content goes here.</p>
             </div>
           )}
 
           {activeView === 'research' && (
-            <div className="absolute inset-0 overflow-hidden animate-in fade-in duration-300">
+            <div className="animate-in fade-in duration-300 h-full">
               <UnifiedResearchLab />
             </div>
           )}
 
           {activeView === 'admin' && isAdminUser && (
-            <div className="absolute inset-0 p-3 md:p-6 overflow-y-auto animate-in fade-in duration-300">
+            <div className="p-3 md:p-6 animate-in fade-in duration-300">
               <GodModePanel />
             </div>
           )}
 
           {activeView === 'schedule' && (
-            <div className="absolute inset-0 p-3 md:p-6 overflow-y-auto animate-in fade-in duration-300">
+            <div className="p-3 md:p-6 animate-in fade-in duration-300">
               <ScheduleView />
             </div>
           )}
 
           {activeView === 'games' && (
-            <div className="absolute inset-0 overflow-hidden animate-in fade-in duration-300">
+            <div className="animate-in fade-in duration-300 h-full">
               <GamesHub />
             </div>
           )}
 
           {activeView === 'notifications' && (
-            <div className="absolute inset-0 p-3 md:p-6 overflow-y-auto animate-in fade-in duration-300">
+            <div className="p-3 md:p-6 animate-in fade-in duration-300">
               <div className="max-w-3xl mx-auto">
                 <div className="mb-6">
                   <h2 className="text-2xl md:text-3xl font-bold text-cyan-400 font-mono tracking-wider mb-2">
@@ -1030,13 +926,12 @@ export const Dashboard: React.FC = () => {
         )}
       </AnimatePresence>
 
-      {/* Coin Animation */}
-      {activeCoinAnimation && (
-        <CoinAnimation
-          {...activeCoinAnimation}
-          onComplete={() => setActiveCoinAnimation(null)}
-        />
-      )}
+      {/* Keyboard Shortcuts Modal */}
+      <KeyboardShortcutsModal
+        isOpen={showKeyboardShortcuts}
+        onClose={() => setShowKeyboardShortcuts(false)}
+      />
+
     </div>
   );
 };

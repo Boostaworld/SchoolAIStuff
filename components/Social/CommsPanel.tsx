@@ -9,6 +9,21 @@ import { groupMessagesByDate } from '../../lib/utils/messageGrouping';
 import { supabase } from '../../lib/supabase';
 import { ConfirmModal } from '../Shared/ConfirmModal';
 
+// Helper function to format relative time
+function formatRelativeTime(isoString: string): string {
+  const now = Date.now();
+  const then = new Date(isoString).getTime();
+  const diffMins = Math.floor((now - then) / 60000);
+
+  if (diffMins < 1) return 'now';
+  if (diffMins < 60) return `${diffMins}m`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}h`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 7) return `${diffDays}d`;
+  return new Date(isoString).toLocaleDateString();
+}
+
 export default function CommsPanel() {
   const {
     commsPanelOpen,
@@ -29,6 +44,8 @@ export default function CommsPanel() {
 
   const [inputValue, setInputValue] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const isSendingRef = useRef(false); // Ref for immediate synchronous locking
+  const [isSendingState, setIsSendingState] = useState(false); // State for UI updates (disabling button)
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -70,9 +87,16 @@ export default function CommsPanel() {
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Prevent double-submit: check ref instantly
+    if (isSendingRef.current) return;
     if (!activeChannelId || (!inputValue.trim() && !selectedFile)) return;
 
-    // specific message input lag fix: Optimistically clear input immediately
+    // Lock submissions immediately
+    isSendingRef.current = true;
+    setIsSendingState(true);
+
+    // Optimistically clear input immediately (fixes perceived lag)
     const contentToSend = inputValue;
     const fileToSend = selectedFile;
 
@@ -84,7 +108,13 @@ export default function CommsPanel() {
     const replyToId = replyingTo?.id;
     setReplyingTo(null); // Clear reply state
 
-    await sendMessage(activeChannelId, contentToSend, fileToSend || undefined, replyToId);
+    try {
+      await sendMessage(activeChannelId, contentToSend, fileToSend || undefined, replyToId);
+    } finally {
+      // Unlock after send completes (success or fail)
+      isSendingRef.current = false;
+      setIsSendingState(false);
+    }
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -235,12 +265,25 @@ export default function CommsPanel() {
                           )}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-cyan-300 font-mono font-semibold truncate">
-                            {otherUser?.username || 'Unknown'}
-                          </p>
-                          <p className="text-cyan-500/60 text-xs font-mono truncate">
-                            {online ? 'ONLINE' : 'OFFLINE'}
-                          </p>
+                          <div className="flex items-center justify-between mb-1">
+                            <p className="text-cyan-300 font-mono font-semibold truncate">
+                              {otherUser?.username || 'Unknown'}
+                            </p>
+                            {channel.lastMessageAt && (
+                              <span className="text-xs text-cyan-500/50 font-mono ml-2 flex-shrink-0">
+                                {formatRelativeTime(channel.lastMessageAt)}
+                              </span>
+                            )}
+                          </div>
+                          {channel.lastMessagePreview ? (
+                            <p className="text-sm text-cyan-400/60 font-mono truncate">
+                              {channel.lastMessagePreview}
+                            </p>
+                          ) : (
+                            <p className="text-xs text-cyan-500/60 font-mono truncate">
+                              {online ? 'ONLINE' : 'OFFLINE'}
+                            </p>
+                          )}
                         </div>
 
                         {/* Unread badge */}
@@ -521,7 +564,7 @@ export default function CommsPanel() {
 
                     <button
                       type="submit"
-                      disabled={!inputValue.trim() && !selectedFile}
+                      disabled={isSendingState || (!inputValue.trim() && !selectedFile)}
                       className="p-3 bg-cyan-500 hover:bg-cyan-400 disabled:bg-slate-800 disabled:opacity-50 rounded-lg transition-all group disabled:cursor-not-allowed shadow-lg shadow-cyan-500/20 hover:shadow-cyan-400/30"
                     >
                       <Send className="w-5 h-5 text-slate-950 group-hover:translate-x-0.5 transition-transform" />

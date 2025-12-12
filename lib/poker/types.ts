@@ -94,6 +94,7 @@ export interface PokerGamePlayer {
     id: string;
     game_id: string;
     user_id?: string;
+    is_busted?: boolean;
 
     // Player Info
     is_ai: boolean;

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { X, Target, TrendingUp, Calendar, Activity, Signal, Zap, Sparkles, Crown, Brain } from 'lucide-react';
+import { X, Target, TrendingUp, Calendar, Activity, Signal, Sparkles, Crown, Brain } from 'lucide-react';
 import { useOrbitStore } from '../../store/useOrbitStore';
 import { getUserBadgeStyle } from '../../lib/utils/badges';
 
@@ -13,7 +13,7 @@ interface ProfileModalProps {
     tasks_completed: number;
     tasks_forfeited: number;
     status: string;
-    max_wpm?: number;
+
     orbit_points?: number;
     is_admin?: boolean;
     can_customize_ai?: boolean;
@@ -158,20 +158,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ profile, onClose }) 
               </p>
             </div>
 
-            {/* Max WPM */}
-            {profile.max_wpm !== undefined && profile.max_wpm > 0 && (
-              <div className="bg-gradient-to-br from-cyan-500/10 to-cyan-500/5 border border-cyan-500/20 rounded-lg p-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="w-8 h-8 rounded-lg bg-cyan-500/20 flex items-center justify-center">
-                    <Zap className="w-4 h-4 text-cyan-400" />
-                  </div>
-                  <span className="text-xs font-mono text-cyan-400 uppercase tracking-widest">Velocity</span>
-                </div>
-                <p className="text-3xl font-bold text-cyan-400 font-mono">
-                  {profile.max_wpm} <span className="text-lg text-cyan-500/60">WPM</span>
-                </p>
-              </div>
-            )}
+
 
             {/* Orbit Points */}
             {profile.orbit_points !== undefined && (
@@ -252,7 +239,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ profile, onClose }) 
                 className="w-full bg-gradient-to-r from-cyan-500 to-cyan-400 hover:from-cyan-400 hover:to-cyan-300 text-slate-950 font-mono font-bold px-6 py-4 rounded-xl shadow-lg shadow-cyan-500/30 hover:shadow-cyan-400/40 transition-all flex items-center justify-center gap-3 group"
               >
                 <Signal className="w-5 h-5 group-hover:animate-pulse" />
-                <span className="text-lg tracking-wider">[ INITIALIZE UPLINK ]</span>
+                <span className="text-lg tracking-wider">SEND MESSAGE</span>
               </motion.button>
             </div>
           )}
@@ -345,10 +332,6 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ profile, onClose }) 
                     <div className="p-3 bg-slate-800/60 border border-slate-700 rounded-lg">
                       <p className="text-[11px] text-slate-500 font-mono uppercase">Orbit Points</p>
                       <p className="text-2xl font-bold text-cyan-300 font-mono">{profile.orbit_points ?? 0}</p>
-                    </div>
-                    <div className="p-3 bg-slate-800/60 border border-slate-700 rounded-lg">
-                      <p className="text-[11px] text-slate-500 font-mono uppercase">Max WPM</p>
-                      <p className="text-2xl font-bold text-cyan-300 font-mono">{profile.max_wpm ?? 0}</p>
                     </div>
                     <div className="p-3 bg-slate-800/60 border border-slate-700 rounded-lg">
                       <p className="text-[11px] text-slate-500 font-mono uppercase">Completed</p>

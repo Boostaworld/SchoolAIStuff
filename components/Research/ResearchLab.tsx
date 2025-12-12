@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Upload, Send, X, Loader2, Image as ImageIcon, MessageSquare, Settings as SettingsIcon, Trash2, BrainCircuit, Sparkles, Share2 } from 'lucide-react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { Upload, Send, X, Loader2, Image as ImageIcon, MessageSquare, Settings as SettingsIcon, Trash2, BrainCircuit, Sparkles, Share2, Link, Globe } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useOrbitStore } from '../../store/useOrbitStore';
 import { LockedResearchLab } from './LockedResearchLab';
 import { useToast } from '../Shared/ToastManager';
-import { analyzeImageWithVision, analyzeGoogleForm, VisionMessage, sendChatMessage, ChatRequest } from '../../lib/ai/gemini';
+import { analyzeImageWithVision, analyzeGoogleForm, VisionMessage, sendChatMessage, ChatRequest, GroundingSource } from '../../lib/ai/gemini';
 import clsx from 'clsx';
 import { MarkdownRenderer } from '../Social/MarkdownRenderer';
 
@@ -16,6 +16,8 @@ interface ChatMessage {
   text: string;
   thinking?: string;
   timestamp: Date;
+  urlContextUsed?: boolean;
+  sources?: GroundingSource[];
 }
 
 interface VisionChatMessage {
@@ -88,6 +90,14 @@ export const ResearchLab: React.FC = () => {
   const currentChatModel = CHAT_MODELS.find(m => m.id === selectedChatModel);
   const supportsThinking = currentChatModel?.supportsThinking || false;
 
+  // URL context detection - only available for Gemini 3 Pro Preview
+  const urlContextEnabled = selectedChatModel === 'gemini-3-pro-preview';
+  const detectedUrls = useMemo(() => {
+    if (!urlContextEnabled) return [];
+    const urlRegex = /(https?:\/\/[^\s]+)/gi;
+    return chatInput.match(urlRegex) || [];
+  }, [chatInput, urlContextEnabled]);
+
   const logChatConfig = (reason: string, extra?: Record<string, any>) => {
     console.log('[ResearchLab Chat]', reason, {
       model: selectedChatModel,
@@ -136,18 +146,28 @@ export const ResearchLab: React.FC = () => {
       timestamp: new Date()
     };
 
+    // Show toast if URLs detected and model supports URL context
+    if (detectedUrls.length > 0 && urlContextEnabled) {
+      toastManager.info('🌐 Fetching URL context...', {
+        description: `${detectedUrls.length} URL${detectedUrls.length > 1 ? 's' : ''} detected`,
+        duration: 3000
+      });
+    }
+
     setChatMessages(prev => [...prev, userMessage]);
+    const inputToSend = chatInput;
     setChatInput('');
     setIsChatLoading(true);
 
     logChatConfig('Dispatch request', {
-      promptPreview: chatInput.slice(0, 200),
-      conversationHistoryLength: chatMessages.length
+      promptPreview: inputToSend.slice(0, 200),
+      conversationHistoryLength: chatMessages.length,
+      urlsDetected: detectedUrls.length
     });
 
     try {
       const request: ChatRequest = {
-        message: chatInput,
+        message: inputToSend,
         model: selectedChatModel,
         thinkingLevel: supportsThinking ? thinkingLevel : undefined,
         systemInstructions: systemInstructions.trim() || undefined,
@@ -165,16 +185,27 @@ export const ResearchLab: React.FC = () => {
         role: 'model',
         text: response.text,
         thinking: response.thinking,
-        timestamp: new Date()
+        timestamp: new Date(),
+        urlContextUsed: response.urlContextUsed,
+        sources: response.sources
       };
 
       setChatMessages(prev => [...prev, aiMessage]);
+
+      // Build description based on what was used
+      const features: string[] = [];
+      if (response.thinkingUsed) features.push('Thinking');
+      if (response.urlContextUsed) features.push('URL Context');
+
       toastManager.success('Response received', {
-        description: response.thinkingUsed ? 'Used thinking mode' : undefined,
+        description: features.length > 0 ? `Used: ${features.join(' + ')}` : undefined,
         duration: 2000
       });
+
       logChatConfig('Response received', {
         thinkingUsed: response.thinkingUsed,
+        urlContextUsed: response.urlContextUsed,
+        sourcesCount: response.sources?.length || 0,
         responsePreview: response.text.slice(0, 200)
       });
 
@@ -353,7 +384,11 @@ export const ResearchLab: React.FC = () => {
   }, [activeTab, toastManager]);
 
   return (
-    <div className="h-full flex flex-col bg-gradient-to-br from-slate-950 via-black to-slate-950 relative overflow-hidden">
+    <div
+      className="min-h-screen w-full flex flex-col bg-gradient-to-br from-slate-950 via-black to-slate-950 relative overflow-hidden px-3 sm:px-4"
+      // Position content immediately below the Orbit HUD (plus a small breathing space)
+      style={{ paddingTop: 'calc(var(--orbit-hud-height, 72px) + 8px)' }}
+    >
       {/* Animated grid background */}
       <div className="absolute inset-0 opacity-5 pointer-events-none">
         <div className="absolute inset-0" style={{
@@ -367,8 +402,8 @@ export const ResearchLab: React.FC = () => {
       </div>
 
       {/* Header with tab switcher */}
-      <div className="flex-shrink-0 border-b-2 border-cyan-500/30 bg-black/40 backdrop-blur-sm relative z-10">
-        <div className="px-4 py-3">
+      <div className="flex-shrink-0 border-b-2 border-cyan-500/30 bg-black/40 backdrop-blur-sm relative z-10 w-full">
+        <div className="px-3 sm:px-4 py-3 w-full">
           {/* Status bar */}
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-3">
@@ -479,10 +514,10 @@ export const ResearchLab: React.FC = () => {
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 20 }}
             transition={{ duration: 0.3 }}
-            className="flex-1 flex flex-col overflow-hidden"
+            className="flex-1 min-h-0 flex flex-col overflow-hidden w-full px-0 sm:px-2"
           >
             {/* Chat messages */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 relative z-10">
+            <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 relative z-10">
               <AnimatePresence>
                 {chatMessages.map((message) => (
                   <motion.div
@@ -494,13 +529,20 @@ export const ResearchLab: React.FC = () => {
                     className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
                   >
                     <div className={`max-w-[80%] ${message.role === 'user' ? 'bg-cyan-950/50 border-cyan-500/50' : 'bg-slate-900/50 border-slate-700/50'} border-2 p-4 relative rounded-lg space-y-3`}>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className={`text-xs font-mono font-bold ${message.role === 'user' ? 'text-cyan-400' : 'text-slate-400'}`}>
                           {message.role === 'user' ? 'YOU' : 'AI'}
                         </span>
                         <span className="text-[10px] text-slate-600 font-mono">
                           {message.timestamp.toLocaleTimeString()}
                         </span>
+                        {/* URL Context Badge */}
+                        {message.urlContextUsed && (
+                          <span className="px-2 py-0.5 rounded-full bg-blue-500/20 border border-blue-500/40 text-blue-300 text-[10px] font-mono font-bold flex items-center gap-1">
+                            <Globe className="w-3 h-3" />
+                            URL Context
+                          </span>
+                        )}
                       </div>
 
                       {message.thinking && (
@@ -511,6 +553,39 @@ export const ResearchLab: React.FC = () => {
                           </summary>
                           <div className="mt-2 text-xs text-slate-400 font-mono leading-relaxed whitespace-pre-wrap max-h-64 overflow-y-auto">
                             {message.thinking}
+                          </div>
+                        </details>
+                      )}
+
+                      {/* Sources Panel - Expandable list of URLs used */}
+                      {message.sources && message.sources.length > 0 && (
+                        <details className="bg-slate-800/50 rounded p-2 border border-blue-500/30">
+                          <summary className="cursor-pointer text-xs font-mono text-blue-400 font-bold flex items-center gap-2">
+                            <Link className="w-3 h-3" />
+                            🌐 View Sources ({message.sources.length})
+                          </summary>
+                          <div className="mt-2 space-y-2 max-h-48 overflow-y-auto">
+                            {message.sources.map((source, idx) => (
+                              <a
+                                key={idx}
+                                href={source.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="block text-xs p-2 rounded bg-slate-900/50 border border-slate-700 hover:border-blue-500/50 transition-colors group"
+                              >
+                                <div className="flex items-start gap-2">
+                                  <Globe className="w-3 h-3 text-blue-400 mt-0.5 flex-shrink-0" />
+                                  <div className="min-w-0 flex-1">
+                                    <p className="text-blue-300 font-mono truncate group-hover:text-blue-200">
+                                      {source.title || 'Web Source'}
+                                    </p>
+                                    <p className="text-slate-500 text-[10px] truncate mt-0.5">
+                                      {source.url}
+                                    </p>
+                                  </div>
+                                </div>
+                              </a>
+                            ))}
                           </div>
                         </details>
                       )}
@@ -711,6 +786,28 @@ export const ResearchLab: React.FC = () => {
                   )}
                 </button>
               </form>
+
+              {/* URL Detection Badge */}
+              <AnimatePresence>
+                {detectedUrls.length > 0 && urlContextEnabled && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    className="mt-2 flex items-center gap-2"
+                  >
+                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/30">
+                      <Globe className="w-4 h-4 text-blue-400 animate-pulse" />
+                      <span className="text-blue-300 text-xs font-mono font-bold">
+                        {detectedUrls.length} URL{detectedUrls.length > 1 ? 's' : ''} detected
+                      </span>
+                      <span className="text-blue-400/60 text-[10px] font-mono">
+                        → Will fetch context
+                      </span>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </motion.div>
         ) : (
@@ -720,7 +817,7 @@ export const ResearchLab: React.FC = () => {
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -20 }}
             transition={{ duration: 0.3 }}
-            className="flex-1 flex flex-col overflow-hidden"
+            className="flex-1 min-h-0 flex flex-col overflow-hidden w-full px-0 sm:px-2"
           >
             {/* Vision model selector */}
             <div className="px-4 py-3 border-b border-slate-800 bg-slate-900/40 flex-shrink-0">
@@ -741,7 +838,7 @@ export const ResearchLab: React.FC = () => {
             </div>
 
             {/* Vision chat messages */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 relative z-10">
+            <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 relative z-10">
               <AnimatePresence>
                 {visionMessages.map((message) => (
                   <motion.div

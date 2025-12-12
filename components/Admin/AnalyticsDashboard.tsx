@@ -17,13 +17,8 @@ import { supabase } from '../../lib/supabase';
 interface SystemMetrics {
   totalUsers: number;
   activeToday: number;
-  totalSessions: number;
-  avgWPM: number;
-  topWPM: number;
   totalPoints: number;
   pointsToday: number;
-  racesCompleted: number;
-  challengesCompleted: number;
   tasksCompleted: number;
 }
 
@@ -39,13 +34,8 @@ export function AnalyticsDashboard() {
   const [metrics, setMetrics] = useState<SystemMetrics>({
     totalUsers: 0,
     activeToday: 0,
-    totalSessions: 0,
-    avgWPM: 0,
-    topWPM: 0,
     totalPoints: 0,
     pointsToday: 0,
-    racesCompleted: 0,
-    challengesCompleted: 0,
     tasksCompleted: 0
   });
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
@@ -60,34 +50,13 @@ export function AnalyticsDashboard() {
         .from('profiles')
         .select('*', { count: 'exact', head: true });
 
-      // Active users today
-      const today = new Date().toISOString().split('T')[0];
+      // Active users today (based on last_active field)
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
       const { count: activeCount } = await supabase
-        .from('typing_sessions')
-        .select('user_id', { count: 'exact', head: true })
-        .gte('completed_at', `${today}T00:00:00`);
-
-      // Total sessions
-      const { count: sessionCount } = await supabase
-        .from('typing_sessions')
-        .select('*', { count: 'exact', head: true });
-
-      // Average WPM
-      const { data: avgData } = await supabase
-        .from('typing_sessions')
-        .select('wpm');
-
-      const avgWPM = avgData && avgData.length > 0
-        ? Math.round(avgData.reduce((sum, s) => sum + (s.wpm || 0), 0) / avgData.length)
-        : 0;
-
-      // Top WPM
-      const { data: topData } = await supabase
         .from('profiles')
-        .select('max_wpm')
-        .order('max_wpm', { ascending: false })
-        .limit(1)
-        .single();
+        .select('id', { count: 'exact', head: true })
+        .gte('last_active', today.toISOString());
 
       // Total points in circulation
       const { data: pointsData } = await supabase
@@ -97,12 +66,6 @@ export function AnalyticsDashboard() {
       const totalPoints = pointsData
         ? pointsData.reduce((sum, p) => sum + (p.orbit_points || 0), 0)
         : 0;
-
-      // Races completed
-      const { count: raceCount } = await supabase
-        .from('typing_sessions')
-        .select('*', { count: 'exact', head: true })
-        .eq('mode', 'velocity');
 
       // Tasks completed
       const { data: tasksData } = await supabase
@@ -116,13 +79,8 @@ export function AnalyticsDashboard() {
       setMetrics({
         totalUsers: userCount || 0,
         activeToday: activeCount || 0,
-        totalSessions: sessionCount || 0,
-        avgWPM,
-        topWPM: topData?.max_wpm || 0,
         totalPoints,
         pointsToday: 0, // Would need transaction table to calculate
-        racesCompleted: raceCount || 0,
-        challengesCompleted: (sessionCount || 0) - (raceCount || 0),
         tasksCompleted
       });
 
@@ -159,7 +117,6 @@ export function AnalyticsDashboard() {
   };
 
   const userActivityThreat = getThreatLevel(metrics.activeToday / Math.max(metrics.totalUsers, 1) * 100, [30, 60, 100]);
-  const performanceThreat = getThreatLevel(metrics.avgWPM, [40, 70, 100]);
 
   if (loading) {
     return (
@@ -186,7 +143,7 @@ export function AnalyticsDashboard() {
       <div className="fixed inset-0 pointer-events-none z-10 opacity-[0.015]">
         <svg className="w-full h-full">
           <filter id="noiseFilter">
-            <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="4" stitchTiles="stitch"/>
+            <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="4" stitchTiles="stitch" />
           </filter>
           <rect width="100%" height="100%" filter="url(#noiseFilter)" />
         </svg>
@@ -264,59 +221,15 @@ export function AnalyticsDashboard() {
             </div>
           </div>
         </motion.div>
-
-        {/* Performance Threat */}
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ delay: 0.2 }}
-          className={`p-6 bg-gradient-to-br from-slate-900/80 to-slate-950/80 border-2 border-${performanceThreat.color}-500/40 rounded-2xl backdrop-blur-sm relative overflow-hidden`}
-        >
-          <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-${performanceThreat.color}-500/10 to-transparent rounded-full blur-3xl" />
-          <div className="relative z-10">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-3">
-                <div className={`w-12 h-12 rounded-full bg-${performanceThreat.color}-500/20 flex items-center justify-center border-2 border-${performanceThreat.color}-500/40`}>
-                  <Zap className={`w-6 h-6 text-${performanceThreat.color}-400`} />
-                </div>
-                <div>
-                  <p className="text-xs text-slate-500 font-mono uppercase tracking-wider">Performance</p>
-                  <p className={`text-xl font-black text-${performanceThreat.color}-400 font-mono`}>{performanceThreat.label}</p>
-                </div>
-              </div>
-              <div className={`px-3 py-1 rounded-full bg-${performanceThreat.color}-500/20 text-${performanceThreat.color}-400 text-xs font-mono border border-${performanceThreat.color}-500/30`}>
-                LEVEL {performanceThreat.level}
-              </div>
-            </div>
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm font-mono">
-                <span className="text-slate-400">Average WPM</span>
-                <span className={`text-${performanceThreat.color}-400 font-bold`}>{metrics.avgWPM} WPM</span>
-              </div>
-              <div className={`h-2 bg-slate-800 rounded-full overflow-hidden border border-${performanceThreat.color}-500/30`}>
-                <motion.div
-                  initial={{ width: 0 }}
-                  animate={{ width: `${Math.min((metrics.avgWPM / 100) * 100, 100)}%` }}
-                  transition={{ duration: 1, delay: 0.3 }}
-                  className={`h-full bg-gradient-to-r from-${performanceThreat.color}-500 to-${performanceThreat.color}-400`}
-                />
-              </div>
-            </div>
-          </div>
-        </motion.div>
       </div>
 
       {/* Metrics Grid */}
       <div className="relative z-20 grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         {[
           { label: 'TOTAL USERS', value: metrics.totalUsers, icon: Users, color: 'cyan', suffix: '' },
-          { label: 'SESSIONS', value: metrics.totalSessions, icon: Activity, color: 'violet', suffix: '' },
-          { label: 'TOP WPM', value: metrics.topWPM, icon: TrendingUp, color: 'emerald', suffix: ' WPM' },
+          { label: 'ACTIVE TODAY', value: metrics.activeToday, icon: Activity, color: 'violet', suffix: '' },
           { label: 'POINTS POOL', value: metrics.totalPoints, icon: Award, color: 'amber', suffix: '' },
-          { label: 'RACES', value: metrics.racesCompleted, icon: Zap, color: 'orange', suffix: '' },
-          { label: 'CHALLENGES', value: metrics.challengesCompleted, icon: Target, color: 'blue', suffix: '' },
-          { label: 'TASKS DONE', value: metrics.tasksCompleted, icon: Database, color: 'green', suffix: '' },
-          { label: 'AVG WPM', value: metrics.avgWPM, icon: BarChart3, color: 'pink', suffix: ' WPM' }
+          { label: 'TASKS DONE', value: metrics.tasksCompleted, icon: Database, color: 'green', suffix: '' }
         ].map((metric, idx) => (
           <motion.div
             key={metric.label}

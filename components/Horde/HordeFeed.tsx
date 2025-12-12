@@ -55,7 +55,7 @@ export const HordeFeed: React.FC = () => {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, username, avatar_url, bio, tasks_completed, tasks_forfeited, status, max_wpm, orbit_points, is_admin, can_customize_ai')
+        .select('id, username, avatar_url, bio, tasks_completed, tasks_forfeited, status, orbit_points, is_admin, can_customize_ai')
         .eq('id', userId)
         .single();
 

@@ -155,7 +155,6 @@ export const EditIdentityModal: React.FC<EditIdentityModalProps> = ({ onClose })
     tasks_completed: currentUser.stats?.tasksCompleted ?? 0,
     tasks_forfeited: currentUser.stats?.tasksForfeited ?? 0,
     status: 'Online',
-    max_wpm: currentUser.max_wpm,
     orbit_points: currentUser.orbit_points,
     is_admin: currentUser.isAdmin,
     can_customize_ai: currentUser.can_customize_ai

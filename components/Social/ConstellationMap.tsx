@@ -283,7 +283,6 @@ export default function ConstellationMap({ users }: ConstellationMapProps) {
               tasks_completed: selectedUser.stats.tasksCompleted,
               tasks_forfeited: selectedUser.stats.tasksForfeited,
               status: onlineUsers.includes(selectedUser.id) ? 'Online' : 'Offline',
-              max_wpm: selectedUser.max_wpm,
               orbit_points: selectedUser.orbit_points,
               is_admin: selectedUser.isAdmin,
               can_customize_ai: selectedUser.can_customize_ai

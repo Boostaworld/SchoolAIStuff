@@ -47,7 +47,7 @@ export function BlackMarket() {
       // Fetch shop items
       const { data: items } = await supabase
         .from('shop_items')
-        .select('*')
+        .select('id, name, description, item_type, price, rarity, preview_url, metadata, is_active')
         .eq('is_active', true)
         .order('rarity', { ascending: false });
 

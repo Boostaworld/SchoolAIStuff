@@ -9,6 +9,21 @@ import { groupMessagesByDate } from '../../lib/utils/messageGrouping';
 import { supabase } from '../../lib/supabase';
 import { ConfirmModal } from '../Shared/ConfirmModal';
 
+// Helper function to format relative time
+function formatRelativeTime(isoString: string): string {
+  const now = Date.now();
+  const then = new Date(isoString).getTime();
+  const diffMins = Math.floor((now - then) / 60000);
+
+  if (diffMins < 1) return 'now';
+  if (diffMins < 60) return `${diffMins}m`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}h`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 7) return `${diffDays}d`;
+  return new Date(isoString).toLocaleDateString();
+}
+
 export default function CommsPage() {
   const {
     dmChannels,
@@ -150,12 +165,25 @@ export default function CommsPage() {
                         )}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-cyan-200 font-mono font-semibold truncate">
-                          {otherUser?.username || 'Unknown'}
-                        </p>
-                        <p className="text-cyan-500/60 text-xs font-mono truncate">
-                          {online ? 'ONLINE' : 'OFFLINE'}
-                        </p>
+                        <div className="flex items-center justify-between mb-1">
+                          <p className="text-cyan-200 font-mono font-semibold truncate">
+                            {otherUser?.username || 'Unknown'}
+                          </p>
+                          {channel.lastMessageAt && (
+                            <span className="text-xs text-cyan-500/50 font-mono ml-2 flex-shrink-0">
+                              {formatRelativeTime(channel.lastMessageAt)}
+                            </span>
+                          )}
+                        </div>
+                        {channel.lastMessagePreview ? (
+                          <p className="text-sm text-cyan-400/60 font-mono truncate">
+                            {channel.lastMessagePreview}
+                          </p>
+                        ) : (
+                          <p className="text-xs text-cyan-500/60 font-mono truncate">
+                            {online ? 'ONLINE' : 'OFFLINE'}
+                          </p>
+                        )}
                       </div>
                     </div>
                   </motion.button>

@@ -3,17 +3,18 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useOrbitStore } from '@/store/useOrbitStore';
 import { supabase } from '@/lib/supabase';
 import { toast } from '@/lib/toast';
-import { Shield, Users, Edit, Trash2, Ban, Crown, Sparkles, Search, CheckCircle2, XCircle, Calendar, FlaskConical, Bell } from 'lucide-react';
+import { Shield, Users, Edit, Trash2, Ban, Crown, Sparkles, Search, CheckCircle2, XCircle, Calendar, FlaskConical, Bell, Headphones, Megaphone } from 'lucide-react';
 import { ScheduleEditor } from '../Schedule/ScheduleEditor';
 import { updateFaviconBadge, requestNotificationPermission } from '@/lib/utils/notifications';
 import { ConfirmModal } from '../Shared/ConfirmModal';
+import { AdminReportsPanel } from './AdminReportsPanel';
+import { AnnouncementsAdminPanel } from './AnnouncementsAdminPanel';
 
 interface UserProfile {
   id: string;
   username: string;
   avatar_url: string | null;
   orbit_points: number;
-  max_wpm: number;
   is_admin: boolean;
   can_customize_ai: boolean;
   unlocked_models: string[];
@@ -25,7 +26,7 @@ interface UserProfile {
 export function GodModePanel() {
   const { currentUser } = useOrbitStore();
   const isAdminUser = currentUser?.is_admin;
-  const [activeTab, setActiveTab] = useState<'users' | 'schedule' | 'debug'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'schedule' | 'reports' | 'debug' | 'announcements'>('users');
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
@@ -410,6 +411,26 @@ export function GodModePanel() {
             <FlaskConical className="w-4 h-4" />
             Debug/Testing
           </button>
+          <button
+            onClick={() => setActiveTab('reports')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm uppercase tracking-wider transition-all ${activeTab === 'reports'
+              ? 'bg-amber-500/20 text-amber-400 border-2 border-amber-500/50 shadow-lg shadow-amber-900/30'
+              : 'bg-slate-800/50 text-slate-400 border-2 border-slate-700 hover:border-slate-600'
+              }`}
+          >
+            <Headphones className="w-4 h-4" />
+            Support Reports
+          </button>
+          <button
+            onClick={() => setActiveTab('announcements')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm uppercase tracking-wider transition-all ${activeTab === 'announcements'
+              ? 'bg-green-500/20 text-green-400 border-2 border-green-500/50 shadow-lg shadow-green-900/30'
+              : 'bg-slate-800/50 text-slate-400 border-2 border-slate-700 hover:border-slate-600'
+              }`}
+          >
+            <Megaphone className="w-4 h-4" />
+            Announcements
+          </button>
         </div>
 
         {/* Search Bar (Users tab only) */}
@@ -482,7 +503,6 @@ export function GodModePanel() {
                       </div>
                       <div className="flex items-center gap-4 mt-1 text-xs text-slate-500 font-mono">
                         <span>💰 {user.orbit_points} PTS</span>
-                        <span>⚡ {user.max_wpm} WPM</span>
                         <span>✅ {user.tasks_completed} tasks</span>
                         <span>❌ {user.tasks_forfeited} forfeited</span>
                       </div>
@@ -598,6 +618,20 @@ export function GodModePanel() {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Support Reports Tab */}
+      {activeTab === 'reports' && (
+        <div className="flex-1 overflow-y-auto p-6 relative z-10">
+          <AdminReportsPanel />
+        </div>
+      )}
+
+      {/* Announcements Tab */}
+      {activeTab === 'announcements' && (
+        <div className="flex-1 overflow-y-auto p-6 relative z-10">
+          <AnnouncementsAdminPanel />
         </div>
       )}
 

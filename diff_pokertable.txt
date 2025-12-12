@@ -1,0 +1,145 @@
+diff --git a/components/Games/PokerTable.tsx b/components/Games/PokerTable.tsx
+index 7a9aac5..e29d71b 100644
+--- a/components/Games/PokerTable.tsx
++++ b/components/Games/PokerTable.tsx
+@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion';
+ import { useOrbitStore } from '../../store/useOrbitStore';
+ import { PokerCard } from './PokerCard';
+ import { PokerControls } from './PokerControls';
+-import { User, LogOut, Trophy } from 'lucide-react';
++import { User, LogOut, Trophy, RefreshCw } from 'lucide-react';
+ import { clsx } from 'clsx';
+ import { PokerGamePlayer, PokerGame } from '../../lib/poker/types';
+ import { detectAnimationTriggers } from '../../lib/poker/animationTriggers';
+@@ -29,6 +29,8 @@ export const PokerTable: React.FC<PokerTableProps> = ({ gameId, onLeave }) => {
+         leavePokerGame,
+         addPokerAnimation,
+         currentPokerAnimation
++        ,
++        rebuyPokerPlayer
+     } = useOrbitStore();
+ 
+     // Previous game state tracking for animation triggers
+@@ -122,8 +124,8 @@ export const PokerTable: React.FC<PokerTableProps> = ({ gameId, onLeave }) => {
+         // Determine if it's hero's turn
+         const isHeroTurn = hero && game.current_turn_player_id === hero.id && game.status === 'in_progress';
+ 
+-        // Calculate min raise (simplified: current bet + big blind)
+-        const minRaise = currentTableBet + (game.big_blind || 0);
++        // Calculate min raise (simplified: at least big blind above current table bet)
++        const minRaise = Math.max(currentTableBet + (game.big_blind || 0), currentTableBet + 1);
+ 
+         return {
+             game,
+@@ -141,9 +143,13 @@ export const PokerTable: React.FC<PokerTableProps> = ({ gameId, onLeave }) => {
+     const hero = gameState?.hero;
+     const currentTableBet = gameState?.currentTableBet || 0;
+     const isHeroTurn = gameState?.isHeroTurn || false;
+-    const minRaise = gameState?.minRaise || 0;
++    const bigBlind = game?.big_blind || 0;
++    const minRaise = Math.max(gameState?.minRaise || 0, currentTableBet + Math.max(bigBlind, 1));
+ 
+     const heroSeat = hero?.position || 0;
++    const heroChips = hero?.chips || 0;
++    const heroIsBusted = heroChips <= 0;
++    const isWaitingForPlayers = game?.status === 'waiting';
+ 
+     // Calculate display positions relative to hero (Hero is always at bottom/index 0)
+     const getDisplayPosition = (seatIndex: number) => {
+@@ -161,7 +167,7 @@ export const PokerTable: React.FC<PokerTableProps> = ({ gameId, onLeave }) => {
+         5: "bottom-20 right-12"
+     };
+ 
+-    const callAmount = currentTableBet - (hero?.current_bet || 0);
++    const callAmount = Math.max(0, currentTableBet - (hero?.current_bet || 0));
+ 
+     const computeSeatCoords = () => {
+         const vw = typeof window !== 'undefined' ? window.innerWidth : 1280;
+@@ -507,34 +513,62 @@ export const PokerTable: React.FC<PokerTableProps> = ({ gameId, onLeave }) => {
+                 </div >
+             </div >
+ 
+-    {/* Controls Area (Fixed Bottom) */ }
+-    < div className = "h-32 w-full bg-gradient-to-t from-slate-950 to-transparent relative z-40" >
++    {/* Controls / Waiting / Rebuy Area */ }
++    <div className="h-32 w-full bg-gradient-to-t from-slate-950 to-transparent relative z-40">
+         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 w-full max-w-3xl">
+-            <PokerControls
+-                onAction={(action, amount) => {
+-                    // Trigger bet animation for call/raise/all-in
+-                    if (action === 'call' && callAmount > 0) {
+-                        setBetAnimationAmount(callAmount);
+-                        setShowBetAnimation(true);
+-                    } else if (action === 'raise' && amount) {
+-                        setBetAnimationAmount(amount);
+-                        setShowBetAnimation(true);
+-                    } else if (action === 'all_in') {
+-                        setBetAnimationAmount(hero?.chips || 0);
+-                        setShowBetAnimation(true);
+-                    }
++            {heroIsBusted ? (
++                <div className="flex flex-col items-center justify-center gap-3 p-4 bg-slate-900/80 border border-red-500/40 rounded-xl text-red-200">
++                    <div className="font-mono text-sm">You are out of chips.</div>
++                    <button
++                        onClick={() => rebuyPokerPlayer(gameId)}
++                        className="flex items-center gap-2 px-4 py-2 bg-red-500/20 hover:bg-red-500/30 border border-red-400/60 rounded-lg text-red-100 font-mono text-sm transition-colors"
++                    >
++                        <RefreshCw className="w-4 h-4" />
++                        <span>Rebuy and Rejoin</span>
++                    </button>
++                </div>
++            ) : isWaitingForPlayers ? (
++                <div className="flex items-center justify-center gap-3 p-4 bg-slate-900/70 border border-slate-700 rounded-xl text-slate-200 font-mono text-sm">
++                    <RefreshCw className="w-4 h-4 animate-spin" />
++                    Waiting for opponents to join/rebuy...
++                </div>
++            ) : (
++                <PokerControls
++                    onAction={(action, amount) => {
++                        // Normalize wager amount so we always send the actual contribution
++                        const resolvedAmount =
++                            action === 'call'
++                                ? callAmount
++                                : action === 'all_in'
++                                    ? (hero?.chips || 0)
++                                    : action === 'check'
++                                        ? 0
++                                        : amount;
++
++                        // Trigger bet animation for call/raise/all-in
++                        if (action === 'call' && resolvedAmount && resolvedAmount > 0) {
++                            setBetAnimationAmount(resolvedAmount);
++                            setShowBetAnimation(true);
++                        } else if (action === 'raise' && resolvedAmount) {
++                            setBetAnimationAmount(resolvedAmount);
++                            setShowBetAnimation(true);
++                        } else if (action === 'all_in' && resolvedAmount) {
++                            setBetAnimationAmount(resolvedAmount);
++                            setShowBetAnimation(true);
++                        }
+ 
+-                    performPokerAction(gameId, action, amount);
+-                }}
+-                minRaise={minRaise}
+-                maxRaise={hero?.chips || 0}
+-                currentBet={currentTableBet}
+-                playerChips={hero?.chips || 0}
+-                isTurn={isHeroTurn}
+-                canCheck={callAmount === 0}
+-            />
++                        performPokerAction(gameId, action, resolvedAmount);
++                    }}
++                    minRaise={minRaise}
++                    maxRaise={hero?.chips || 0}
++                    currentBet={currentTableBet}
++                    playerChips={hero?.chips || 0}
++                    isTurn={isHeroTurn}
++                    canCheck={callAmount === 0}
++                />
++            )}
+         </div>
+-            </div >
++    </div>
+ 
+     {/* Betting Animation (Orbit → Pot) */ }
+ {/* DISABLED: Coin animation causes lag */ }

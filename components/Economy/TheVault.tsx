@@ -39,8 +39,9 @@ export function TheVault() {
         try {
             const { data: files } = await supabase
                 .from('vault_files')
-                .select('*')
-                .order('created_at', { ascending: false });
+                .select('id, file_name, file_url, file_type, file_size, course_tag, teacher_name, unlock_cost, download_count, created_at, uploader_id')
+                .order('created_at', { ascending: false })
+                .limit(50);
 
             const { data: access } = await supabase
                 .from('vault_access')
@@ -182,8 +183,8 @@ export function TheVault() {
                         key={course}
                         onClick={() => setSelectedCourse(course)}
                         className={`px-4 py-2 rounded-lg whitespace-nowrap transition-colors ${selectedCourse === course
-                                ? 'bg-purple-500/20 text-purple-400 border-2 border-purple-500'
-                                : 'bg-slate-800 text-slate-400 hover:text-slate-200 border-2 border-transparent'
+                            ? 'bg-purple-500/20 text-purple-400 border-2 border-purple-500'
+                            : 'bg-slate-800 text-slate-400 hover:text-slate-200 border-2 border-transparent'
                             }`}
                     >
                         {course === 'all' ? 'All Courses' : course}
@@ -340,8 +341,8 @@ function UploadModal({
                     onDragOver={handleDrag}
                     onDrop={handleDrop}
                     className={`border-2 border-dashed rounded-lg p-8 mb-4 text-center transition-colors ${dragActive
-                            ? 'border-purple-500 bg-purple-500/10'
-                            : 'border-slate-600 hover:border-slate-500'
+                        ? 'border-purple-500 bg-purple-500/10'
+                        : 'border-slate-600 hover:border-slate-500'
                         }`}
                 >
                     <Upload className="mx-auto mb-2 text-slate-400" size={48} />

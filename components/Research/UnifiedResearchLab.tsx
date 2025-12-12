@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Upload, Send, X, Loader2, Image as ImageIcon, MessageSquare, Settings as SettingsIcon, Trash2, BrainCircuit, Sparkles, Share2, FolderOpen, Plus, Search, Zap, Globe, Sliders, FileText, ExternalLink, Copy, BookOpen, Crown, Pencil, ChevronUp, ChevronDown } from 'lucide-react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { Upload, Send, X, Loader2, Image as ImageIcon, MessageSquare, Settings as SettingsIcon, Trash2, BrainCircuit, Sparkles, Share2, FolderOpen, Plus, Search, Zap, Globe, Sliders, FileText, ExternalLink, Copy, BookOpen, Crown, Pencil, ChevronUp, ChevronDown, Link } from 'lucide-react';
 import { DynamicTextarea } from '../Shared/DynamicTextarea';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useOrbitStore } from '../../store/useOrbitStore';
 import { LockedResearchLab } from './LockedResearchLab';
 import { useToast } from '../Shared/ToastManager';
-import { analyzeImageWithVision, analyzeGoogleForm, VisionMessage, sendChatMessage, ChatRequest } from '../../lib/ai/gemini';
+import { analyzeImageWithVision, analyzeGoogleForm, VisionMessage, sendChatMessage, ChatRequest, GroundingSource } from '../../lib/ai/gemini';
 import { runIntelQuery, IntelResult } from '../../lib/ai/intel';
 import { improvePrompt, PromptMode } from '../../lib/ai/promptImprover';
 import clsx from 'clsx';
@@ -23,6 +23,8 @@ interface ChatMessage {
     text: string;
     thinking?: string;
     timestamp: Date;
+    urlContextUsed?: boolean;
+    sources?: GroundingSource[];
 }
 
 interface ResearchTopic {
@@ -500,9 +502,18 @@ export const UnifiedResearchLab: React.FC = () => {
     // ============================================================================
     // HANDLERS
     // ============================================================================
+
+    // URL detection helper - check if model supports URL context
+    const supportsUrlContext = (model: string) => model.includes('gemini-3');
+
     const handleQuickChatSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!quickChatInput.trim() || quickChatLoading) return;
+
+        // Detect URLs in input
+        const urlRegex = /(https?:\/\/[^\s]+)/gi;
+        const detectedUrls = quickChatInput.match(urlRegex) || [];
+        const hasUrls = detectedUrls.length > 0 && supportsUrlContext(quickChatModel);
 
         const userMessage: ChatMessage = {
             id: Date.now().toString(),
@@ -511,13 +522,22 @@ export const UnifiedResearchLab: React.FC = () => {
             timestamp: new Date()
         };
 
+        // Show toast if URLs detected and model supports URL context
+        if (hasUrls) {
+            toastManager.info('🌐 Fetching URL context...', {
+                description: `${detectedUrls.length} URL${detectedUrls.length > 1 ? 's' : ''} detected`,
+                duration: 3000
+            });
+        }
+
         setQuickChatMessages(prev => [...prev, userMessage]);
+        const inputToSend = quickChatInput;
         setQuickChatInput('');
         setQuickChatLoading(true);
 
         try {
             const request: ChatRequest = {
-                message: quickChatInput,
+                message: inputToSend,
                 model: quickChatModel,
                 thinkingLevel: quickChatThinking ? quickChatThinkingLevel : undefined,
                 temperature: quickChatTemp,
@@ -532,11 +552,21 @@ export const UnifiedResearchLab: React.FC = () => {
                 role: 'model',
                 text: response.text,
                 thinking: response.thinking,
-                timestamp: new Date()
+                timestamp: new Date(),
+                urlContextUsed: response.urlContextUsed,
+                sources: response.sources
             };
 
             setQuickChatMessages(prev => [...prev, aiMessage]);
-            toastManager.success('Response received');
+
+            // Build features-based success message
+            const features: string[] = [];
+            if (response.thinkingUsed) features.push('Thinking');
+            if (response.urlContextUsed) features.push('URL Context');
+
+            toastManager.success('Response received', {
+                description: features.length > 0 ? `Used: ${features.join(' + ')}` : undefined
+            });
         } catch (error: any) {
             toastManager.error('Chat failed', { description: error.message });
         } finally {
@@ -620,6 +650,11 @@ export const UnifiedResearchLab: React.FC = () => {
         e.preventDefault();
         if (!deepResearchInput.trim() || deepResearchLoading || !selectedTopicId) return;
 
+        // Detect URLs in input
+        const urlRegex = /(https?:\/\/[^\s]+)/gi;
+        const detectedUrls = deepResearchInput.match(urlRegex) || [];
+        const hasUrls = detectedUrls.length > 0 && supportsUrlContext(deepResearchModel);
+
         const userMessage: ChatMessage = {
             id: Date.now().toString(),
             role: 'user',
@@ -627,18 +662,27 @@ export const UnifiedResearchLab: React.FC = () => {
             timestamp: new Date()
         };
 
+        // Show toast if URLs detected
+        if (hasUrls) {
+            toastManager.info('🌐 Fetching URL context...', {
+                description: `${detectedUrls.length} URL${detectedUrls.length > 1 ? 's' : ''} detected`,
+                duration: 3000
+            });
+        }
+
         // Update topic with new message
         setTopics(prev => prev.map(t =>
             t.id === selectedTopicId
                 ? { ...t, messages: [...t.messages, userMessage], updatedAt: new Date() }
                 : t
         ));
+        const inputToSend = deepResearchInput;
         setDeepResearchInput('');
         setDeepResearchLoading(true);
 
         try {
             const request: ChatRequest = {
-                message: deepResearchInput,
+                message: inputToSend,
                 model: deepResearchModel,
                 thinkingLevel: deepResearchThinking ? deepResearchThinkingLevel : undefined,
                 systemInstructions: deepResearchSystemInstructions || undefined,
@@ -654,7 +698,9 @@ export const UnifiedResearchLab: React.FC = () => {
                 role: 'model',
                 text: response.text,
                 thinking: response.thinking,
-                timestamp: new Date()
+                timestamp: new Date(),
+                urlContextUsed: response.urlContextUsed,
+                sources: response.sources
             };
 
             setTopics(prev => prev.map(t =>
@@ -662,7 +708,15 @@ export const UnifiedResearchLab: React.FC = () => {
                     ? { ...t, messages: [...t.messages, aiMessage], updatedAt: new Date() }
                     : t
             ));
-            toastManager.success('Research updated');
+
+            // Build features-based success message
+            const features: string[] = [];
+            if (response.thinkingUsed) features.push('Thinking');
+            if (response.urlContextUsed) features.push('URL Context');
+
+            toastManager.success('Research updated', {
+                description: features.length > 0 ? `Used: ${features.join(' + ')}` : undefined
+            });
         } catch (error: any) {
             toastManager.error('Research failed', { description: error.message });
         } finally {
@@ -908,7 +962,9 @@ export const UnifiedResearchLab: React.FC = () => {
     // RENDER
     // ============================================================================
     return (
-        <div className="h-full flex flex-col bg-gradient-to-br from-slate-950 via-black to-slate-950 relative overflow-hidden">
+        <div
+            className="min-h-0 h-full w-full flex flex-col bg-gradient-to-br from-slate-950 via-black to-slate-950 relative overflow-hidden p-3 sm:p-4"
+        >
             {/* Background Grid */}
             <div className="absolute inset-0 opacity-5 pointer-events-none">
                 <div className="absolute inset-0" style={{
@@ -918,8 +974,8 @@ export const UnifiedResearchLab: React.FC = () => {
             </div>
 
             {/* Header with Tabs */}
-            <div className="flex-shrink-0 border-b-2 border-cyan-500/30 bg-black/40 backdrop-blur-sm relative z-10">
-                <div className="px-4 py-3">
+            <div className="flex-shrink-0 border-b-2 border-cyan-500/30 bg-black/40 backdrop-blur-sm relative z-10 w-full">
+                <div className="px-2 sm:px-4 py-3">
                     {/* Status Bar */}
                     <div className="flex items-center justify-between mb-3">
                         <div className="flex items-center gap-3">
@@ -958,7 +1014,7 @@ export const UnifiedResearchLab: React.FC = () => {
             </div>
 
             {/* Content Area */}
-            <div className="flex-1 flex overflow-hidden">
+            <div className="flex-1 flex overflow-hidden w-full min-h-0">
                 <AnimatePresence mode="wait">
                     {/* ========== QUICK CHAT TAB ========== */}
                     {activeTab === 'quick-chat' && (
@@ -967,10 +1023,10 @@ export const UnifiedResearchLab: React.FC = () => {
                             initial={{ opacity: 0, x: -20 }}
                             animate={{ opacity: 1, x: 0 }}
                             exit={{ opacity: 0, x: 20 }}
-                            className="flex-1 flex flex-col overflow-hidden"
+                            className="flex-1 flex flex-col overflow-hidden min-h-0"
                         >
                             {/* Messages */}
-                            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                            <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
                                 {quickChatMessages.length === 0 && (
                                     <div className="flex flex-col items-center justify-center h-full text-center gap-4">
                                         <div className="w-20 h-20 rounded-full bg-slate-800/50 flex items-center justify-center border border-slate-700">
@@ -985,22 +1041,60 @@ export const UnifiedResearchLab: React.FC = () => {
                                 {quickChatMessages.map(msg => (
                                     <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                                         <div className={clsx(
-                                            "max-w-[80%] p-4 rounded-lg border-2",
+                                            "max-w-[80%] p-4 rounded-lg border-2 space-y-2",
                                             msg.role === 'user' ? 'bg-cyan-950/50 border-cyan-500/50' : 'bg-slate-900/50 border-slate-700/50'
                                         )}>
-                                            <div className="flex items-center gap-2 mb-2">
+                                            <div className="flex items-center gap-2 flex-wrap">
                                                 <span className={clsx("text-xs font-mono font-bold", msg.role === 'user' ? 'text-cyan-400' : 'text-slate-400')}>
                                                     {msg.role === 'user' ? 'YOU' : 'AI'}
                                                 </span>
                                                 <span className="text-[10px] text-slate-600 font-mono">{msg.timestamp.toLocaleTimeString()}</span>
+                                                {/* URL Context Badge */}
+                                                {msg.urlContextUsed && (
+                                                    <span className="px-2 py-0.5 rounded-full bg-blue-500/20 border border-blue-500/40 text-blue-300 text-[10px] font-mono font-bold flex items-center gap-1">
+                                                        <Globe className="w-3 h-3" />
+                                                        URL Context
+                                                    </span>
+                                                )}
                                             </div>
                                             {msg.thinking && (
-                                                <details className="bg-slate-800/50 rounded p-2 border border-emerald-500/30 mb-2">
+                                                <details className="bg-slate-800/50 rounded p-2 border border-emerald-500/30">
                                                     <summary className="cursor-pointer text-xs font-mono text-emerald-400 font-bold flex items-center gap-2">
                                                         <BrainCircuit className="w-3 h-3" /> View Thinking
                                                     </summary>
                                                     <div className="mt-2 text-xs text-slate-400 font-mono leading-relaxed whitespace-pre-wrap max-h-32 overflow-y-auto">
                                                         {msg.thinking}
+                                                    </div>
+                                                </details>
+                                            )}
+                                            {/* Sources Panel */}
+                                            {msg.sources && msg.sources.length > 0 && (
+                                                <details className="bg-slate-800/50 rounded p-2 border border-blue-500/30">
+                                                    <summary className="cursor-pointer text-xs font-mono text-blue-400 font-bold flex items-center gap-2">
+                                                        <Link className="w-3 h-3" /> View Sources ({msg.sources.length})
+                                                    </summary>
+                                                    <div className="mt-2 space-y-2 max-h-48 overflow-y-auto">
+                                                        {msg.sources.map((source, idx) => (
+                                                            <a
+                                                                key={idx}
+                                                                href={source.url}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="block text-xs p-2 rounded bg-slate-900/50 border border-slate-700 hover:border-blue-500/50 transition-colors group"
+                                                            >
+                                                                <div className="flex items-start gap-2">
+                                                                    <Globe className="w-3 h-3 text-blue-400 mt-0.5 flex-shrink-0" />
+                                                                    <div className="min-w-0 flex-1">
+                                                                        <p className="text-blue-300 font-mono truncate group-hover:text-blue-200">
+                                                                            {source.title || 'Web Source'}
+                                                                        </p>
+                                                                        <p className="text-slate-500 text-[10px] truncate mt-0.5">
+                                                                            {source.url}
+                                                                        </p>
+                                                                    </div>
+                                                                </div>
+                                                            </a>
+                                                        ))}
                                                     </div>
                                                 </details>
                                             )}

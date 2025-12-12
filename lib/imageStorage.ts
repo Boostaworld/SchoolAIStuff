@@ -21,8 +21,9 @@ export interface GeneratedImage {
   user_id: string;
   folder_id?: string;
 
-  // Image Data
-  image_url: string;
+  // Image Data - NEW: Use storage_url (Supabase Storage), image_url is deprecated
+  storage_url?: string;  // Supabase Storage URL (preferred)
+  image_url?: string;    // DEPRECATED: base64 data (kept for migration)
   thumbnail_url?: string;
 
   // Generation Parameters
@@ -165,14 +166,78 @@ export async function deleteFolder(folderId: string): Promise<void> {
 // IMAGE FUNCTIONS
 // ====================================
 
+// Columns to fetch for gallery listing
+// Now includes storage_url since it's just a URL string, not base64 data
+const GALLERY_COLUMNS = `
+  id,
+  user_id,
+  folder_id,
+  storage_url,
+  prompt,
+  negative_prompt,
+  model,
+  aspect_ratio,
+  style,
+  resolution,
+  web_search_used,
+  thinking_enabled,
+  created_at,
+  is_favorite,
+  tags,
+  notes,
+  download_count,
+  view_count
+`;
+
+/**
+ * Upload a base64 image to Supabase Storage
+ * Returns the public URL of the uploaded image
+ */
+async function uploadBase64ToStorage(
+  base64Data: string,
+  userId: string,
+  imageId: string
+): Promise<string> {
+  // Convert base64 data URL to Blob
+  const response = await fetch(base64Data);
+  const blob = await response.blob();
+
+  // Generate unique file path: {user_id}/{image_id}.png
+  const filePath = `${userId}/${imageId}.png`;
+
+  // Upload to Supabase Storage
+  const { data, error } = await supabase.storage
+    .from('generated-images')
+    .upload(filePath, blob, {
+      contentType: 'image/png',
+      upsert: false
+    });
+
+  if (error) {
+    console.error('Storage upload error:', error);
+    throw new Error(`Failed to upload image: ${error.message}`);
+  }
+
+  // Get public URL
+  const { data: urlData } = supabase.storage
+    .from('generated-images')
+    .getPublicUrl(data.path);
+
+  return urlData.publicUrl;
+}
+
 /**
  * Get all images for the current user, optionally filtered by folder
+ * Images are served via storage_url (Supabase Storage CDN)
+ * @param folderId - Optional folder ID to filter by (null for uncategorized)
+ * @param limit - Maximum number of images to return (default 50)
  */
-export async function getImages(folderId?: string): Promise<GeneratedImage[]> {
+export async function getImages(folderId?: string, limit: number = 50): Promise<Partial<GeneratedImage>[]> {
   let query = supabase
     .from('generated_images')
-    .select('*')
-    .order('created_at', { ascending: false });
+    .select(GALLERY_COLUMNS)
+    .order('created_at', { ascending: false })
+    .limit(limit);
 
   if (folderId !== undefined) {
     if (folderId === null || folderId === 'uncategorized') {
@@ -212,6 +277,7 @@ export async function getImage(imageId: string): Promise<GeneratedImage> {
 
 /**
  * Save a newly generated image
+ * Uploads image to Supabase Storage first, then saves metadata to database
  */
 export async function saveImage(params: CreateImageParams): Promise<GeneratedImage> {
   const { data: { user } } = await supabase.auth.getUser();
@@ -220,11 +286,26 @@ export async function saveImage(params: CreateImageParams): Promise<GeneratedIma
     throw new Error('User not authenticated');
   }
 
+  // Generate a unique ID for this image
+  const imageId = crypto.randomUUID();
+
+  // Upload to Supabase Storage first
+  let storageUrl: string;
+  try {
+    storageUrl = await uploadBase64ToStorage(params.image_url, user.id, imageId);
+  } catch (uploadError: any) {
+    console.error('Failed to upload to storage:', uploadError);
+    throw new Error(`Image upload failed: ${uploadError.message}`);
+  }
+
+  // Insert metadata into database (no base64 data - just the URL)
   const { data, error } = await supabase
     .from('generated_images')
     .insert({
+      id: imageId,
       user_id: user.id,
-      image_url: params.image_url,
+      storage_url: storageUrl,  // Store the CDN URL, not base64
+      // image_url is intentionally NOT set - we don't store base64 anymore
       prompt: params.prompt,
       negative_prompt: params.negative_prompt,
       model: params.model,
@@ -242,11 +323,12 @@ export async function saveImage(params: CreateImageParams): Promise<GeneratedIma
     .single();
 
   if (error) {
-    console.error('Error saving image:', error);
+    console.error('Error saving image metadata:', error);
     throw new Error(error.message);
   }
 
-  return data;
+  // Return with storage_url populated
+  return { ...data, storage_url: storageUrl };
 }
 
 /**
