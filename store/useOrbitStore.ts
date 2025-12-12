@@ -3054,9 +3054,16 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     }
   },
 
+
+
   processAITurn: async (gameId: string, aiPlayerId: string) => {
     const { activePokerGame, currentUser } = get();
     if (!activePokerGame || activePokerGame.game.id !== gameId) return;
+
+    // Guard against stale calls if the turn already moved
+    if (activePokerGame.game.current_turn_player_id !== aiPlayerId) {
+      return;
+    }
 
     // God Mode: Either explicitly set via `expert_god` difficulty, OR expert + permission
     const hasGemini3Permission = currentUser?.unlocked_models?.includes('gemini-3-pro');
@@ -3068,22 +3075,28 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       activePokerGame.game.ai_difficulty === 'expert' ? 1500 :
         activePokerGame.game.ai_difficulty === 'novice' ? 1000 : 1200;
 
-    console.log(`⏱️ AI turn delay: ${delay / 1000}s${useGodMode ? ' (GOD MODE)' : ''}`);
+    console.log(`AI turn delay: ${delay / 1000}s${useGodMode ? ' (GOD MODE)' : ''}`);
     await new Promise(resolve => setTimeout(resolve, delay));
 
-    const currentPlayer = activePokerGame.players.find(p => p.id === aiPlayerId);
+    // Re-check the turn after the delay to avoid acting out of turn
+    const latestState = get().activePokerGame;
+    if (!latestState || latestState.game.id !== gameId || latestState.game.current_turn_player_id !== aiPlayerId) {
+      return;
+    }
+
+    const currentPlayer = latestState.players.find(p => p.id === aiPlayerId);
     if (!currentPlayer || !currentPlayer.hole_cards) return;
 
     // Build game state for AI
     const gameState = {
-      potAmount: activePokerGame.game.pot_amount,
-      currentRound: activePokerGame.game.current_round || 'pre_flop',
-      communityCards: (activePokerGame.game.community_cards || []).map((c: any) =>
+      potAmount: latestState.game.pot_amount,
+      currentRound: latestState.game.current_round || 'pre_flop',
+      communityCards: (latestState.game.community_cards || []).map((c: any) =>
         typeof c === 'string' ? c : `${c.rank}${c.suit}`
       ),
-      highestBet: Math.max(...activePokerGame.players.map(p => p.current_bet || 0)),
-      bigBlind: activePokerGame.game.big_blind,
-      players: activePokerGame.players.map(p => ({
+      highestBet: Math.max(...latestState.players.map(p => p.current_bet || 0)),
+      bigBlind: latestState.game.big_blind,
+      players: latestState.players.map(p => ({
         name: p.username || p.ai_name || 'Unknown',
         chips: p.chips,
         currentBet: p.current_bet || 0,
@@ -3096,14 +3109,22 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
     // Import the AI decision maker dynamically to avoid circular deps
     const { makePokerDecision } = await import('../lib/poker/aiPlayer');
 
-    // Get AI decision using Gemini (with god mode if permitted)
-    const decision = await makePokerDecision(
-      currentPlayer,
-      currentPlayer.hole_cards,
-      gameState,
-      activePokerGame.game.ai_difficulty || 'intermediate',
-      useGodMode
-    );
+    // Hard timeout + fallback so the turn never hangs on a slow model
+    const callAmount = Math.max(0, gameState.highestBet - (currentPlayer.current_bet || 0));
+    const decision = await Promise.race([
+      makePokerDecision(
+        currentPlayer,
+        currentPlayer.hole_cards,
+        gameState,
+        latestState.game.ai_difficulty || 'intermediate',
+        useGodMode
+      ),
+      new Promise((resolve) => setTimeout(() => resolve({
+        action: callAmount === 0 ? 'check' : 'call',
+        amount: callAmount,
+        reasoning: 'Timeout fallback'
+      }), 7000))
+    ]) as { action: any; amount: number; reasoning?: string };
 
     // Store reasoning for UI display
     set({
@@ -3117,11 +3138,15 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       }
     });
 
+    // Final guard to avoid firing if turn already moved while thinking
+    if (get().activePokerGame?.game.current_turn_player_id !== aiPlayerId) {
+      return;
+    }
+
     // Execute the decision
-    console.log(`🤖 AI ${currentPlayer.ai_name} plays: ${decision.action} ${decision.amount}`);
+    console.log(`AI ${currentPlayer.ai_name} plays: ${decision.action} ${decision.amount}`);
     await get().performPokerAction(gameId, decision.action, decision.amount, currentPlayer.id);
   },
-
   performPokerAction: async (gameId, action, amount, playerId) => {
     const { currentUser, activePokerGame } = get();
     // Allow action if currentUser is present OR if playerId (AI) is provided
