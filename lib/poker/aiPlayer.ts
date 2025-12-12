@@ -411,23 +411,57 @@ Do NOT include chain-of-thought, analysis, or any text outside the JSON.`;
  * Basic fallback decision when API is unavailable.
  */
 function makeBasicDecision(aiPlayer: PokerGamePlayer, gameState: PokerGameState): AIDecision {
-    const callAmount = gameState.highestBet - aiPlayer.current_bet;
+    const callAmount = Math.max(0, gameState.highestBet - aiPlayer.current_bet);
     const canCheck = callAmount <= 0;
+    const stack = aiPlayer.chips;
+    const minRaise = Math.max(gameState.highestBet + gameState.bigBlind, gameState.highestBet + 1);
+
+    // Helper to clamp a desired total bet into a legal raise/all-in
+    const resolveRaiseTarget = (targetTotal: number) => {
+        const clamped = Math.min(Math.max(targetTotal, minRaise), stack + aiPlayer.current_bet);
+        return clamped;
+    };
+
+    // If broke or tiny stack, default to all-in or fold logic
+    if (stack <= 0) {
+        return { action: 'fold', amount: 0, reasoning: 'No chips left.' };
+    }
 
     if (canCheck) {
-        return { action: 'check', amount: 0, reasoning: 'No bet to call, checking.' };
-    } else if (aiPlayer.chips >= callAmount) {
-        // 70% call, 30% fold for basic AI
-        if (Math.random() > 0.3) {
-            return { action: 'call', amount: callAmount, reasoning: 'Calling to stay in the hand.' };
-        } else {
-            return { action: 'fold', amount: 0, reasoning: 'Folding weak hand.' };
+        // With no pressure, be semi-aggressive ~40% of the time to grow pots
+        const shouldRaise = stack > gameState.bigBlind * 4 && Math.random() < 0.4;
+        if (!shouldRaise) {
+            return { action: 'check', amount: 0, reasoning: 'Free check.' };
         }
-    } else {
-        return { action: 'fold', amount: 0, reasoning: 'Cannot afford to call.' };
-    }
-}
 
+        const targetTotal = gameState.highestBet + gameState.bigBlind * 2;
+        return {
+            action: 'raise',
+            amount: resolveRaiseTarget(targetTotal),
+            reasoning: 'Pressing the pot after a free check opportunity.'
+        };
+    }
+
+    // Facing a bet
+    if (callAmount >= stack) {
+        // Short stack facing a bet: shove
+        return { action: 'all_in', amount: stack, reasoning: 'Short-stacked, shoving over a bet.' };
+    }
+
+    // Aggressive branch ~35% when we have room to raise
+    const canRaise = stack + aiPlayer.current_bet > minRaise && stack > callAmount * 2;
+    if (canRaise && Math.random() < 0.35) {
+        const targetTotal = gameState.highestBet + Math.max(gameState.bigBlind * 2, callAmount * 2);
+        return {
+            action: 'raise',
+            amount: resolveRaiseTarget(targetTotal),
+            reasoning: 'Applying pressure with a raise.'
+        };
+    }
+
+    // Default: call to continue
+    return { action: 'call', amount: callAmount, reasoning: 'Calling to continue.' };
+}
 
 
 
