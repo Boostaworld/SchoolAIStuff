@@ -122,7 +122,40 @@ CREATE INDEX IF NOT EXISTS idx_profiles_orbit_points
   ON profiles(orbit_points DESC);
 
 -- ============================================
--- 3. VERIFICATION
+-- 3. ADDITIONAL INDEXES (Added Dec 2024)
+-- ============================================
+
+-- Index for poker lobby listing (status + created_at for filtered ordering)
+CREATE INDEX IF NOT EXISTS idx_poker_games_lobby 
+  ON poker_games(status, created_at DESC) 
+  WHERE status IN ('waiting', 'in_progress');
+
+-- Index for user's active tasks (filtered by incomplete)
+CREATE INDEX IF NOT EXISTS idx_tasks_user_active 
+  ON tasks(user_id, completed, created_at DESC) 
+  WHERE completed = false;
+
+-- Index for intel drops feed (filtered by privacy + sorted)
+CREATE INDEX IF NOT EXISTS idx_intel_drops_feed 
+  ON intel_drops(is_private, created_at DESC);
+
+-- Index for user's generated images gallery
+CREATE INDEX IF NOT EXISTS idx_generated_images_user 
+  ON generated_images(user_id, created_at DESC);
+
+-- Index for admin audit log lookups
+CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_admin 
+  ON admin_audit_logs(admin_id, created_at DESC);
+
+-- Index for messages by channel (for chat loading)
+CREATE INDEX IF NOT EXISTS idx_messages_channel_created 
+  ON messages(channel_id, created_at DESC);
+
+-- ============================================
+-- 4. VERIFICATION
 -- ============================================
 -- Run this to verify the function works:
 -- SELECT * FROM get_dm_channels_with_meta('YOUR_USER_ID_HERE');
+
+-- Check existing indexes:
+-- SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = 'public';

@@ -23,6 +23,10 @@ export interface EditImageParams {
     styles?: string[];
     /** Enhancement strength 0-100 */
     enhancementLevel?: number;
+    /** Whether to use optimized prompt generation (AI rewrites your prompt) */
+    optimizePrompt?: boolean;
+    /** Target resolution for output (default: preview) */
+    targetResolution?: 'preview' | '4k';
     /** Specific adjustments */
     adjustments?: {
         lighting?: boolean;
@@ -43,63 +47,171 @@ export interface EditImageResult {
     thoughtImages?: string[];
     /** AI-generated description of what changed */
     description?: string;
+    /** The actual prompt used (useful if optimized) */
+    usedPrompt: string;
 }
 
 /**
+ * Downscale image for faster editing previews
+ * @param base64Str Full resolution base64 string
+ * @param maxDimension details (default 1536 per Gemini best practices)
+ */
+export const downscaleImage = async (base64Str: string, maxDimension = 1536): Promise<string> => {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+
+        // Enable CORS for external URLs (e.g., Supabase Storage)
+        // This prevents the "Tainted canvas" error when calling toDataURL
+        if (!base64Str.startsWith('data:')) {
+            img.crossOrigin = 'anonymous';
+        }
+
+        img.onload = () => {
+            let width = img.width;
+            let height = img.height;
+
+            if (width > maxDimension || height > maxDimension) {
+                if (width > height) {
+                    height = Math.round((height * maxDimension) / width);
+                    width = maxDimension;
+                } else {
+                    width = Math.round((width * maxDimension) / height);
+                    height = maxDimension;
+                }
+            } else {
+                resolve(base64Str); // No resize needed
+                return;
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+                reject(new Error('Could not get canvas context'));
+                return;
+            }
+
+            // High quality smoothing
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            ctx.drawImage(img, 0, 0, width, height);
+
+            // Export as JPEG 0.85 (balanced quality/size)
+            try {
+                resolve(canvas.toDataURL('image/jpeg', 0.85));
+            } catch (e) {
+                // If canvas is still tainted (CORS not allowed by server), 
+                // fall back to original image
+                console.warn('[ImageEditor] Canvas tainted, skipping downscale:', e);
+                resolve(base64Str);
+            }
+        };
+        img.onerror = (e) => {
+            console.warn('[ImageEditor] Image load failed, using original:', e);
+            resolve(base64Str); // Fallback gracefully
+        };
+        img.src = base64Str;
+    });
+};
+
+/**
+ * Uses Gemini 3 Pro with Web Search to improve the user's prompt
+ * specifically for the "Nano Banana Pro" model.
+ */
+export const improvePrompt = async (originalPrompt: string): Promise<string> => {
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-3-pro-preview', // Use text model for this
+            config: {
+                // Enable Google Search for latest prompting tips
+                tools: [{ googleSearch: {} }],
+                systemInstruction: `You are an expert Prompt Engineer for the "Nano Banana Pro" (Gemini 3 Pro Image) model. 
+Your goal is to rewrite the user's raw input into a perfect, highly detailed prompt that follows the latest best practices found online.
+Focus on: Lighting, Composition, Texture, and Specificity.
+Structure the output as a single, potent prompt string.`,
+            },
+            contents: [{
+                role: 'user',
+                parts: [{ text: `Research best prompting techniques for "Nano Banana Pro" or Gemini 3 Pro Image generation. Then, rewrite this simple prompt to be a masterpiece: "${originalPrompt}"` }]
+            }]
+        });
+
+        const enhanced = response.candidates?.[0]?.content?.parts?.[0]?.text;
+        return enhanced || originalPrompt;
+    } catch (e) {
+        console.warn('Prompt improvement failed, using original:', e);
+        return originalPrompt;
+    }
+};
+
+/**
  * Build the enhanced prompt with style modifiers and adjustments
+ * Now uses structured Markdown format for better instruction adherence.
  */
 const buildEnhancedPrompt = (params: EditImageParams): string => {
-    let prompt = params.prompt;
+    let instruction = params.prompt;
+    let styleSection = "";
+    let specsSection = "";
+    let adjustmentsSection = "";
 
-    // Add style modifiers
+    // Add style modifiers to style section
     if (params.styles && params.styles.length > 0) {
         const stylePrompts: Record<string, string> = {
-            'photorealistic': ', hyper-realistic photography, detailed textures',
-            'cinematic': ', cinematic lighting, anamorphic lens flares, movie scene',
-            'digital-art': ', modern digital artwork, clean lines',
-            'vibrant': ', vibrant colors, high saturation, energetic',
-            'cyberpunk': ', neon-soaked futurism, cyberpunk aesthetic',
-            'anime': ', anime art style, cel-shaded',
-            'oil-painting': ', classical oil painting technique, visible brushstrokes',
-            'studio-photo': ', professional studio lighting, clean background'
+            'photorealistic': 'Hyper-realistic photography, detailed textures, 8k resolution',
+            'cinematic': 'Cinematic lighting, anamorphic lens flares, movie scene, wide angle',
+            'digital-art': 'Modern digital artwork, clean lines, octane render',
+            'vibrant': 'Vibrant colors, high saturation, energetic, punchy contrast',
+            'cyberpunk': 'Neon-soaked futurism, cyberpunk aesthetic, night city lights',
+            'anime': 'Anime art style, cel-shaded, Studio Ghibli inspired',
+            'oil-painting': 'Classical oil painting technique, visible brushstrokes, impasto',
+            'studio-photo': 'Professional studio lighting, clean background, rim lighting'
         };
 
-        params.styles.forEach(style => {
-            if (stylePrompts[style]) {
-                prompt += stylePrompts[style];
-            }
-        });
+        const activeStyles = params.styles
+            .map(s => stylePrompts[s])
+            .filter(Boolean)
+            .join(', ');
+
+        if (activeStyles) styleSection = activeStyles;
     }
 
-    // Add adjustments
+    // Add adjustments to technical specs
     if (params.adjustments) {
-        if (params.adjustments.lighting) {
-            prompt += ', perfect dramatic lighting, volumetric lighting, natural shadows';
-        }
-        if (params.adjustments.color) {
-            prompt += ', color corrected, vibrant tones, balanced histogram, professional color grading';
-        }
-        if (params.adjustments.sharpness) {
-            prompt += ', ultra sharp focus, high definition, 8k texture, crisp details';
-        }
-        if (params.adjustments.composition) {
-            prompt += ', perfect composition, rule of thirds, golden ratio, balanced framing';
-        }
+        const adj = [];
+        if (params.adjustments.lighting) adj.push('perfect dramatic lighting, volumetric lighting, natural shadows');
+        if (params.adjustments.color) adj.push('color corrected, vibrant tones, balanced histogram, professional color grading');
+        if (params.adjustments.sharpness) adj.push('ultra sharp focus, high definition, 8k texture, crisp details');
+        if (params.adjustments.composition) adj.push('perfect composition, rule of thirds, golden ratio, balanced framing');
+
+        if (adj.length > 0) adjustmentsSection = adj.join(', ');
     }
 
-    // Add enhancement level as a modifier
+    // Enhancement strength logic
+    let intensity = "Standard";
     if (params.enhancementLevel !== undefined) {
-        const strength = params.enhancementLevel;
-        if (strength < 30) {
-            prompt += '. Apply subtle, minimal changes.';
-        } else if (strength < 70) {
-            prompt += '. Apply moderate enhancements while preserving the original character.';
-        } else {
-            prompt += '. Apply significant, dramatic transformations.';
-        }
+        if (params.enhancementLevel < 30) intensity = "Subtle (keep original structure)";
+        else if (params.enhancementLevel > 70) intensity = "High (creative transformation)";
     }
 
-    return prompt;
+    // Structured Prompt Construction
+    return `
+[INSTRUCTION]
+${instruction}
+
+[STYLE]
+${styleSection}
+
+[TECHNICAL SPECS]
+${specsSection}
+${adjustmentsSection}
+
+[INTENSITY]
+${intensity}
+
+[CONSTRAINT]
+Preserve the main subject identity. Ensure high fidelity to the original structure unless Intensity is High.
+`.trim();
 };
 
 /**
@@ -121,21 +233,43 @@ const extractBase64Data = (image: string): { mimeType: string; data: string } =>
  * @returns Edited image and new thoughtSignature for chained edits
  */
 export const editImage = async (params: EditImageParams): Promise<EditImageResult> => {
-    const enhancedPrompt = buildEnhancedPrompt(params);
-    const { mimeType, data } = extractBase64Data(params.sourceImage);
+    let finalPrompt = params.prompt;
+
+    // Auto-optimize prompt if requested
+    if (params.optimizePrompt) {
+        try {
+            finalPrompt = await improvePrompt(params.prompt);
+            console.log('[ImageEditor] Optimized prompt:', finalPrompt);
+        } catch (e) {
+            console.warn('[ImageEditor] Optimization skipped:', e);
+        }
+    }
+
+    // If this is a PREVIEW (default), we downscale first to save bandwidth
+    let effectiveImage = params.sourceImage;
+    if (params.targetResolution !== '4k') { // "preview" or undefined
+        try {
+            effectiveImage = await downscaleImage(params.sourceImage, 1536);
+            console.log('[ImageEditor] Downscaled input image for preview speed');
+        } catch (e) {
+            console.warn('[ImageEditor] Downscaling failed:', e);
+        }
+    }
+
+    const builtPrompt = buildEnhancedPrompt({ ...params, prompt: finalPrompt });
+    const { mimeType, data } = extractBase64Data(effectiveImage);
 
     console.log('[ImageEditor] Starting edit', {
-        promptPreview: enhancedPrompt.slice(0, 100),
+        promptLength: builtPrompt.length,
         hasThoughtSignature: Boolean(params.thoughtSignature),
-        enhancementLevel: params.enhancementLevel,
-        styles: params.styles,
-        adjustments: params.adjustments
+        resolution: params.targetResolution || 'preview',
+        optimized: params.optimizePrompt
     });
 
     try {
         // Build the content parts
         const parts: any[] = [
-            { text: enhancedPrompt },
+            { text: builtPrompt },
             {
                 inlineData: {
                     mimeType,
@@ -148,13 +282,16 @@ export const editImage = async (params: EditImageParams): Promise<EditImageResul
         const contents: any[] = [];
 
         // If we have a previous thoughtSignature, include it for context
+        // BUT LIMIT WINDOW to last 10 turns to prevent context overflow
         if (params.thoughtSignature) {
-            // The thoughtSignature contains the previous conversation context
-            // We parse it and add it to the history
             try {
                 const previousContext = JSON.parse(params.thoughtSignature);
                 if (previousContext.history && Array.isArray(previousContext.history)) {
-                    contents.push(...previousContext.history);
+                    // Context Window Management: Keep only last 10 turns
+                    // Each turn is usually 2 messages (User + Model), so last 20 messages
+                    const SAFE_WINDOW_SIZE = 20;
+                    const trimmedHistory = previousContext.history.slice(-SAFE_WINDOW_SIZE);
+                    contents.push(...trimmedHistory);
                 }
             } catch (e) {
                 console.warn('[ImageEditor] Could not parse thoughtSignature, starting fresh');
@@ -175,7 +312,9 @@ export const editImage = async (params: EditImageParams): Promise<EditImageResul
                 // Enable thinking for better edit understanding
                 thinkingConfig: {
                     includeThoughts: true
-                }
+                },
+                // If this is finalized upscale, use stricter temperature
+                temperature: params.targetResolution === '4k' ? 0.0 : 0.7
             },
             contents
         });
@@ -229,8 +368,8 @@ export const editImage = async (params: EditImageParams): Promise<EditImageResul
         ];
 
         const newThoughtSignature = JSON.stringify({
-            history: newHistory.slice(-6), // Keep last 3 turns (6 messages) for context
-            lastEdit: enhancedPrompt.slice(0, 200), // Remember what we did
+            history: newHistory, // We slice it on the NEXT turn input
+            lastEdit: builtPrompt.slice(0, 200),
             timestamp: Date.now()
         });
 
@@ -246,7 +385,8 @@ export const editImage = async (params: EditImageParams): Promise<EditImageResul
             thoughtSignature: newThoughtSignature,
             thinking: thinkingText || undefined,
             thoughtImages: thoughtImages.length > 0 ? thoughtImages : undefined,
-            description: descriptionText || undefined
+            description: descriptionText || undefined,
+            usedPrompt: finalPrompt
         };
 
     } catch (error: any) {
@@ -296,6 +436,44 @@ export const quickEnhance = async (
         sourceImage,
         prompt,
         adjustments: options,
-        enhancementLevel: options.level ?? 50
     });
+};
+
+/**
+ * Upscale image to 4K using strict consistency
+ * This uses the exact input image and a strict system instruction to just increase resolution
+ */
+export const upscaleImage = async (
+    image: string,
+    context?: string // Optional context if we want to carry over thought process
+): Promise<string> => {
+    console.log('[ImageEditor] Starting 4K Upscale');
+
+    // Convert to strict upscale prompt
+    const upscalePrompt = `
+[INSTRUCTION]
+Strictly upscale this image to 4K resolution.
+Increase detail and sharpness significantly.
+Do NOT add new elements.
+Do NOT change the composition.
+The output must visually match the input exactly, but with higher fidelity.
+
+[CONSTRAINT]
+Strict fidelity to source image. 4K Output.
+`.trim();
+
+    try {
+        const result = await editImage({
+            sourceImage: image, // Use the preview image as source
+            prompt: upscalePrompt,
+            thoughtSignature: context, // Pass context if available (though upscale overrides prompt)
+            targetResolution: '4k',
+            enhancementLevel: 50 // Balanced
+        });
+
+        return result.image;
+    } catch (e) {
+        console.error('[ImageEditor] Upscale failed:', e);
+        throw e;
+    }
 };

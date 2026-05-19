@@ -9,6 +9,8 @@ import { updateFaviconBadge, requestNotificationPermission } from '@/lib/utils/n
 import { ConfirmModal } from '../Shared/ConfirmModal';
 import { AdminReportsPanel } from './AdminReportsPanel';
 import { AnnouncementsAdminPanel } from './AnnouncementsAdminPanel';
+import { AuditLogPanel } from './AuditLogPanel';
+import { UserActivityPanel } from './UserActivityPanel';
 
 interface UserProfile {
   id: string;
@@ -26,7 +28,7 @@ interface UserProfile {
 export function GodModePanel() {
   const { currentUser } = useOrbitStore();
   const isAdminUser = currentUser?.is_admin;
-  const [activeTab, setActiveTab] = useState<'users' | 'schedule' | 'reports' | 'debug' | 'announcements'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'schedule' | 'reports' | 'debug' | 'announcements' | 'audit' | 'activity'>('users');
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
@@ -80,7 +82,8 @@ export function GodModePanel() {
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
-        .order('username', { ascending: true });
+        .order('username', { ascending: true })
+        .limit(500); // Limit for performance at scale
 
       if (error) throw error;
       console.log(`✅ Fetched ${data?.length || 0} users from database`);
@@ -191,16 +194,13 @@ export function GodModePanel() {
         sender_id: mockSender.id,
         type: 'dm',
         title: `New message from ${mockSender.username}`,
-        content: {
-          message: mockMessage,
-          channelId: channelId,
-          senderUsername: mockSender.username,
-          senderAvatar: mockSender.avatar_url
-        },
+        content: mockMessage.substring(0, 100),
         link_url: `#comms/${channelId}`,
         metadata: {
-          channel_id: channelId,
-          message_id: msgData.id
+          channelId,
+          messageId: msgData.id,
+          senderUsername: mockSender.username,
+          senderAvatar: mockSender.avatar_url
         },
         is_read: false
       });
@@ -431,6 +431,26 @@ export function GodModePanel() {
             <Megaphone className="w-4 h-4" />
             Announcements
           </button>
+          <button
+            onClick={() => setActiveTab('audit')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm uppercase tracking-wider transition-all ${activeTab === 'audit'
+              ? 'bg-amber-500/20 text-amber-400 border-2 border-amber-500/50 shadow-lg shadow-amber-900/30'
+              : 'bg-slate-800/50 text-slate-400 border-2 border-slate-700 hover:border-slate-600'
+              }`}
+          >
+            <Shield className="w-4 h-4" />
+            Audit Log
+          </button>
+          <button
+            onClick={() => setActiveTab('activity')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm uppercase tracking-wider transition-all ${activeTab === 'activity'
+              ? 'bg-cyan-500/20 text-cyan-400 border-2 border-cyan-500/50 shadow-lg shadow-cyan-900/30'
+              : 'bg-slate-800/50 text-slate-400 border-2 border-slate-700 hover:border-slate-600'
+              }`}
+          >
+            <Bell className="w-4 h-4" />
+            User Activity
+          </button>
         </div>
 
         {/* Search Bar (Users tab only) */}
@@ -635,6 +655,20 @@ export function GodModePanel() {
         </div>
       )}
 
+      {/* Audit Log Tab */}
+      {activeTab === 'audit' && (
+        <div className="flex-1 overflow-y-auto p-6 relative z-10">
+          <AuditLogPanel />
+        </div>
+      )}
+
+      {/* User Activity Tab */}
+      {activeTab === 'activity' && (
+        <div className="flex-1 overflow-y-auto p-6 relative z-10">
+          <UserActivityPanel />
+        </div>
+      )}
+
       {/* Edit Modal */}
       <AnimatePresence>
         {selectedUser && (
@@ -827,7 +861,7 @@ export function GodModePanel() {
                       is_admin: selectedUser.is_admin,
                       can_customize_ai: selectedUser.can_customize_ai,
                       unlocked_models: selectedUser.unlocked_models
-                    })}
+                    }, selectedUserOriginal)}
                     className="flex-1 px-6 py-3 bg-gradient-to-r from-red-500 to-orange-500 hover:from-red-400 hover:to-orange-400 rounded-xl font-bold text-white shadow-[0_0_20px_rgba(239,68,68,0.4)] transition-all"
                   >
                     Save Changes

@@ -1,5 +1,6 @@
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { ChatMessage } from '../../types';
+import { logChatMessage, estimateTokens, estimateCost } from '../utils/activityLogger';
 
 // Prefer Vite client env, fall back to process env for SSR/tests.
 const getApiKey = () => {
@@ -11,7 +12,8 @@ const getApiKey = () => {
 export const generateOracleRoast = async (
   history: ChatMessage[],
   userTasksCompleted: number,
-  userTasksForfeited: number
+  userTasksForfeited: number,
+  userId?: string // Optional for logging
 ): Promise<string> => {
   const apiKey = getApiKey();
   if (!apiKey) return "[ERROR]: API_KEY missing.";
@@ -71,7 +73,21 @@ export const generateOracleRoast = async (
       }
     });
 
-    return response.candidates?.[0]?.content?.parts?.[0]?.text || "[SILENCE]";
+    const aiResponse = response.candidates?.[0]?.content?.parts?.[0]?.text || "[SILENCE]";
+
+    // Log AI activity if userId provided
+    if (userId && aiResponse !== "[SILENCE]" && history.length > 0) {
+      const userMessage = history[history.length - 1]?.text || '';
+      await logChatMessage(
+        userId,
+        userMessage,
+        aiResponse,
+        'gemini-2.5-flash',
+        'dm_assistant' // Oracle lives in DM assistant
+      ).catch(err => console.error('Failed to log Oracle chat:', err));
+    }
+
+    return aiResponse;
 
   } catch (error: any) {
     return `[ERROR]: ${error.message}`;
@@ -238,7 +254,8 @@ export const analyzeImageWithVision = async (
   image: string,
   prompt: string,
   model: string = 'gemini-2.5-pro', // Updated to 2.5 Pro for smarter vision
-  conversationHistory: VisionMessage[] = []
+  conversationHistory: VisionMessage[] = [],
+  userId?: string // Optional for logging
 ): Promise<VisionResponse> => {
   const apiKey = getApiKey();
   if (!apiKey) {
@@ -307,6 +324,17 @@ export const analyzeImageWithVision = async (
     const text = response.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) {
       throw new Error("No response from Gemini vision model");
+    }
+
+    // Log AI activity if userId provided
+    if (userId) {
+      await logChatMessage(
+        userId,
+        prompt,
+        text,
+        model,
+        'vision_lab'
+      ).catch(err => console.error('Failed to log vision analysis:', err));
     }
 
     return { text };
@@ -461,7 +489,7 @@ export interface ChatResponse {
  *
  * @param request - Chat request with message, model, and optional parameters
  */
-export const sendChatMessage = async (request: ChatRequest): Promise<ChatResponse> => {
+export const sendChatMessage = async (request: ChatRequest, userId?: string): Promise<ChatResponse> => {
   const apiKey = getApiKey();
   if (!apiKey) {
     throw new Error("Gemini API key not configured");
@@ -657,6 +685,17 @@ export const sendChatMessage = async (request: ChatRequest): Promise<ChatRespons
       // If we have search queries but no chunks, still mark as URL context used
       urlContextUsed = true;
       console.log('[Gemini] Web search queries used:', groundingMetadata.webSearchQueries);
+    }
+
+    // Log AI activity if userId provided
+    if (userId) {
+      await logChatMessage(
+        userId,
+        request.message,
+        mainText,
+        request.model,
+        'research_lab' // Most chat messages are research lab
+      ).catch(err => console.error('Failed to log chat message:', err));
     }
 
     return {

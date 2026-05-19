@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Upload, Send, X, Loader2, Image as ImageIcon, MessageSquare, Settings as SettingsIcon, Trash2, BrainCircuit, Sparkles, Share2, Link, Globe } from 'lucide-react';
+import { Upload, Send, X, Loader2, Image as ImageIcon, MessageSquare, Settings as SettingsIcon, Trash2, BrainCircuit, Sparkles, Share2, Link, Globe, TrendingDown, Coins } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useOrbitStore } from '../../store/useOrbitStore';
 import { LockedResearchLab } from './LockedResearchLab';
@@ -7,6 +7,12 @@ import { useToast } from '../Shared/ToastManager';
 import { analyzeImageWithVision, analyzeGoogleForm, VisionMessage, sendChatMessage, ChatRequest, GroundingSource } from '../../lib/ai/gemini';
 import clsx from 'clsx';
 import { MarkdownRenderer } from '../Social/MarkdownRenderer';
+// AI Access System integration
+import { periodCheckinService } from '../../lib/ai/periodCheckin';
+import { synapseRouter, type RoutingDecision } from '../../lib/ai/synapse';
+import { PeriodProgressCompact } from '../AI/PeriodProgress';
+import { RoutingBadge } from '../AI/SynapseToast';
+import { BuybackModal } from '../AI/BuybackModal';
 
 type Tab = 'chat' | 'vision';
 
@@ -84,6 +90,14 @@ export const ResearchLab: React.FC = () => {
   const [showShareModal, setShowShareModal] = useState(false);
   const [shareSubject, setShareSubject] = useState('');
   const [isSharing, setIsSharing] = useState(false);
+
+  // AI Access System state
+  const [lastRoutingDecision, setLastRoutingDecision] = useState<RoutingDecision | null>(null);
+  const [periodsActive, setPeriodsActive] = useState<number[]>([]);
+  const [currentPeriod, setCurrentPeriod] = useState<number | null>(null);
+  const [creditStatus, setCreditStatus] = useState<{ remaining: number; max: number; modelId: string } | null>(null);
+  const [showBuybackModal, setShowBuybackModal] = useState(false);
+  const [selectedModelForBuyback, setSelectedModelForBuyback] = useState<string>('gemini-2.5-flash');
 
   // Access control
   const hasAccess = currentUser?.can_customize_ai;
@@ -166,9 +180,56 @@ export const ResearchLab: React.FC = () => {
     });
 
     try {
+      // Record activity for period check-in (non-blocking)
+      if (currentUser?.id) {
+        periodCheckinService.recordActivity(currentUser.id, 'ai_query').then(checkinResult => {
+          if (checkinResult.periodNumber !== null) {
+            setPeriodsActive(prev =>
+              prev.includes(checkinResult.periodNumber!) ? prev : [...prev, checkinResult.periodNumber!]
+            );
+            setCurrentPeriod(periodCheckinService.getCurrentPeriod(new Date()));
+
+            if (checkinResult.periodPoints > 0) {
+              toastManager.success(`+${checkinResult.periodPoints} pts`, {
+                description: `Period ${checkinResult.periodNumber} check-in`,
+                duration: 2000
+              });
+            }
+            if (checkinResult.fullDayBonusAwarded) {
+              toastManager.success('🔥 Full Day Bonus! +150 pts', { duration: 3000 });
+            }
+          }
+        }).catch(console.error);
+      }
+
+      // SYNAPSE smart routing (mandatory)
+      let effectiveModel = selectedChatModel;
+      if (currentUser?.id) {
+        try {
+          const routing = await synapseRouter.route(
+            currentUser.id,
+            inputToSend,
+            selectedChatModel,
+            chatMessages.map(m => ({ role: m.role, content: m.text }))
+          );
+          setLastRoutingDecision(routing);
+
+          if (routing.wasRerouted) {
+            effectiveModel = routing.targetModel;
+            toastManager.info(`SYNAPSE: Routed to ${routing.targetModel.split('-').pop()}`, {
+              description: routing.notification?.tip || `Saved ~$${routing.estimatedSavings?.toFixed(4) || '0.00'}`,
+              duration: 3000
+            });
+          }
+        } catch (routingError) {
+          console.error('SYNAPSE routing error:', routingError);
+          // Continue with original model if routing fails
+        }
+      }
+
       const request: ChatRequest = {
         message: inputToSend,
-        model: selectedChatModel,
+        model: effectiveModel,
         thinkingLevel: supportsThinking ? thinkingLevel : undefined,
         systemInstructions: systemInstructions.trim() || undefined,
         temperature,
@@ -178,7 +239,7 @@ export const ResearchLab: React.FC = () => {
         }))
       };
 
-      const response = await sendChatMessage(request);
+      const response = await sendChatMessage(request, currentUser?.id);
 
       const aiMessage: ChatMessage = {
         id: (Date.now() + 1).toString(),
@@ -266,6 +327,21 @@ export const ResearchLab: React.FC = () => {
     setIsAnalyzing(true);
 
     try {
+      // Record activity for period check-in (non-blocking)
+      if (currentUser?.id) {
+        periodCheckinService.recordActivity(currentUser.id, 'image_gen').then(checkinResult => {
+          if (checkinResult.periodNumber !== null && checkinResult.periodPoints > 0) {
+            setPeriodsActive(prev =>
+              prev.includes(checkinResult.periodNumber!) ? prev : [...prev, checkinResult.periodNumber!]
+            );
+            toastManager.success(`+${checkinResult.periodPoints} pts`, {
+              description: `Period ${checkinResult.periodNumber} check-in`,
+              duration: 2000
+            });
+          }
+        }).catch(console.error);
+      }
+
       const history: VisionMessage[] = visionMessages.map(msg => ({
         role: msg.role,
         text: msg.text,
@@ -281,7 +357,8 @@ export const ResearchLab: React.FC = () => {
           uploadedImage,
           visionInput || 'What do you see in this image?',
           selectedVisionModel,
-          history
+          history,
+          currentUser?.id // Enable activity logging
         );
       }
 
@@ -417,6 +494,40 @@ export const ResearchLab: React.FC = () => {
               <span className="text-cyan-400 font-mono text-xs font-bold">
                 CLEARANCE: AI+
               </span>
+              {/* Period Progress */}
+              <div className="h-4 w-px bg-cyan-500/30" />
+              <PeriodProgressCompact
+                periodsActive={periodsActive}
+                currentPeriod={currentPeriod}
+              />
+              {/* SYNAPSE Routing Badge */}
+              {lastRoutingDecision?.wasRerouted && (
+                <RoutingBadge
+                  wasRerouted={lastRoutingDecision.wasRerouted}
+                  targetModel={lastRoutingDecision.targetModel}
+                  savings={lastRoutingDecision.estimatedSavings}
+                />
+              )}
+              {/* Credit Status */}
+              {creditStatus && (
+                <div className="flex items-center gap-2 px-2 py-1 rounded bg-slate-800/50 border border-slate-700">
+                  <Coins className="w-3 h-3 text-violet-400" />
+                  <span className={`text-xs font-mono ${creditStatus.remaining < creditStatus.max * 0.2 ? 'text-red-400' : 'text-slate-300'}`}>
+                    ${creditStatus.remaining.toFixed(2)}
+                  </span>
+                  {creditStatus.remaining < creditStatus.max * 0.2 && (
+                    <button
+                      onClick={() => {
+                        setSelectedModelForBuyback(creditStatus.modelId);
+                        setShowBuybackModal(true);
+                      }}
+                      className="px-2 py-0.5 rounded bg-violet-500/20 border border-violet-500/50 text-violet-300 text-[10px] font-mono hover:bg-violet-500/30 transition-colors"
+                    >
+                      + ADD
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
             {activeTab === 'chat' && (
               <div className="flex items-center gap-2">
@@ -1089,6 +1200,21 @@ export const ResearchLab: React.FC = () => {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Buyback Modal */}
+      <BuybackModal
+        isOpen={showBuybackModal}
+        onClose={() => setShowBuybackModal(false)}
+        userId={currentUser?.id || ''}
+        modelId={selectedModelForBuyback}
+        modelName={CHAT_MODELS.find(m => m.id === selectedModelForBuyback)?.name || selectedModelForBuyback}
+        onSuccess={(creditsAdded) => {
+          toastManager.success(`Added $${creditsAdded.toFixed(2)} credits!`);
+          if (currentUser?.id && creditStatus) {
+            setCreditStatus(prev => prev ? { ...prev, remaining: prev.remaining + creditsAdded } : null);
+          }
+        }}
+      />
 
       <style>{`
         @keyframes gridScroll {

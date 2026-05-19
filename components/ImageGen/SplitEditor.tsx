@@ -9,10 +9,14 @@ import {
     History,
     SplitSquareHorizontal,
     ChevronDown,
-    AlertCircle
+    AlertCircle,
+    Download,
+    Sparkles,
+    Save,
+    RefreshCw
 } from 'lucide-react';
 import clsx from 'clsx';
-import { editImage } from '../../lib/ai/imageEditor';
+import { editImage, upscaleImage } from '../../lib/ai/imageEditor';
 import { toast } from '../../lib/toast';
 
 // Types for our Magic Editor
@@ -110,6 +114,7 @@ export const SplitEditor: React.FC<SplitEditorProps> = ({ initialImage, initialP
     const [input, setInput] = useState('');
     const [activeStyles, setActiveStyles] = useState<string[]>([]);
     const [enhancementLevel, setEnhancementLevel] = useState(50);
+    const [optimizePrompt, setOptimizePrompt] = useState(false);
 
     // Versions State
     const [versions, setVersions] = useState<EditorVersion[]>([
@@ -167,7 +172,8 @@ export const SplitEditor: React.FC<SplitEditorProps> = ({ initialImage, initialP
                 thoughtSignature: previousSignature,
                 styles: activeStyles.filter(s => s !== 'none'),
                 enhancementLevel,
-                adjustments: toggles
+                adjustments: toggles,
+                optimizePrompt // Helper to improve prompt with Web Search
             });
 
             // Create new version with the edited image
@@ -193,6 +199,11 @@ export const SplitEditor: React.FC<SplitEditorProps> = ({ initialImage, initialP
                 toast.success('Image edited successfully!');
             }
 
+            // Show optimization success
+            if (result.usedPrompt && result.usedPrompt !== prompt) {
+                toast.success('Prompt optimized by AI!', { duration: 3000 });
+            }
+
         } catch (error: any) {
             console.error("[ImageEditor] Edit failed:", error);
             toast.error(error.message || 'Failed to edit image. Please try again.');
@@ -201,8 +212,40 @@ export const SplitEditor: React.FC<SplitEditorProps> = ({ initialImage, initialP
         }
     };
 
+    const handleUpscale = async () => {
+        if (loading) return;
+        setLoading(true);
+        toast.info('Generating 4K Final Version (Strict Fidelity)...', { duration: 5000 });
+
+        try {
+            const currentVersion = versions.find(v => v.id === rightVersionId);
+
+            // Upscale the CURRENT image
+            const upscaledImage = await upscaleImage(rightImage, currentVersion?.thoughtSignature);
+
+            const newVersionId = `v${versions.length}-4k`;
+            const newVersion: EditorVersion = {
+                id: newVersionId,
+                url: upscaledImage,
+                prompt: "Upscaled to 4K",
+                timestamp: Date.now(),
+                thoughtSignature: currentVersion?.thoughtSignature // Keep logic
+            };
+
+            setVersions(prev => [...prev, newVersion]);
+            setRightVersionId(newVersionId);
+            setLeftVersionId(rightVersionId); // Compare with pre-upscale
+
+            toast.success('Image upscaled to 4K!');
+        } catch (e: any) {
+            console.error(e);
+            toast.error('Upscale failed: ' + (e.message || 'Unknown error'));
+        } finally {
+            setLoading(false);
+        }
+    };
+
     return (
-        // FIXED: Added ml-16 to account for main app sidebar (64px)
         <div className="fixed inset-0 ml-16 z-[100] bg-[#09090b] text-white flex flex-col font-sans">
             {/* Top Bar */}
             <header className="h-14 border-b border-white/10 flex items-center justify-between px-4 bg-[#09090b]/90 backdrop-blur-md z-10">
@@ -252,9 +295,45 @@ export const SplitEditor: React.FC<SplitEditorProps> = ({ initialImage, initialP
                     </button>
                 </div>
 
-                <button className="px-4 py-2 bg-white text-black text-xs font-bold rounded-full hover:bg-blue-400 transition-colors">
-                    EXPORT
-                </button>
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={() => {
+                            const link = document.createElement('a');
+                            link.href = rightImage;
+                            link.download = `gemini-edit-${Date.now()}.jpg`;
+                            link.click();
+                            toast.success('Image downloaded!');
+                        }}
+                        className="px-4 py-2 bg-white/5 text-gray-300 text-xs font-bold rounded-full hover:bg-white/10 transition-colors flex items-center gap-2"
+                    >
+                        <Download size={14} /> EXPORT
+                    </button>
+
+                    {onSave && (
+                        <div className="flex bg-white/5 rounded-full p-1 border border-white/10">
+                            <button
+                                onClick={() => {
+                                    onSave(rightImage);
+                                    toast.success('Saved as new copy');
+                                }}
+                                className="px-3 py-1.5 text-xs font-bold text-gray-300 hover:text-white transition-colors"
+                            >
+                                SAVE COPY
+                            </button>
+                            <div className="w-[1px] bg-white/20 self-stretch my-1" />
+                            <button
+                                onClick={() => {
+                                    onSave(rightImage);
+                                    onClose();
+                                    toast.success('Original replaced');
+                                }}
+                                className="px-3 py-1.5 text-xs font-bold text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-1"
+                            >
+                                <Check size={12} /> REPLACE
+                            </button>
+                        </div>
+                    )}
+                </div>
             </header>
 
             {/* Main Workspace */}
@@ -320,6 +399,44 @@ export const SplitEditor: React.FC<SplitEditorProps> = ({ initialImage, initialP
                 {/* Right Sidebar (Controls) */}
                 <div className="w-[320px] border-l border-white/10 bg-[#0c0c0e] flex flex-col p-4 gap-5 overflow-y-auto">
 
+                    {/* Input Area */}
+                    <div className="flex flex-col gap-2">
+                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                            Edit Prompt
+                        </label>
+                        <div className="flex gap-2 relative">
+                            <input
+                                type="text"
+                                value={input}
+                                onChange={(e) => setInput(e.target.value)}
+                                placeholder="Describe changes..."
+                                className="w-full bg-[#18181b] border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-blue-500 pr-20"
+                                onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+                            />
+                            <div className="absolute right-2 top-2 flex items-center gap-1">
+                                <button
+                                    onClick={() => setOptimizePrompt(!optimizePrompt)}
+                                    className={clsx(
+                                        "p-1.5 rounded-lg transition-all",
+                                        optimizePrompt ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20" : "text-gray-500 hover:text-white"
+                                    )}
+                                    title="AI Prompt Optimization (Web Search)"
+                                >
+                                    <Sparkles size={16} />
+                                </button>
+                                <button
+                                    onClick={handleSend}
+                                    disabled={loading || (!input && activeStyles.length === 0)}
+                                    className="bg-blue-600 text-white p-1.5 rounded-lg hover:bg-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    <Send size={16} />
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="h-[1px] bg-white/10" />
+
                     {/* Style Transfer */}
                     <div>
                         <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-3 block">
@@ -367,7 +484,6 @@ export const SplitEditor: React.FC<SplitEditorProps> = ({ initialImage, initialP
                                         {key === 'composition' && '🖼️'}
                                         {key}
                                     </div>
-                                    {/* FIXED Toggle Switch - proper animation */}
                                     <button
                                         onClick={() => handleToggle(key as any)}
                                         className={clsx(
@@ -386,62 +502,45 @@ export const SplitEditor: React.FC<SplitEditorProps> = ({ initialImage, initialP
                         </div>
                     </div>
 
-                    {/* AI Settings - FIXED: Brighter slider */}
+                    {/* AI Settings */}
                     <div>
                         <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-3 flex justify-between">
                             AI Enhancement Strength
                             <span className="text-blue-400">{enhancementLevel}%</span>
                         </label>
-                        <div className="relative h-2 bg-slate-700 rounded-full overflow-hidden">
+                        <div className="relative h-4 group cursor-pointer flex items-center"
+                            onClick={(e) => {
+                                const rect = e.currentTarget.getBoundingClientRect();
+                                const x = e.clientX - rect.left;
+                                const percent = Math.min(100, Math.max(0, (x / rect.width) * 100));
+                                setEnhancementLevel(Math.round(percent));
+                            }}
+                        >
+                            <div className="absolute inset-0 h-1 bg-slate-700 rounded-full my-auto" />
                             <div
-                                className="absolute inset-y-0 left-0 bg-gradient-to-r from-blue-500 to-cyan-400 rounded-full"
+                                className="absolute inset-y-0 left-0 h-1 bg-gradient-to-r from-blue-500 to-cyan-400 rounded-full my-auto"
                                 style={{ width: `${enhancementLevel}%` }}
                             />
+                            <div
+                                className="absolute w-3 h-3 bg-white rounded-full shadow-lg border border-blue-500 transform -translate-x-1/2 transition-transform group-hover:scale-125"
+                                style={{ left: `${enhancementLevel}%` }}
+                            />
                         </div>
-                        <input
-                            type="range"
-                            min="0"
-                            max="100"
-                            value={enhancementLevel}
-                            onChange={(e) => setEnhancementLevel(parseInt(e.target.value))}
-                            className="w-full h-2 mt-[-8px] appearance-none cursor-pointer relative z-10 bg-transparent [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-lg [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-blue-500"
-                        />
                     </div>
 
-                    {/* Spacer */}
-                    <div className="flex-1" />
-
-                    {/* Input Area */}
-                    <div className="bg-white/5 p-1 rounded-xl border border-white/10 focus-within:border-blue-500/50 focus-within:bg-white/10 transition-all">
-                        <textarea
-                            value={input}
-                            onChange={(e) => setInput(e.target.value)}
-                            placeholder="Describe changes..."
-                            className="w-full bg-transparent text-sm p-3 outline-none resize-none h-20 text-white placeholder-gray-500"
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter' && !e.shiftKey) {
-                                    e.preventDefault();
-                                    handleSend();
-                                }
-                            }}
-                        />
-                        <div className="flex justify-between items-center px-2 pb-2">
-                            <span className="text-[10px] text-gray-500">
-                                {activeStyles.length} styles active
-                            </span>
-                            <button
-                                onClick={handleSend}
-                                disabled={loading || (!input.trim() && activeStyles.length === 0)}
-                                className={clsx(
-                                    "p-2 rounded-lg transition-all",
-                                    loading || (!input && activeStyles.length === 0)
-                                        ? 'bg-white/5 text-gray-600 cursor-not-allowed'
-                                        : 'bg-blue-600 text-white shadow-lg hover:bg-blue-500'
-                                )}
-                            >
-                                <Send size={16} />
-                            </button>
-                        </div>
+                    {/* Finalize Section */}
+                    <div className="mt-4 pt-4 border-t border-white/10">
+                        <button
+                            onClick={handleUpscale}
+                            disabled={loading}
+                            className="w-full py-3 bg-gradient-to-r from-indigo-600 to-violet-600 rounded-xl text-xs font-bold tracking-wider hover:from-indigo-500 hover:to-violet-500 transition-all shadow-lg shadow-indigo-900/20 flex items-center justify-center gap-2 group"
+                        >
+                            <Maximize2 size={14} className="group-hover:scale-110 transition-transform" />
+                            GENERATE 4K FINAL
+                        </button>
+                        <p className="text-[10px] text-gray-500 text-center mt-2">
+                            Upscales your current preview to full 4K resolution
+                        </p>
                     </div>
 
                 </div>
@@ -449,3 +548,4 @@ export const SplitEditor: React.FC<SplitEditorProps> = ({ initialImage, initialP
         </div>
     );
 };
+

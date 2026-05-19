@@ -1,5 +1,6 @@
 
 import { GoogleGenAI } from "@google/genai";
+import { logAIActivity, estimateTokens, estimateCost } from '../utils/activityLogger';
 
 export interface IntelResult {
   summary_bullets: string[];
@@ -28,6 +29,7 @@ export interface IntelQueryParams {
   generatedImage?: string; // ✨ Field for storing generated image data
   webSearch?: boolean; // ✨ Enable Google Search grounding for image generation (Gemini 3 Pro Image only)
   includeThinking?: boolean; // ✨ Show thinking process for image generation
+  userId?: string; // Optional userId for activity logging
 }
 
 const getIntelApiKey = () => {
@@ -70,7 +72,8 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
     imageResolution = '4K', // Default to 4K
     aspectRatio = '1:1', // Default to square
     webSearch = false, // ✨ Default web search off
-    includeThinking = false // ✨ Default thinking display off
+    includeThinking = false, // ✨ Default thinking display off
+    userId // Optional for logging
   } = params;
 
   const modelMap: Record<IntelQueryParams['model'], string> = {
@@ -218,12 +221,31 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
       console.log("Conversation response (unescaped):", unescapedText);
 
       // Return as simple summary with no sources/concepts for conversation mode
-      return {
+      const result = {
         summary_bullets: [unescapedText], // Put the whole response in a single bullet
         sources: [],
         related_concepts: [],
         essay: undefined
       };
+
+      // Log activity if userId provided
+      if (userId) {
+        const inputTokens = estimateTokens(prompt);
+        const outputTokens = estimateTokens(unescapedText);
+        const cost = estimateCost(modelMap[model], inputTokens, outputTokens);
+        await logAIActivity({
+          userId,
+          activityType: 'research_query',
+          model: modelMap[model],
+          estimatedTokens: inputTokens + outputTokens,
+          estimatedCostUsd: cost,
+          userInput: prompt,
+          aiResponse: unescapedText.substring(0, 5000),
+          feature: 'research_lab'
+        }).catch(err => console.error('Failed to log intel activity:', err));
+      }
+
+      return result;
     }
 
     // Research mode: Structured JSON responses with thinking
@@ -489,6 +511,25 @@ export const runIntelQuery = async (params: IntelQueryParams): Promise<IntelResu
     if (result.summary_bullets.length === 0 && result.sources.length === 0 && result.related_concepts.length === 0) {
       console.error("AI returned empty result. Parsed object:", parsed);
       throw new Error("AI returned empty or invalid response structure");
+    }
+
+    // Log activity if userId provided
+    if (userId) {
+      const outputText = result.summary_bullets.join('\n') + (result.essay || '');
+      const inputTokens = estimateTokens(prompt + instructions);
+      const outputTokens = estimateTokens(outputText);
+      const cost = estimateCost(modelId, inputTokens, outputTokens);
+
+      await logAIActivity({
+        userId,
+        activityType: 'research_query',
+        model: modelId,
+        estimatedTokens: inputTokens + outputTokens,
+        estimatedCostUsd: cost,
+        userInput: prompt,
+        aiResponse: outputText.substring(0, 5000),
+        feature: 'research_lab'
+      }).catch(err => console.error('Failed to log intel research activity:', err));
     }
 
     return result;

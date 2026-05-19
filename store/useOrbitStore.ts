@@ -490,7 +490,13 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
 
             // Check if this message is for a channel the user is part of
             const userChannels = get().dmChannels;
-            const relevantChannel = userChannels.find(ch => ch.id === newMessage.channel_id);
+            let relevantChannel = userChannels.find(ch => ch.id === newMessage.channel_id);
+
+            // If channel state is stale (e.g., newly created channel), refresh once before giving up.
+            if (!relevantChannel) {
+              await get().fetchDMChannels();
+              relevantChannel = get().dmChannels.find(ch => ch.id === newMessage.channel_id);
+            }
 
             if (relevantChannel) {
               set({
@@ -506,30 +512,99 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
               // Refresh channel list to update unread counts
               await get().fetchDMChannels();
 
-              // Show notifications if not currently viewing this channel
               const activeChannelId = get().activeChannelId;
-              if (activeChannelId !== newMessage.channel_id) {
+              const commsPanelOpen = get().commsPanelOpen;
+              const isCommsRouteActive =
+                typeof window !== 'undefined' && window.location.hash.slice(1).startsWith('comms');
+
+              // Only suppress notifications if the user is actually in comms (panel or page)
+              // AND the active channel matches the incoming message's channel.
+              const isActivelyViewingChannel =
+                activeChannelId === newMessage.channel_id && (commsPanelOpen || isCommsRouteActive);
+
+              // If the user is actively viewing this channel, mark the message as read immediately
+              // so unread counts/badges don't update while they're already reading it.
+              if (isActivelyViewingChannel && currentUser?.id) {
+                supabase
+                  .from('messages')
+                  .update({ read: true })
+                  .eq('id', newMessage.id)
+                  .eq('read', false)
+                  .neq('sender_id', currentUser.id)
+                  .then(({ error }) => {
+                    if (error) {
+                      console.error('Error marking incoming message as read:', error);
+                    } else {
+                      get().fetchDMChannels();
+                    }
+                  });
+                return;
+              }
+
+              // Show notifications if not currently viewing this channel
+              if (!isActivelyViewingChannel) {
                 const sender = relevantChannel.otherUser;
                 if (sender) {
                   // 1. Create database notification
-                  try {
-                    await supabase.from('notifications').insert({
-                      recipient_id: currentUser?.id,
-                      sender_id: newMessage.sender_id,
-                      type: 'dm',
-                      title: `New message from ${sender.username}`,
-                      content: {
-                        message: newMessage.content.substring(0, 100),
-                        channelId: newMessage.channel_id,
-                        senderUsername: sender.username,
-                        senderAvatar: sender.avatar
-                      },
-                      link_url: `#comms/${newMessage.channel_id}`,
-                      is_read: false
-                    });
+                  const messagePreview = newMessage.content.substring(0, 100);
+                  const baseNotificationPayload: any = {
+                    recipient_id: currentUser?.id,
+                    sender_id: newMessage.sender_id,
+                    type: 'dm',
+                    title: `New message from ${sender.username}`,
+                    // Keep `content` as a string for compatibility with older schemas.
+                    content: messagePreview,
+                    metadata: {
+                      channelId: newMessage.channel_id,
+                      message: messagePreview,
+                      senderUsername: sender.username,
+                      senderAvatar: sender.avatar
+                    },
+                    link_url: `#comms/${newMessage.channel_id}`,
+                    is_read: false
+                  };
 
-                    // Refresh notifications in state
-                    await get().fetchNotifications();
+                  const insertNotification = async (payload: any) => {
+                    return supabase
+                      .from('notifications')
+                      .insert(payload)
+                      .select('*')
+                      .single();
+                  };
+
+                  try {
+                    let insertedNotification: any = null;
+
+                    // Try insert with metadata first; fallback if the column doesn't exist.
+                    let { data, error } = await insertNotification(baseNotificationPayload);
+                    if (error && (error.code === '42703' || error.message?.toLowerCase().includes('metadata'))) {
+                      ({ data, error } = await insertNotification({
+                        ...baseNotificationPayload,
+                        metadata: undefined
+                      }));
+                    }
+
+                    if (error) {
+                      // If the notifications table doesn't exist or RLS blocks inserts, keep an in-memory notification
+                      // so the UI still shows it, and log the root cause for debugging.
+                      console.warn('DM notification insert failed:', error);
+                      insertedNotification = {
+                        id: `local-${Date.now()}`,
+                        ...baseNotificationPayload,
+                        created_at: newMessage.created_at
+                      };
+                    } else {
+                      insertedNotification = data;
+                    }
+
+                    set(state => {
+                      const exists = state.notifications.some((n: any) => n.id === insertedNotification.id);
+                      if (exists) return {} as any;
+                      return {
+                        notifications: [insertedNotification, ...state.notifications],
+                        unreadCount: state.unreadCount + 1
+                      } as any;
+                    });
                   } catch (err) {
                     console.error('Failed to create notification:', err);
                   }
@@ -650,6 +725,9 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
             const newNotification = payload.new;
             const currentNotifications = get().notifications;
 
+            // Avoid duplicates if we already added this notification locally
+            if (currentNotifications.some((n: any) => n.id === newNotification.id)) return;
+
             // Add new notification to the list
             set({
               notifications: [newNotification, ...currentNotifications],
@@ -755,6 +833,12 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       clearInterval(state.heartbeatInterval);
     }
 
+    // Clean up ALL realtime subscriptions to prevent leaks
+    // This removes: online_presence, public:tasks, public:intel_drops,
+    // public:dm_channels, public:messages, public:message_reactions,
+    // public:notifications, and any poker/typing channels
+    supabase.removeAllChannels();
+
     await supabase.auth.signOut();
     set({
       isAuthenticated: false,
@@ -762,7 +846,18 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       tasks: [],
       intelDrops: [],
       currentIntelResult: null,
-      heartbeatInterval: null
+      heartbeatInterval: null,
+      // Reset social state to prevent stale data on re-login
+      dmChannels: [],
+      messages: {},
+      reactions: {},
+      notifications: [],
+      unreadCount: 0,
+      activeChannelId: null,
+      onlineUsers: [],
+      // Reset game state
+      activePokerGame: null,
+      pokerLobbyGames: [],
     });
   },
 
@@ -1049,7 +1144,8 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       const responseText = await generateOracleRoast(
         updatedHistory,
         currentUser?.stats?.tasksCompleted || 0,
-        currentUser?.stats?.tasksForfeited || 0
+        currentUser?.stats?.tasksForfeited || 0,
+        currentUser?.id // Pass userId for activity logging
       );
 
       // 3. Add AI Message
@@ -2456,7 +2552,8 @@ export const useOrbitStore = create<OrbitState>((set, get) => ({
       .from('notifications')
       .select('*')
       .eq('recipient_id', currentUser.id)
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .limit(100); // Limit to most recent 100 notifications
     if (error) {
       if (missingTable(error, 'public.notifications')) {
         console.warn('Notifications table missing; skipping.');

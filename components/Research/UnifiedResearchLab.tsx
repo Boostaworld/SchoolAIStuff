@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Upload, Send, X, Loader2, Image as ImageIcon, MessageSquare, Settings as SettingsIcon, Trash2, BrainCircuit, Sparkles, Share2, FolderOpen, Plus, Search, Zap, Globe, Sliders, FileText, ExternalLink, Copy, BookOpen, Crown, Pencil, ChevronUp, ChevronDown, Link } from 'lucide-react';
+import { Upload, Send, X, Loader2, Image as ImageIcon, MessageSquare, Settings as SettingsIcon, Trash2, BrainCircuit, Sparkles, Share2, FolderOpen, Plus, Search, Zap, Globe, Sliders, FileText, ExternalLink, Copy, BookOpen, Crown, Pencil, ChevronUp, ChevronDown, Link, TrendingDown, Coins } from 'lucide-react';
 import { DynamicTextarea } from '../Shared/DynamicTextarea';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useOrbitStore } from '../../store/useOrbitStore';
@@ -11,6 +11,13 @@ import { improvePrompt, PromptMode } from '../../lib/ai/promptImprover';
 import clsx from 'clsx';
 import { MarkdownRenderer } from '../Social/MarkdownRenderer';
 import { ConfirmModal } from '../Shared/ConfirmModal';
+// AI Access System integration
+import { periodCheckinService } from '../../lib/ai/periodCheckin';
+import { synapseRouter, type RoutingDecision } from '../../lib/ai/synapse';
+import { chronolockService, type CycleStatus } from '../../lib/ai/chronolock';
+import { PeriodProgressCompact } from '../AI/PeriodProgress';
+import { RoutingBadge } from '../AI/SynapseToast';
+import { BuybackModal } from '../AI/BuybackModal';
 
 // ============================================================================
 // TYPES
@@ -403,6 +410,14 @@ export const UnifiedResearchLab: React.FC = () => {
     const [defaultQuickChatModel, setDefaultQuickChatModel] = useState('gemini-2.5-flash');
     const [defaultDeepResearchModel, setDefaultDeepResearchModel] = useState('gemini-3-pro-preview');
 
+    // AI Access System state
+    const [lastRoutingDecision, setLastRoutingDecision] = useState<RoutingDecision | null>(null);
+    const [periodsActive, setPeriodsActive] = useState<number[]>([]);
+    const [currentPeriod, setCurrentPeriod] = useState<number | null>(null);
+    const [creditStatus, setCreditStatus] = useState<{ remaining: number; max: number; modelId: string } | null>(null);
+    const [showBuybackModal, setShowBuybackModal] = useState(false);
+    const [selectedModelForBuyback, setSelectedModelForBuyback] = useState<string>('gemini-2.5-flash');
+
     // Access control
     const hasAccess = currentUser?.can_customize_ai;
 
@@ -536,16 +551,62 @@ export const UnifiedResearchLab: React.FC = () => {
         setQuickChatLoading(true);
 
         try {
+            // Record activity for period check-in (non-blocking)
+            if (currentUser?.id) {
+                periodCheckinService.recordActivity(currentUser.id, 'ai_query').then(checkinResult => {
+                    if (checkinResult.periodNumber !== null) {
+                        setPeriodsActive(prev =>
+                            prev.includes(checkinResult.periodNumber!) ? prev : [...prev, checkinResult.periodNumber!]
+                        );
+                        setCurrentPeriod(periodCheckinService.getCurrentPeriod(new Date()));
+
+                        if (checkinResult.periodPoints > 0) {
+                            toastManager.success(`+${checkinResult.periodPoints} pts`, {
+                                description: `Period ${checkinResult.periodNumber} check-in`,
+                                duration: 2000
+                            });
+                        }
+                        if (checkinResult.fullDayBonusAwarded) {
+                            toastManager.success('🔥 Full Day Bonus! +150 pts', { duration: 3000 });
+                        }
+                    }
+                }).catch(console.error);
+            }
+
+            // SYNAPSE smart routing (mandatory)
+            let effectiveModel = quickChatModel;
+            if (currentUser?.id) {
+                try {
+                    const routing = await synapseRouter.route(
+                        currentUser.id,
+                        inputToSend,
+                        quickChatModel,
+                        quickChatMessages.map(m => ({ role: m.role, content: m.text }))
+                    );
+                    setLastRoutingDecision(routing);
+
+                    if (routing.wasRerouted) {
+                        effectiveModel = routing.targetModel;
+                        toastManager.info(`SYNAPSE: Routed to ${routing.targetModel.split('-').pop()}`, {
+                            description: routing.notification?.tip || `Saved ~$${routing.estimatedSavings?.toFixed(4) || '0.00'}`,
+                            duration: 3000
+                        });
+                    }
+                } catch (routingError) {
+                    console.error('SYNAPSE routing error:', routingError);
+                }
+            }
+
             const request: ChatRequest = {
                 message: inputToSend,
-                model: quickChatModel,
+                model: effectiveModel,
                 thinkingLevel: quickChatThinking ? quickChatThinkingLevel : undefined,
                 temperature: quickChatTemp,
-                webSearchEnabled: quickChatWebSearch, // ✨ Pass web search flag
+                webSearchEnabled: quickChatWebSearch,
                 conversationHistory: quickChatMessages.map(msg => ({ role: msg.role, text: msg.text }))
             };
 
-            const response = await sendChatMessage(request);
+            const response = await sendChatMessage(request, currentUser?.id);
 
             const aiMessage: ChatMessage = {
                 id: (Date.now() + 1).toString(),
@@ -681,17 +742,56 @@ export const UnifiedResearchLab: React.FC = () => {
         setDeepResearchLoading(true);
 
         try {
+            // Record activity for period check-in (non-blocking)
+            if (currentUser?.id) {
+                periodCheckinService.recordActivity(currentUser.id, 'ai_query').then(checkinResult => {
+                    if (checkinResult.periodNumber !== null && checkinResult.periodPoints > 0) {
+                        setPeriodsActive(prev =>
+                            prev.includes(checkinResult.periodNumber!) ? prev : [...prev, checkinResult.periodNumber!]
+                        );
+                        toastManager.success(`+${checkinResult.periodPoints} pts`, {
+                            description: `Period ${checkinResult.periodNumber} check-in`,
+                            duration: 2000
+                        });
+                    }
+                }).catch(console.error);
+            }
+
+            // SYNAPSE smart routing (mandatory)
+            let effectiveModel = deepResearchModel;
+            if (currentUser?.id) {
+                try {
+                    const routing = await synapseRouter.route(
+                        currentUser.id,
+                        inputToSend,
+                        deepResearchModel,
+                        selectedTopic?.messages.map(m => ({ role: m.role, content: m.text })) || []
+                    );
+                    setLastRoutingDecision(routing);
+
+                    if (routing.wasRerouted) {
+                        effectiveModel = routing.targetModel;
+                        toastManager.info(`SYNAPSE: Routed to ${routing.targetModel.split('-').pop()}`, {
+                            description: `Saved ~$${routing.estimatedSavings?.toFixed(4) || '0.00'}`,
+                            duration: 3000
+                        });
+                    }
+                } catch (routingError) {
+                    console.error('SYNAPSE routing error:', routingError);
+                }
+            }
+
             const request: ChatRequest = {
                 message: inputToSend,
-                model: deepResearchModel,
+                model: effectiveModel,
                 thinkingLevel: deepResearchThinking ? deepResearchThinkingLevel : undefined,
                 systemInstructions: deepResearchSystemInstructions || undefined,
                 temperature: deepResearchTemp,
-                webSearchEnabled: deepResearchWebSearch, // ✨ Pass web search flag
+                webSearchEnabled: deepResearchWebSearch,
                 conversationHistory: selectedTopic?.messages.map(msg => ({ role: msg.role, text: msg.text })) || []
             };
 
-            const response = await sendChatMessage(request);
+            const response = await sendChatMessage(request, currentUser?.id);
 
             const aiMessage: ChatMessage = {
                 id: (Date.now() + 1).toString(),
@@ -739,6 +839,21 @@ export const UnifiedResearchLab: React.FC = () => {
         setIntelLoading(true);
 
         try {
+            // Record activity for period check-in (non-blocking)
+            if (currentUser?.id) {
+                periodCheckinService.recordActivity(currentUser.id, 'ai_query').then(checkinResult => {
+                    if (checkinResult.periodNumber !== null && checkinResult.periodPoints > 0) {
+                        setPeriodsActive(prev =>
+                            prev.includes(checkinResult.periodNumber!) ? prev : [...prev, checkinResult.periodNumber!]
+                        );
+                        toastManager.success(`+${checkinResult.periodPoints} pts`, {
+                            description: `Period ${checkinResult.periodNumber} check-in`,
+                            duration: 2000
+                        });
+                    }
+                }).catch(console.error);
+            }
+
             const depthBullets = { light: 5, standard: 12, deep: 20, max: 30 };
 
             const result = await runIntelQuery({
@@ -749,7 +864,8 @@ export const UnifiedResearchLab: React.FC = () => {
                 depth: depthBullets[intelDepth],
                 thinkingEnabled: intelThinking,
                 thinkingLevel: intelThinkingLevel,
-                webSearch: intelWebSearch
+                webSearch: intelWebSearch,
+                userId: currentUser?.id
             });
 
             const newReport: IntelReport = {
@@ -818,6 +934,21 @@ export const UnifiedResearchLab: React.FC = () => {
         setVisionLoading(true);
 
         try {
+            // Record activity for period check-in (non-blocking)
+            if (currentUser?.id) {
+                periodCheckinService.recordActivity(currentUser.id, 'image_gen').then(checkinResult => {
+                    if (checkinResult.periodNumber !== null && checkinResult.periodPoints > 0) {
+                        setPeriodsActive(prev =>
+                            prev.includes(checkinResult.periodNumber!) ? prev : [...prev, checkinResult.periodNumber!]
+                        );
+                        toastManager.success(`+${checkinResult.periodPoints} pts`, {
+                            description: `Period ${checkinResult.periodNumber} check-in`,
+                            duration: 2000
+                        });
+                    }
+                }).catch(console.error);
+            }
+
             // Note: analyzeImageWithVision signature is (image, prompt, model, history)
             // It doesn't support thinkingConfig directly in arguments currently unless updated.
             // But gemini.ts analyzeImageWithVision DOES support thinkingConfig internally based on model name.
@@ -834,7 +965,8 @@ export const UnifiedResearchLab: React.FC = () => {
                     visionImage, // Will be null on follow-ups, but history has context
                     userMessage.text,
                     visionModel,
-                    historyWithImage
+                    historyWithImage,
+                    currentUser?.id
                 );
             }
 
@@ -983,6 +1115,42 @@ export const UnifiedResearchLab: React.FC = () => {
                                 <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
                                 <span className="text-green-400 font-mono text-xs tracking-wider font-bold">RESEARCH LAB 2.0</span>
                             </div>
+                            {/* Period Progress */}
+                            <div className="h-4 w-px bg-cyan-500/30" />
+                            <PeriodProgressCompact
+                                periodsActive={periodsActive}
+                                currentPeriod={currentPeriod}
+                            />
+                            {/* SYNAPSE Routing Badge */}
+                            {lastRoutingDecision?.wasRerouted && (
+                                <RoutingBadge
+                                    wasRerouted={lastRoutingDecision.wasRerouted}
+                                    targetModel={lastRoutingDecision.targetModel}
+                                    savings={lastRoutingDecision.estimatedSavings}
+                                />
+                            )}
+                        </div>
+                        {/* Credit Status + Buyback Button */}
+                        <div className="flex items-center gap-2">
+                            {creditStatus && (
+                                <div className="flex items-center gap-2 px-2 py-1 rounded bg-slate-800/50 border border-slate-700">
+                                    <Coins className="w-3 h-3 text-violet-400" />
+                                    <span className={`text-xs font-mono ${creditStatus.remaining < creditStatus.max * 0.2 ? 'text-red-400' : 'text-slate-300'}`}>
+                                        ${creditStatus.remaining.toFixed(2)}
+                                    </span>
+                                    {creditStatus.remaining < creditStatus.max * 0.2 && (
+                                        <button
+                                            onClick={() => {
+                                                setSelectedModelForBuyback(creditStatus.modelId);
+                                                setShowBuybackModal(true);
+                                            }}
+                                            className="px-2 py-0.5 rounded bg-violet-500/20 border border-violet-500/50 text-violet-300 text-[10px] font-mono hover:bg-violet-500/30 transition-colors"
+                                        >
+                                            + ADD
+                                        </button>
+                                    )}
+                                </div>
+                            )}
                         </div>
                     </div>
 
@@ -2033,6 +2201,22 @@ export const UnifiedResearchLab: React.FC = () => {
                     setDeleteConfirm({ isOpen: false, type: 'topic', id: null, name: '' });
                 }}
                 onCancel={() => setDeleteConfirm({ isOpen: false, type: 'topic', id: null, name: '' })}
+            />
+
+            {/* Buyback Modal for purchasing credits */}
+            <BuybackModal
+                isOpen={showBuybackModal}
+                onClose={() => setShowBuybackModal(false)}
+                userId={currentUser?.id || ''}
+                modelId={selectedModelForBuyback}
+                modelName={ALL_MODELS.find(m => m.id === selectedModelForBuyback)?.name || selectedModelForBuyback}
+                onSuccess={(creditsAdded) => {
+                    toastManager.success(`Added $${creditsAdded.toFixed(2)} credits!`);
+                    // Refresh credit status
+                    if (currentUser?.id && creditStatus) {
+                        setCreditStatus(prev => prev ? { ...prev, remaining: prev.remaining + creditsAdded } : null);
+                    }
+                }}
             />
         </div>
     );

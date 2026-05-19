@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Bug, Lightbulb, Paperclip, Send, CheckCircle, Loader2, AlertCircle, MessageSquare } from 'lucide-react';
 import { useOrbitStore } from '@/store/useOrbitStore';
@@ -210,7 +211,10 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
         return '';
     };
 
-    return (
+    // Use portal to render at document.body level, escaping any parent stacking context
+    if (typeof document === 'undefined') return null;
+
+    return createPortal(
         <AnimatePresence>
             {isOpen && (
                 <motion.div
@@ -490,6 +494,8 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose }) => 
                     </div>
                 </motion.div>
             )}
-        </AnimatePresence>
+        </AnimatePresence>,
+        document.body
     );
 };
+

@@ -343,7 +343,8 @@ export const ImageGenPanel: React.FC = () => {
         imageResolution: resolution,
         aspectRatio: aspectRatio as any,
         webSearch: webSearch && model === 'gemini-3-image',
-        includeThinking: showThinking && model === 'gemini-3-image'
+        includeThinking: showThinking && model === 'gemini-3-image',
+        userId: currentUser?.id // Enable activity logging
       });
 
       setProgress(100);
@@ -1792,9 +1793,29 @@ export const ImageGenPanel: React.FC = () => {
         <SplitEditor
           initialImage={splitEditorImage}
           onClose={() => setSplitEditorImage(null)}
-          onSave={(newImage) => {
-            // Could update the image in the gallery if needed
-            setSplitEditorImage(null);
+          onSave={async (newImage) => {
+            try {
+              // Save the edited image as a new copy in the gallery
+              await saveImage({
+                image_url: newImage,
+                prompt: 'Edited image',
+                model: 'gemini-3-pro-image',
+                aspect_ratio: '1:1',
+                style: 'edited',
+                resolution: '1024',
+                tags: ['edited']
+              });
+
+              // Refresh images to show the new one
+              const updatedImages = await getImages(selectedFolderId ?? undefined);
+              setGalleryImages(updatedImages as GalleryImage[]);
+
+              toast.success('Image saved to gallery!');
+              setSplitEditorImage(null);
+            } catch (err) {
+              console.error('Failed to save edited image:', err);
+              toast.error('Failed to save image. Please try again.');
+            }
           }}
         />
       )}
